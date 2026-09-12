@@ -27,9 +27,9 @@ avg(close) over (order by d rows between 199 preceding and current row) as sma20
 migration without at least three comment lines at the top.
 
 ```sql
--- 0007_weekly_features.sql
+-- 20261003140000_weekly_features.sql
 -- Purpose: roll daily bars into weekly, then compute weekly RSI / EMA / SMA positions.
--- Depends on: daily_bars (0002), weekly_bars view (0006).
+-- Depends on: daily_bars (20260912120000), weekly_bars view (20261001090000).
 -- Used by: the dashboard grid and every weekly norm in config/norms.yml.
 -- Look-ahead: joins to the LAST COMPLETED week (week_start - 7). Do not "fix" this to the
 --   current week - it would leak the rest of the week into every backtest.

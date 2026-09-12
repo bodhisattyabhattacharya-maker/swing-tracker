@@ -73,3 +73,16 @@ means changing one file.
 **Verified by:** `ci.yml` parses; all `CLAUDE.md` pointers resolve; config gate passes locally.
 **By:** Bodhi + Claude
 
+## 2026-09-12 — Foundation migration: extensions, watchlist cache, raw bars, ingest log
+**What:** `supabase/migrations/20260912120000_foundation.sql` — `pg_net` + `pg_cron`,
+`tickers`, `daily_bars`, `hourly_bars`, `ingest_runs`. RLS on all four, no policies (deny by
+default). Default anon/authenticated privileges revoked so nothing is reachable until granted.
+**How:** applied by the Supabase GitHub integration on merge to `main` (decision 0016).
+`tickers` is a cache of `config/watchlist.yml`, overwritten by the nightly sync — the yml stays
+the source of truth. Every bar row carries `source` so a provider swap is auditable.
+**Architecture impact:** establishes the timestamp migration naming, the deny-by-default
+posture, and `ingest_runs` as the observability surface every fetcher must write to.
+**Verified by:** parsed with libpg_query (17 statements, clean). Applied-state check after
+merge: four tables with `rowsecurity = true`, two extensions, zero anon default privileges.
+**By:** Bodhi + Claude
+

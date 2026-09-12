@@ -118,3 +118,18 @@ standard technical analysis; and MIT is the licence every developer already unde
 Apache-2.0 (a patent grant irrelevant to a dashboard); a non-commercial licence (only matters
 if we'd object to someone else running this, which nobody has suggested).
 
+
+
+## 0016 — 2026-09-12 — Migrations deploy via the Supabase GitHub integration; timestamp naming
+**Decided:** the project is linked to the repo, so migrations under `supabase/migrations/` are
+applied by Supabase when merged to `main`. Files are named `<YYYYMMDDHHMMSS>_<name>.sql` because
+that is the format the integration recognises. **Why:** it makes "a human merged the PR" the
+confirmation for a schema change, which is strictly stronger than an in-session yes — Claude
+never applies a migration at all. It also keeps `supabase_migrations.schema_migrations` as the
+single record of what is applied. **Rejected:** applying via MCP/CLI after review (the
+integration then sees an unapplied file with a different version and errors), and unlinking the
+integration (loses the audit trail for no gain). **Consequence:** never apply a migration by a
+side route. The `run-migration` skill says so.
+**Also decided:** "automatically expose new tables" is revoked in the first migration rather
+than toggled in the dashboard — a setting in code is a setting the next session can see.
+\n
