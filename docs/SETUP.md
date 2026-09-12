@@ -31,6 +31,11 @@ wired. Owner steps happen once; contributor steps happen per person.
 - [x] Project Settings → Integrations → GitHub → **"Deploy to production" ON**, production
       branch `main`, working directory `.`. **Off by default** — linking alone deploys nothing
       (constraint dated 2026-09-12). Enabling it does not replay past merges.
+- [ ] Project Settings → Vault → **Add new secret**: name `service_role_key`, value = the
+      `service_role` key from Project Settings → API Keys. This is how pg_cron (and a human
+      running `net.http_post` in the SQL editor) authenticates to the ingest function
+      (decision 0017). The key never leaves Supabase; it is read with
+      `select decrypted_secret from vault.decrypted_secrets where name = 'service_role_key'`.
 - [x] "Enable automatic RLS" was ticked at creation. "Automatically expose new tables" was
       left on and is **revoked in the first migration** instead, so it is explicit and reviewable.
 

@@ -86,3 +86,24 @@ posture, and `ingest_runs` as the observability surface every fetcher must write
 merge: four tables with `rowsecurity = true`, two extensions, zero anon default privileges.
 **By:** Bodhi + Claude
 
+## 2026-09-12 — Ingest edge function: watchlist sync, daily and hourly bars
+**What:** `supabase/functions/ingest/` — reads `config/watchlist.yml` from the public repo,
+syncs `tickers`, pulls daily bars (indices included) and hourly bars (tickers only) from Yahoo,
+writes one `ingest_runs` row per call. Provider seam in `provider.ts` (decision 0003), Yahoo
+implementation in `yahoo.ts`, watchlist reader in `watchlist.ts`, fixture tests in
+`ingest_test.ts`. New CI job `Edge function tests` runs them and type-checks every entry point.
+**How:** `?scope=tickers|daily|hourly|all`, `?symbols=`, `?full=1`, `?limit=N`, `?by=`. Bearer
+must equal the service_role key (decision 0017). A symbol with no bars gets `range=max` /
+`range=2y` automatically, capped at `limit` full fetches per run (default 8) with the rest listed
+in `deferred` — so a first backfill is several calls, each idempotent. Removed symbols are
+deactivated. Daily rows carry `adj_close` only when Yahoo supplies it; never copied from close.
+**Architecture impact:** fixes the shape every future fetcher follows — a run row opened first,
+per-symbol errors recorded not thrown, `source` on every row. The scheduling migration (pg_cron
+→ pg_net → this function, key from Vault) is the next PR; nothing runs on a clock yet.
+**Verified by:** 11 fixture tests pass locally (null close dropped, adj_close never substituted,
+`chart.error` and missing timestamps both fail loudly, later bar wins on a duplicate date,
+undeclared theme rejected); `deno check` clean against supabase-js 2.116; real `watchlist.yml`
+parses to 36 tickers + 5 indices, 24 rankable, 7 themes — matching `make context`. Live
+behaviour (Yahoo from Supabase egress, wall-clock per call) is verified after deploy and logged
+here in a follow-up line.
+**By:** Bodhi + Claude

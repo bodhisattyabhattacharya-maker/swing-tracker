@@ -45,18 +45,18 @@ next agent to the wrong file confidently.
 |---|---|---|
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
-| `supabase/functions/` | Deno edge functions: ingest, search, digest _(planned)_ | one directory per function |
+| `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, auth, run bookkeeping) → `provider.ts` (the seam) → `yahoo.ts` (implementation), `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js dashboard, desktop-first _(planned)_ | — |
 | `scripts/` | Local helpers — verification, one-off checks _(planned)_ | — |
 | `docs/` | Context files. Start at `ONBOARDING.md` | — |
 | `.claude/skills/` | Per-task procedures | Matched to your task |
-| `.github/workflows/` | CI: secret scan, config validation, log-entry gate | `ci.yml` |
+| `.github/workflows/` | CI: secret scan, config validation, edge-function tests, hygiene gate | `ci.yml` |
 
 ## Where to start reading, by question
 
 | Question | Start at |
 |---|---|
-| How does a price get into the database? | `supabase/functions/` ingest fn, then `ingest_runs` |
+| How does a price get into the database? | `supabase/functions/ingest/index.ts` header, then the latest row in `ingest_runs` |
 | How is this number computed? | `docs/DEFINITIONS.md`, then the SQL view named after it |
 | Why is this cell coloured? | `config/norms.yml` |
 | Which tickers, and why that peer group? | `config/watchlist.yml` (`theme` vs `tag`) |
