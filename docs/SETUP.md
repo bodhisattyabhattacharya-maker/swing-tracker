@@ -28,6 +28,9 @@ wired. Owner steps happen once; contributor steps happen per person.
 - [x] **GitHub integration linked** to the repo. Migrations under `supabase/migrations/` deploy
       when merged to `main` (decision 0016). This replaces the manual-apply hard stop with
       "a human merges the PR" — strictly stronger, since Claude never applies anything.
+- [x] Project Settings → Integrations → GitHub → **"Deploy to production" ON**, production
+      branch `main`, working directory `.`. **Off by default** — linking alone deploys nothing
+      (constraint dated 2026-09-12). Enabling it does not replay past merges.
 - [x] "Enable automatic RLS" was ticked at creation. "Automatically expose new tables" was
       left on and is **revoked in the first migration** instead, so it is explicit and reviewable.
 
