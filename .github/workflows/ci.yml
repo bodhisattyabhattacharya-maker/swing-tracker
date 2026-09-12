@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  config:
+    name: Config validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install pyyaml
+      - name: watchlist.yml and norms.yml parse, and have no duplicate symbols
+        run: |
+          python - <<'PY'
+          import yaml, sys
+          w = yaml.safe_load(open('config/watchlist.yml'))
+          n = yaml.safe_load(open('config/norms.yml'))
+          syms = [t['symbol'] for t in w['tickers']]
+          dupes = {s for s in syms if syms.count(s) > 1}
+          assert not dupes, f"duplicate symbols: {dupes}"
+          assert all(t.get('theme') for t in w['tickers']), "every ticker needs a theme"
+          assert n.get('norms'), "norms.yml has no norms block"
+          # every ticker's theme must be declared, and a rankable theme needs real peers
+          declared = set(w['themes'])
+          used = {t['theme'] for t in w['tickers']}
+          assert used <= declared, f"undeclared themes: {used - declared}"
+          import collections
+          c = collections.Counter(t['theme'] for t in w['tickers'])
+          for th, meta in w['themes'].items():
+              if meta.get('rankable') and c[th] < 3:
+                  raise AssertionError(
+                      f"theme '{th}' is rankable but has {c[th]} member(s); "
+                      "a sector-relative rank needs at least 3 peers or rankable: false")
+          rankable = sum(c[t] for t, m in w['themes'].items() if m.get('rankable'))
+          print(f"ok: {len(syms)} tickers, {len(w['indices'])} indices, "
+                f"{len(n['norms'])} norms, {rankable} tickers with a usable sector rank")
+          PY
+
+      - name: Every migration has a purpose header
+        run: |
+          fail=0
+          for f in supabase/migrations/*.sql; do
+            [ -e "$f" ] || continue
+            n=$(awk 'BEGIN{c=0} /^--/{c++; next} NF{exit} END{print c}' "$f")
+            if [ "${n:-0}" -lt 3 ]; then
+              echo "::error file=$f::Migration needs a >=3 line header comment (purpose, depends on, reversing). See docs/CODE_STYLE.md"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] && echo "all migrations documented"
+          exit $fail
+
+  hygiene:
+    name: Change hygiene (docs/HYGIENE.md)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: The matrix in docs/HYGIENE.md, enforced
+        run: |
+          set -e
+          git fetch origin "${{ github.base_ref }}" --depth=1
+          BASE="origin/${{ github.base_ref }}"
+          CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          echo "changed:"; echo "$CHANGED" | sed 's/^/  /'
+          fail=0
+          has() { echo "$CHANGED" | grep -qE "$1"; }
+
+          # Code changed -> FEATURES or INCIDENTS entry
+          if has '^(supabase|web|scripts)/'; then
+            if has '^docs/(FEATURES|INCIDENTS)\.md$'; then echo "ok: code change is logged"
+            else echo "::error::Code changed under supabase/, web/ or scripts/ but neither docs/FEATURES.md nor docs/INCIDENTS.md was updated. See docs/HYGIENE.md."; fail=1; fi
+          fi
+
+          # A norm changed -> DECISIONS entry (a threshold is a judgment)
+          if has '^config/norms\.yml$'; then
+            if has '^docs/DECISIONS\.md$'; then echo "ok: norm change has a decision"
+            else echo "::error::config/norms.yml changed without a docs/DECISIONS.md entry. A threshold is a judgment; record the reasoning."; fail=1; fi
+          fi
+
+          # Theme structure changed -> DECISIONS entry
+          if has '^config/watchlist\.yml$'; then
+            if git diff "$BASE"...HEAD -- config/watchlist.yml | grep -qE '^[+-].*(rankable|^\+themes:|^-themes:)'; then
+              if has '^docs/DECISIONS\.md$'; then echo "ok: theme change has a decision"
+              else echo "::error::Theme grouping or rankable flag changed in config/watchlist.yml without a docs/DECISIONS.md entry."; fail=1; fi
+            fi
+          fi
+
+          # Decision numbers must be unique
+          DUPES=$(grep -oE '^## [0-9]{4}' docs/DECISIONS.md | sort | uniq -d || true)
+          if [ -n "$DUPES" ]; then echo "::error::Duplicate decision numbers in docs/DECISIONS.md: $DUPES. Take max+1 at merge time (docs/HYGIENE.md)."; fail=1
+          else echo "ok: decision numbers unique"; fi
+
+          # A file in CLAUDE.md's table was added? Remind, don't fail.
+          if has '^docs/[A-Z_]+\.md$'; then
+            for f in $(echo "$CHANGED" | grep -E '^docs/[A-Z_]+\.md$'); do
+              if ! git show "$BASE:$f" >/dev/null 2>&1 && ! grep -q "$f" CLAUDE.md; then
+                echo "::warning::New doc $f is not listed in CLAUDE.md's 'Where things are' table."
+              fi
+            done
+          fi
+          exit $fail

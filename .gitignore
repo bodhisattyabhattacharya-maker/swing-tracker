@@ -1,0 +1,35 @@
+# ---- secrets: this repo is PUBLIC. nothing here may ever be committed ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*_key
+*secret*
+*credentials*
+service_role*
+.supabase/
+supabase/.temp/
+
+# ---- deps / build ----
+node_modules/
+.next/
+out/
+dist/
+build/
+.vercel/
+*.tsbuildinfo
+
+# ---- local noise ----
+.DS_Store
+Thumbs.db
+*.log
+.cache/
+scratch/
+tmp/
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.vscode/*
+!.vscode/extensions.json

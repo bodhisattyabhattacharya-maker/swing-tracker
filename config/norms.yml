@@ -1,0 +1,40 @@
+# Colour norms. EDIT THIS FILE, not code.
+#
+# A cell is shaded when it crosses one of these thresholds. Colour encodes OUR judgment,
+# stated explicitly — the dashboard has no view of its own.
+#
+# Norms are set at BOTH ends wherever both ends matter, so a name stretched far above its
+# normal range stands out as much as one that has fallen below it. That is what makes the
+# sheet work for taking profits and not only for entries.
+#
+# These are first guesses. Expect to tighten them after a week of looking at real data.
+
+norms:
+  rsi_daily:        { low: 30,  high: 70 }
+  rsi_weekly:       { low: 45,  high: 65 }
+  rsi_hourly:       { low: 30,  high: 70 }
+
+  pct_off_ath:      { low: -30 }            # 30%+ below the all-time high
+  pct_off_52w_high: { low: -25 }
+
+  close_vs_sma200d: { low: -5,  high: 40 }  # % distance from the daily 200 SMA
+  close_vs_ema21w:  { low: -5,  high: 20 }  # % distance from the weekly 21 EMA
+  close_vs_sma200w: { low: 0,   high: 10 }  # near long-term support = interesting
+
+  net_debt_ebitda:  { high: 4 }             # veto territory
+  fcf_yield:        { low: 2,   high: 8 }   # percent
+  rev_growth_yoy:   { low: 0 }
+  rev_acceleration: { low: 0 }              # decelerating growth
+  gross_margin_trend: { low: 0 }            # falling over four quarters
+
+  rs_vs_spx_6m:     { low: 0 }              # lagging the market
+  rs_vs_sox_6m:     { low: 0 }              # lagging its own sector
+
+  vix:              { low: 16,  high: 30 }  # hedge zone / scaling zone
+  vix_term_struct:  { low: 0 }              # backwardation
+
+# Factual states — NOT judgments. Rendered with an icon and a label, never colour alone.
+flags:
+  stale_days_price:      3
+  stale_days_searched:   14
+  min_bars_warning:      true   # suppress a value below its warm-up floor

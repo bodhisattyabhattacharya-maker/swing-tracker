@@ -1,0 +1,180 @@
+# Parameter Definitions
+
+**Reference anchor: TradingView Pine Script v5/v6 built-ins.** Where TradingView defines an indicator, we match it exactly. Where it doesn't (realized volatility, relative strength, sector ranks), we define it here and say so.
+
+Every technical definition below has been verified against an independent implementation — see [Verification](#verification) at the end for the numbers.
+
+Status: **technicals settled.** Fundamentals still open, listed at the end.
+
+---
+
+## 1. Primitives
+
+Everything else is built from these three. Getting them right is the whole game.
+
+### SMA — simple moving average
+
+```
+sma(src, n)[t] = (1/n) · Σ src[t-i]   for i = 0 … n-1
+```
+
+Returns **null** before `n` bars exist. We never return a shorter average as a stand-in — a 200-day SMA computed from 60 bars is a different statistic wearing the same label.
+
+### RMA — Wilder's smoothing (`ta.rma`)
+
+```
+α    = 1 / n
+seed = sma(src, n)          at bar index n-1
+rma[t] = α · src[t] + (1 - α) · rma[t-1]
+```
+
+**This is the one that must not be got wrong.** The common alternative — a plain rolling average of gains and losses — is also called "RSI" in the wild and produces materially different numbers. Measured on Micron: **9.4 RSI points apart today, 5.9 points on average over the last 250 bars, 27.3 points at worst.** With thresholds at 30 and 70, that is the difference between a signal firing and not firing.
+
+### EMA — exponential moving average (`ta.ema`)
+
+```
+α = 2 / (n + 1)
+ema[t] = α · src[t] + (1 - α) · ema[t-1]
+```
+
+**Seeding:** TradingView's published `pine_ema` pseudocode seeds with the first source value. We seed with `sma(src, n)` instead. This is deliberate and safe, because **the seed is a transient that decays geometrically as (1-α)^bars** — it is not a permanent difference like the RMA choice above. Verified empirically: after 320 bars the two seeding methods differ by 8×10⁻¹⁶ relative, i.e. floating-point noise. See warm-up requirements in §4.
+
+---
+
+## 2. RSI
+
+```
+change[t] = close[t] - close[t-1]
+gain[t]   = max(change[t], 0)
+loss[t]   = max(-change[t], 0)
+
+avgGain = rma(gain, 14)
+avgLoss = rma(loss, 14)
+
+RS   = avgGain / avgLoss
+RSI  = 100 - 100 / (1 + RS)
+```
+
+- **Source is `close`.** Not HLC3, not typical price.
+- **Length is 14** on all three timeframes.
+- **Edge cases:** `avgLoss = 0` → RSI = 100. `avgGain = 0` and `avgLoss > 0` → RSI = 0. Both are defined explicitly rather than left to produce a division error or a NaN.
+- Null until 14 changes exist (i.e. 15 bars).
+
+Applied identically on hourly, daily and weekly bars. The only difference between the three is which bar series feeds it.
+
+---
+
+## 3. Parameter-by-parameter
+
+### Price behaviour
+
+| Parameter | Definition | Notes |
+|---|---|---|
+| **RSI hourly** | `rsi(close, 14)` on hourly bars | Reported as the standard 3-month hourly RSI. Computed on the full stored 2-year hourly series, so no warm-up problem. |
+| **RSI daily** | `rsi(close, 14)` on daily bars | |
+| **RSI weekly** | `rsi(close, 14)` on weekly bars | |
+| **Daily SMA 50 / 200** | `sma(close, 50)`, `sma(close, 200)` on daily bars | Position reported as `100 × (close / sma − 1)`. |
+| **Weekly 21 EMA** | `ema(close, 21)` on weekly bars | |
+| **Weekly 30W / 200W SMA** | `sma(close, 30)`, `sma(close, 200)` on weekly bars | |
+| **% off all-time high** | `100 × (close / max(high over full listing history) − 1)` | **Intraday highs, not closes.** Split- and dividend-adjusted, matching the basis of today's price. |
+| **% above all-time low** | `100 × (close / min(low over full listing history) − 1)` | Intraday lows. |
+| **% off 52-week high** | `100 × (close / max(high over last 252 trading bars) − 1)` | **252 trading bars, not 52 calendar weeks.** Intraday highs. |
+| **Realized volatility** | `stdev_sample(r, 20) × √252 × 100` where `r[t] = ln(close[t] / close[t−1])` | **Our definition — TradingView has no canonical equivalent.** Log returns; sample standard deviation (n−1 denominator); 252-day annualisation; 20-bar window. |
+| **Volume ratio** | `volume[t] / sma(volume, 50)[t]` | The 50-bar average **includes** the current bar. |
+
+### Weekly bar construction
+
+Every weekly parameter depends on this, so it is pinned explicitly:
+
+- **Week starts Monday** (ISO week).
+- `open` = first daily open of the week; `high` = max daily high; `low` = min daily low; `close` = last daily close; `volume` = sum.
+- The **current partial week is stored** but rules and the dashboard read the **last completed week** (`week_start − 7 days`), so no backtest can see the remainder of a week it is standing in.
+
+### Relative
+
+| Parameter | Definition |
+|---|---|
+| **Relative strength vs SPX / SOX** | `(close[t]/close[t−n] − 1) − (index[t]/index[t−n] − 1)`, for n ∈ {63, 126, 252} **trading bars** — not calendar months. Reported as percentage points of out/under-performance. |
+| **Sector-relative valuation rank** | Percentile rank of the name's FCF yield within its theme group, computed across the group on the same date. |
+| **Sector-relative margin rank** | Same, on trailing-twelve-month gross margin. |
+
+### Market
+
+| Parameter | Definition |
+|---|---|
+| **VIX level** | `^VIX` close. |
+| **VIX regime band** | Fixed bands, not percentiles: `< 16` / `16–30` / `30–50` / `50–80` / `> 80`. |
+| **VIX term structure** | `VIX3M / VIX − 1`, as a percentage. Positive = contango (normal), negative = backwardation (stress priced as persistent). |
+| **Watchlist breadth** | Share of active non-index tickers whose close is above their own daily SMA(200), as a percentage. Names without 200 bars are excluded from both numerator and denominator. |
+
+---
+
+## 4. Warm-up requirements
+
+A recursive indicator's seed decays as `(1−α)^bars`. Below the bar counts here, the reported value still carries measurable seed influence and should be **suppressed rather than shown**.
+
+| Indicator | α | Bars until seed influence < 0.01% |
+|---|---|---|
+| RMA(14) — drives all RSI | 0.071429 | **125** |
+| EMA(21) | 0.090909 | **97** |
+| EMA(50) | 0.039216 | 231 |
+| EMA(200) | 0.009950 | 922 |
+
+SMAs have no seed and are simply null until the window fills.
+
+**Live consequence on the current watchlist:** every name clears the daily thresholds, but on weekly bars **SNDK has 82 weekly bars against the 97 needed for a weekly 21 EMA**. Its weekly EMA is seed-sensitive today and should be flagged as such until roughly March 2027. ALAB (129) and ARM (156) clear it.
+
+---
+
+## 5. Where we knowingly differ from consumer apps
+
+**Technicals: we match TradingView.** The formulas above are theirs.
+
+**Fundamentals: we cannot match, and should not pretend to.** Robinhood and similar apps buy adjusted vendor data; we compute from GAAP filings via SEC XBRL. Our trailing P/E will differ from theirs whenever they use non-GAAP earnings, and no amount of care closes that gap. The column carries a note saying so.
+
+**Robinhood and TradingView also disagree with each other**, so "match the app" was never a single target.
+
+---
+
+## 6. Verification
+
+Each indicator was computed two independent ways and compared. The SQL implementation runs over the full history (2,529 daily / 525 weekly bars); the Python reference implements TradingView's formulas directly over a shorter window with SMA seeding. Agreement across *different windows and different seeding* is a stronger result than agreement between two runs of the same code.
+
+Micron, as of the 2026-09-04 close:
+
+| Indicator | Python (TradingView-exact) | SQL (production) | Difference |
+|---|---|---|---|
+| Daily EMA(21) | 943.558105 | 943.558106 | 1×10⁻⁶ |
+| Daily SMA(50) | 938.279600 | 938.279603 | 3×10⁻⁶ |
+| Daily SMA(200) | 606.479549 | 606.479551 | 2×10⁻⁶ |
+| Weekly RSI(14) | 63.562709 | 63.562711 | 2×10⁻⁶ |
+| Weekly EMA(21) | 839.355683 | 839.355685 | 2×10⁻⁶ |
+
+Residuals are float64 accumulation over hundreds of recursive steps, not logic differences.
+
+A third implementation — pandas `ewm(alpha=1/14, adjust=False)`, a completely different code path — reproduced the Wilder RSI to **exactly zero difference**.
+
+**Invariants checked:** RSI within 0–100 across the series; SMA(200) lies between the min and max of its own window; realized volatility non-negative; EMA(21) closer to the latest price than SMA(50) in a trend.
+
+### Standing checks
+
+- **Golden values.** The five figures above **will be** committed as test fixtures when the test harness lands; until then they are recorded here and protect nothing mechanically. Once committed, any change that moves them fails CI.
+- **Cross-implementation.** SQL against the Python reference on every build.
+- **Invariants.** Run on every ingest.
+
+---
+
+## 7. Still open — fundamentals
+
+Not settled. Each needs a decision before launch:
+
+| Parameter | The choice to make |
+|---|---|
+| Trailing P/E | GAAP vs non-GAAP earnings; basic vs diluted share count. **Largest divergence from consumer apps.** |
+| Net debt / EBITDA | EBITDA is not a GAAP measure. Pick a construction and write it down. |
+| ROIC | At least five accepted definitions of invested capital. |
+| FCF yield | Whether capex includes capitalised software and leases; market cap vs enterprise value denominator. |
+| EV / Sales | Whether enterprise value includes operating lease liabilities. |
+| Revenue growth | Trailing twelve months vs quarterly YoY; as-reported vs restated. |
+| Share count change | Basic vs diluted vs cover-page shares outstanding. |
+| Analyst target gap | Mean vs median target; which analyst set. |

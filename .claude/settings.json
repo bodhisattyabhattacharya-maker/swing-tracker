@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh release:*)",
+      "Bash(vercel:*)",
+      "Bash(npx vercel:*)",
+      "Bash(supabase db push:*)",
+      "Bash(npx supabase db push:*)",
+      "Bash(supabase db reset:*)",
+      "Bash(npx supabase db reset:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(npx supabase functions deploy:*)",
+      "Bash(rm -rf:*)",
+      "Bash(git reset --hard:*)",
+      "Bash(git push --force:*)",
+      "Read(.env)",
+      "Read(.env.*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(psql:*)",
+      "Bash(curl:*)"
+    ]
+  }
+}

@@ -1,0 +1,74 @@
+# Code map
+
+Where code lives, how data flows, and where to start reading. **Update this whenever you change
+the structure or add an entry point** — a stale code map is worse than none, because it sends the
+next agent to the wrong file confidently.
+
+> **Status: mostly empty.** Phase 1 is not built. Directories marked _(planned)_ exist as
+> placeholders. Everything below marked _(planned)_ is intent, not reality — check
+> `docs/FEATURES.md` for what actually exists.
+
+## Data flow
+
+```
+                 ┌─ Yahoo chart API ──┐
+                 │  hourly / daily /  │        (keyless, unofficial)
+                 │  full history      │
+                 └────────┬───────────┘
+   ┌─ SEC XBRL ───────────┤                    (keyless, point-in-time)
+   │                      │
+   │              ┌───────▼──────────────┐
+   └──────────────►  Supabase            │  ← ALL fetching happens here.
+                  │  edge functions      │    Never from a dev machine: no egress.
+                  │  + pg_cron           │
+                  └───────┬──────────────┘
+                          │ writes raw bars + filings
+                  ┌───────▼──────────────┐
+                  │  Postgres            │  hourly_bars, daily_bars, weekly_bars,
+                  │                      │  fundamentals, ingest_runs
+                  └───────┬──────────────┘
+                          │ SQL views (no network needed)
+                  ┌───────▼──────────────┐
+                  │  parameters          │  the 26 tracked numbers
+                  │  + norms applied     │  → same query serves today's scan
+                  └───────┬──────────────┘    and a 10-year replay
+                 ┌────────┴────────┐
+        ┌────────▼──────┐   ┌──────▼─────────┐
+        │ Next.js grid  │   │ email digest   │
+        │ (desktop)     │   │ (scheduled fn) │
+        └───────────────┘   └────────────────┘
+```
+
+## Directories
+
+| Path | Holds | Entry point |
+|---|---|---|
+| `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
+| `supabase/migrations/` | Numbered, forward-only SQL _(planned)_ | Lowest number first; never edit a merged one |
+| `supabase/functions/` | Deno edge functions: ingest, search, digest _(planned)_ | one directory per function |
+| `web/` | Next.js dashboard, desktop-first _(planned)_ | — |
+| `scripts/` | Local helpers — verification, one-off checks _(planned)_ | — |
+| `docs/` | Context files. Start at `ONBOARDING.md` | — |
+| `.claude/skills/` | Per-task procedures | Matched to your task |
+| `.github/workflows/` | CI: secret scan, config validation, log-entry gate | `ci.yml` |
+
+## Where to start reading, by question
+
+| Question | Start at |
+|---|---|
+| How does a price get into the database? | `supabase/functions/` ingest fn, then `ingest_runs` |
+| How is this number computed? | `docs/DEFINITIONS.md`, then the SQL view named after it |
+| Why is this cell coloured? | `config/norms.yml` |
+| Which tickers, and why that peer group? | `config/watchlist.yml` (`theme` vs `tag`) |
+| Why is this value blank? | Warm-up floor (`CONSTRAINTS.md`), or a non-rankable theme |
+| What broke last time? | `docs/INCIDENTS.md` |
+
+## Invariants that outlive any refactor
+
+1. **Fetching lives in Supabase.** Nothing on a dev machine reaches a data provider.
+2. **`config/` is the source of truth** for the watchlist and norms. Code reads it; code never
+   duplicates it.
+3. **Parameters are a pure function of `(ticker, date)`.** This is what makes replay free. Any
+   change that breaks it costs us backtesting.
+4. **Weekly reads the last completed week.** Never the current partial one.
+5. **Tables are RLS deny-by-default.** The schema is public; assume it is read.

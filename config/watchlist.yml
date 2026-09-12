@@ -1,0 +1,92 @@
+# The watchlist. EDIT THIS FILE, not code.
+# Add a line, commit, and the next nightly run backfills that symbol's history.
+#
+# TWO grouping fields, and they do different jobs:
+#   theme  -> the peer group used for sector-relative ranks (params 20, 21).
+#             Must have enough comparable members to mean anything.
+#   tag    -> granular label for display and filtering only. Never used in a calculation.
+#
+# A theme marked `rankable: false` returns NULL for sector-relative ranks. That is deliberate:
+# a null is honest, a rank computed across non-comparable companies is not.
+
+themes:
+  memory-storage:
+    label: "Memory & storage"
+    rankable: true
+    note: "One commodity cycle. Strongest peer group in the list."
+  ai-silicon:
+    label: "AI silicon"
+    rankable: true
+    note: "AI compute and connectivity designers."
+  semi-equipment:
+    label: "Semi equipment"
+    rankable: true
+    note: "Near-perfect peers - same customers, same cycle."
+  foundry-analog-ip:
+    label: "Foundry, analog & IP"
+    rankable: false
+    note: "Mixed margin structures - a foundry, an analog maker and an IP licensor do not compare. Rank suppressed until we either split this or accept it."
+  ai-infrastructure:
+    label: "AI infrastructure"
+    rankable: true
+    note: "Servers, power and networking. Loose but defensible."
+  mega-cap-tech:
+    label: "Mega-cap tech"
+    rankable: true
+  diversified:
+    label: "Diversified bellwethers"
+    rankable: false
+    note: "Not a peer group. Ranking a bank's FCF yield against a health insurer's is meaningless. Held for market context, not comparison."
+
+tickers:
+  # --- memory & storage ---
+  - { symbol: MU,    name: Micron Technology,      theme: memory-storage,     tag: memory-hbm,        bellwether: true }
+  - { symbol: SNDK,  name: SanDisk,                theme: memory-storage,     tag: nand }
+  - { symbol: WDC,   name: Western Digital,        theme: memory-storage,     tag: hdd-nearline }
+  - { symbol: STX,   name: Seagate Technology,     theme: memory-storage,     tag: hdd-nearline }
+  # --- AI silicon ---
+  - { symbol: NVDA,  name: NVIDIA,                 theme: ai-silicon,         tag: ai-compute,        bellwether: true }
+  - { symbol: AVGO,  name: Broadcom,               theme: ai-silicon,         tag: ai-networking,     bellwether: true }
+  - { symbol: AMD,   name: Advanced Micro Devices, theme: ai-silicon,         tag: ai-compute }
+  - { symbol: MRVL,  name: Marvell Technology,     theme: ai-silicon,         tag: custom-silicon }
+  - { symbol: CRDO,  name: Credo Technology,       theme: ai-silicon,         tag: ai-connectivity }
+  - { symbol: ALAB,  name: Astera Labs,            theme: ai-silicon,         tag: ai-connectivity }
+  # --- semi equipment ---
+  - { symbol: ASML,  name: ASML Holding,           theme: semi-equipment,     tag: litho,             bellwether: true }
+  - { symbol: AMAT,  name: Applied Materials,      theme: semi-equipment,     tag: wfe }
+  - { symbol: LRCX,  name: Lam Research,           theme: semi-equipment,     tag: etch-deposition }
+  - { symbol: KLAC,  name: KLA Corporation,        theme: semi-equipment,     tag: process-control }
+  # --- foundry, analog & IP (rank suppressed) ---
+  - { symbol: TSM,   name: Taiwan Semiconductor,   theme: foundry-analog-ip,  tag: foundry,           bellwether: true }
+  - { symbol: INTC,  name: Intel,                  theme: foundry-analog-ip,  tag: foundry-turnaround }
+  - { symbol: TXN,   name: Texas Instruments,      theme: foundry-analog-ip,  tag: analog }
+  - { symbol: QCOM,  name: Qualcomm,               theme: foundry-analog-ip,  tag: edge-ai }
+  - { symbol: ARM,   name: Arm Holdings,           theme: foundry-analog-ip,  tag: ip-licensing }
+  # --- AI infrastructure ---
+  - { symbol: SMCI,  name: Super Micro Computer,   theme: ai-infrastructure,  tag: ai-servers }
+  - { symbol: DELL,  name: Dell Technologies,      theme: ai-infrastructure,  tag: ai-servers }
+  - { symbol: VRT,   name: Vertiv Holdings,        theme: ai-infrastructure,  tag: datacenter-power }
+  - { symbol: ANET,  name: Arista Networks,        theme: ai-infrastructure,  tag: ai-networking }
+  # --- mega-cap tech ---
+  - { symbol: AAPL,  name: Apple,                  theme: mega-cap-tech,      tag: consumer-tech,     bellwether: true }
+  - { symbol: MSFT,  name: Microsoft,              theme: mega-cap-tech,      tag: cloud-ai,          bellwether: true }
+  - { symbol: GOOGL, name: Alphabet,               theme: mega-cap-tech,      tag: cloud-ai-tpu,      bellwether: true }
+  - { symbol: AMZN,  name: Amazon,                 theme: mega-cap-tech,      tag: cloud-retail,      bellwether: true }
+  - { symbol: META,  name: Meta Platforms,         theme: mega-cap-tech,      tag: ai-capex,          bellwether: true }
+  - { symbol: TSLA,  name: Tesla,                  theme: mega-cap-tech,      tag: ev-autonomy }
+  # --- diversified bellwethers (rank suppressed) ---
+  - { symbol: JPM,   name: JPMorgan Chase,         theme: diversified,        tag: financials,        bellwether: true }
+  - { symbol: WMT,   name: Walmart,                theme: diversified,        tag: consumer-staples,  bellwether: true }
+  - { symbol: COST,  name: Costco,                 theme: diversified,        tag: consumer-staples }
+  - { symbol: CAT,   name: Caterpillar,            theme: diversified,        tag: global-capex,      bellwether: true }
+  - { symbol: GE,    name: GE Aerospace,           theme: diversified,        tag: aerospace }
+  - { symbol: XOM,   name: Exxon Mobil,            theme: diversified,        tag: energy,            bellwether: true }
+  - { symbol: UNH,   name: UnitedHealth,           theme: diversified,        tag: healthcare }
+
+# Context only - never traded, excluded from the watchlist grid.
+indices:
+  - { symbol: "^VIX",   name: CBOE Volatility Index }
+  - { symbol: "^VIX3M", name: CBOE 3-Month Volatility Index }
+  - { symbol: "^GSPC",  name: S&P 500 }
+  - { symbol: "^NDX",   name: Nasdaq 100 }
+  - { symbol: "^SOX",   name: PHLX Semiconductor Index }
