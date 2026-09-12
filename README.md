@@ -1,4 +1,4 @@
-# Swing Tracker
+# Swing Tracker.
 
 An end-of-day dashboard that tracks 26 parameters across a fixed watchlist of ~40 names,
 and flags the ones sitting somewhere unusual — cheap enough to buy, or stretched enough to trim.
