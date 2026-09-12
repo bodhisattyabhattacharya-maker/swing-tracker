@@ -1,0 +1,9 @@
+# Supabase CLI project config. Read by the GitHub integration when it deploys on merge to main.
+# Keep this minimal: only what changes behaviour. Local-dev settings (ports, auth, studio)
+# belong on a developer's machine, not in the public repo.
+project_id = "qxngsbehqbcxnyyllalh"
+
+[functions.ingest]
+# The gateway checks for a valid Supabase JWT before the function runs. The function then
+# requires that JWT to be the service_role key specifically (decision 0017). Two locks.
+verify_jwt = true

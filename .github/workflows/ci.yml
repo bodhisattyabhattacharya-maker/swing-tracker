@@ -69,6 +69,25 @@ jobs:
           [ "$fail" = 0 ] && echo "all migrations documented"
           exit $fail
 
+  functions:
+    name: Edge function tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      # Unit tests only: fixtures of Yahoo's real response shapes, fetch stubbed. No network
+      # test here on purpose - an unofficial endpoint being down must not block a docs PR.
+      # --allow-env is for the yaml package, which reads process.env on load.
+      - name: deno test (fixtures, no network)
+        run: deno test --allow-env supabase/functions/
+      - name: deno check (types against the real supabase-js)
+        run: |
+          for f in supabase/functions/*/index.ts; do
+            [ -e "$f" ] || continue
+            deno check "$f"
+          done
+
   hygiene:
     name: Change hygiene (docs/HYGIENE.md)
     runs-on: ubuntu-latest

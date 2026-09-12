@@ -79,6 +79,8 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 
 ## Current state
 
-Phase 1 (tracker) not built. A throwaway prototype proved the pipeline end to end and verified
-the indicator formulas — see `docs/DECISIONS.md` 0009 for what carries over. Phase 2 (rule
-engine, alerts, backtesting) is specified, not started.
+Phase 1 (tracker) in progress. Foundation schema applied (`tickers`, `daily_bars`,
+`hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand — the
+pg_cron schedule, parameter views, golden-value harness and the web grid do not exist yet.
+`docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is
+specified, not started.

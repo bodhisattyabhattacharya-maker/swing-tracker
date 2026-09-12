@@ -133,3 +133,20 @@ side route. The `run-migration` skill says so.
 **Also decided:** "automatically expose new tables" is revoked in the first migration rather
 than toggled in the dashboard — a setting in code is a setting the next session can see.
 \n
+
+## 0017 — 2026-09-12 — Ingest: one function, service-role bearer, deactivate never delete
+**Decided:** a single edge function `ingest` with `?scope=tickers|daily|hourly|all`, callable
+only with the project's service_role key as the bearer (constant-time compared inside the
+function, on top of the gateway's JWT check). Symbols removed from `watchlist.yml` are set
+`active=false`, never deleted. A symbol with no bars gets the full range automatically, capped
+per run. **Why:** the function URL is derivable from a public repo and each call is ~80 Yahoo
+requests on our egress, so it needs a real lock, and the service_role key already exists in
+the runtime and in Vault — no new secret to rotate. Deactivating rather than deleting is because
+`daily_bars` cascades on delete: a one-line yml edit must not erase years of history. The
+automatic catch-up is what makes "add a line, commit" the whole procedure for a new ticker.
+**Rejected:** a separate `INGEST_SECRET` (one more secret for marginal gain, since pg_cron runs
+inside the same project); no auth (public URL); one function per scope (three deploys sharing
+one provider); deleting stale tickers (data loss for a config edit).
+**Also decided:** edge functions use `npm:` and `node:` import specifiers, not `jsr:`, because
+jsr.io is blocked from the coding sandbox and the npm registry is not — tests must run where the
+code is written (CONSTRAINTS.md 2026-09-12).
