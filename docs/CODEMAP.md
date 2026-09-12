@@ -44,7 +44,7 @@ next agent to the wrong file confidently.
 | Path | Holds | Entry point |
 |---|---|---|
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
-| `supabase/migrations/` | Numbered, forward-only SQL _(planned)_ | Lowest number first; never edit a merged one |
+| `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
 | `supabase/functions/` | Deno edge functions: ingest, search, digest _(planned)_ | one directory per function |
 | `web/` | Next.js dashboard, desktop-first _(planned)_ | — |
 | `scripts/` | Local helpers — verification, one-off checks _(planned)_ | — |

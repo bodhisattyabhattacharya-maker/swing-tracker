@@ -44,8 +44,8 @@ Evidence and dates in `docs/CONSTRAINTS.md`; formulas in `docs/DEFINITIONS.md`.
 
 ## Hard stops — confirm in-session, every time
 
-Deploying or pushing · migrations or schema changes · sending email or any external message ·
-anything irreversible. "You said so earlier" is not confirmation.
+Deploying or pushing · applying migrations by any route other than merging a PR · sending
+email or any external message · anything irreversible. "You said so earlier" is not confirmation.
 Also enforced in `.claude/settings.json`, because prose is not enforcement.
 
 ## This repo is PUBLIC

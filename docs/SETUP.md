@@ -24,7 +24,12 @@ wired. Owner steps happen once; contributor steps happen per person.
 - [ ] Organisation → Team → invite the other human as **Developer**.
 - [ ] Copy the **anon** key into `.env.local` (never committed). Copy the **service_role** key
       into GitHub Actions secrets and nowhere else.
-- [ ] Enable `pg_net` and `pg_cron`.
+- [x] `pg_net` and `pg_cron` — enabled by migration `20260912120000_foundation`.
+- [x] **GitHub integration linked** to the repo. Migrations under `supabase/migrations/` deploy
+      when merged to `main` (decision 0016). This replaces the manual-apply hard stop with
+      "a human merges the PR" — strictly stronger, since Claude never applies anything.
+- [x] "Enable automatic RLS" was ticked at creation. "Automatically expose new tables" was
+      left on and is **revoked in the first migration** instead, so it is explicit and reviewable.
 
 ## Owner — Vercel, once
 
