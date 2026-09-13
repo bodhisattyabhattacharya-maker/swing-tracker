@@ -13,7 +13,9 @@
  * Source:  Yahoo v8/finance/chart via ./yahoo.ts. Swap providers in PROVIDERS below.
  * Fails:   see yahoo.ts for the two "HTTP 200 but broken" shapes. A watchlist fetch or parse
  *          failure aborts the whole run (a wrong watchlist must not deactivate everything).
- * Rate:    4 symbols concurrently, 250 ms between chunks. Verified polite on the prototype.
+ * Rate:    2 symbols concurrently, 1 s between chunks, and a 429 aborts the whole run. The
+ *          first live backfill did ~90 requests in 7 s and earned a 429 that was still in force
+ *          6 minutes later (INCIDENTS.md 2026-09-13), so politeness here is not cosmetic.
  *
  * AUTH:    the function URL is derivable from the public repo, so it must not be callable by
  *          strangers - each call is ~80 requests to Yahoo on our egress. The bearer must be the
@@ -37,14 +39,16 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "./auth.ts";
 import type { BarProvider, Range } from "./provider.ts";
-import { yahoo } from "./yahoo.ts";
+import { RateLimitError, yahoo } from "./yahoo.ts";
 import { fetchWatchlist } from "./watchlist.ts";
 
 /** Registered providers. The active one is chosen by env `BAR_PROVIDER`, default yahoo. */
 const PROVIDERS: Record<string, BarProvider> = { [yahoo.name]: yahoo };
 
-const CONCURRENCY = 4; // symbols in flight at once
-const PAUSE_MS = 250; // between chunks - be a polite guest on an unofficial endpoint
+// Yahoo rate-limits by IP and the penalty outlives the burst, so this is ~2 requests/second.
+// Do not raise these to make a backfill finish sooner: a 429 costs the whole run and then some.
+const CONCURRENCY = 2; // symbols in flight at once
+const PAUSE_MS = 1000; // between chunks
 const UPSERT_CHUNK = 1000; // PostgREST is happiest under a few thousand rows per call
 const DEFAULT_FULL_LIMIT = 8;
 
@@ -54,8 +58,10 @@ interface SymbolResult {
   counts: Record<string, number>;
   errors: Record<string, string>;
   full: string[]; // symbols fetched with the full range this run
-  deferred: string[]; // symbols that needed full but exceeded `limit`
+  deferred: string[]; // symbols that needed full but exceeded `limit`, or skipped after a 429
   written: number;
+  /** Set when Yahoo returned 429 and the remaining symbols were abandoned deliberately. */
+  rate_limited?: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,9 +172,20 @@ async function ingestBars(
         result.counts[symbol] = rows.length;
         result.written += rows.length;
       } catch (e) {
+        if (e instanceof RateLimitError) result.rate_limited = true;
         result.errors[symbol] = e instanceof Error ? e.message : String(e);
       }
     }));
+
+    // A 429 means the IP is in a penalty window; the next request would extend it, not succeed.
+    // Abandon the rest and let the next run pick them up - every symbol not yet in the table
+    // still qualifies for the automatic full catch-up, so nothing is lost but time.
+    if (result.rate_limited) {
+      for (const { symbol } of plan.slice(i + CONCURRENCY)) {
+        if (!(symbol in result.counts)) result.deferred.push(symbol);
+      }
+      break;
+    }
     if (i + CONCURRENCY < plan.length) await new Promise((r) => setTimeout(r, PAUSE_MS));
   }
   return result;
@@ -214,6 +231,7 @@ Deno.serve(async (req) => {
 
   const out: Record<string, unknown> = { ok: true, run_id: run.id, scope };
   let written = 0;
+  let rateLimited = false;
   const problems: string[] = [];
 
   try {
@@ -226,14 +244,16 @@ Deno.serve(async (req) => {
       const r = await ingestBars(sb, provider, "daily", syms, forceFull, fullLimit);
       out.daily = r;
       written += r.written;
+      rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `daily:${s}`));
     }
-    if (scope === "hourly" || scope === "all") {
+    if ((scope === "hourly" || scope === "all") && !rateLimited) {
       // Hourly feeds RSI-hourly only (param 10), which is not computed for indices.
       const syms = await activeSymbols(sb, only, false);
       const r = await ingestBars(sb, provider, "hourly", syms, forceFull, fullLimit);
       out.hourly = r;
       written += r.written;
+      rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `hourly:${s}`));
     }
   } catch (e) {
@@ -242,6 +262,9 @@ Deno.serve(async (req) => {
     out.fatal = e instanceof Error ? e.message : String(e);
   }
   if (problems.length) out.ok = false;
+  // Surfaced at the top level so `select detail->>'rate_limited'` answers "why did this stop?"
+  // without digging through per-symbol errors.
+  if (rateLimited) out.rate_limited = true;
 
   await sb.from("ingest_runs").update({
     finished_at: new Date().toISOString(),

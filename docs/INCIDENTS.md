@@ -49,3 +49,37 @@ this and the auth bug in one go, roughly 40 minutes earlier. Two runtime bugs in
 "tests pass, therefore it works" — the FEATURES rule added yesterday (no "live" line until a
 real call succeeds) now has teeth. A CI check is not possible: the grant only exists in the
 deployed database, which CI cannot reach.
+
+## 2026-09-13 — the daily backfill wrote monthly and quarterly bars into `daily_bars`
+**Symptom:** the first successful ingest reported `ok: true`, 15,100 rows, no errors — and the
+daily table was wrong. 1,164 rows across 4 index symbols, spaced 30.4 and 90.8 days apart, dated
+the 1st of each month or quarter. Hourly in the same run was exactly right (3,484 bars each,
+2024-09-12 → 2026-09-11), which is what made the daily numbers stand out.
+**Root cause:** the full daily fetch used `range=max&interval=1d`. Yahoo chooses granularity
+from the span and ignores `interval`, so a 40-year request comes back quarterly. Nothing in the
+response says "this is not what you asked for": no error, plausible OHLC, a `timestamp` array of
+the right shape. `CONSTRAINTS.md` had recorded "range=max (quarterly candles...)" back in August
+and I paired it with `interval=1d` anyway, assuming the interval would win.
+**Fix:** `chartUrl()` in `yahoo.ts` builds the full daily URL from `period1`/`period2` epochs and
+is unit-tested to assert `range=` never appears in it. The 1,164 bad rows are deleted by hand —
+they sit on non-trading dates, so a correct backfill would leave them in place rather than
+overwrite them.
+**Earlier detection:** a shape assertion, now the rule for every ingest: after a backfill, check
+median spacing between bars and reject anything over ~5 days for a daily series. Row counts and
+`ok: true` proved nothing here — the run was *successful*, it just fetched the wrong thing. A
+fixture test cannot catch it either, since the fixture is whatever we believed the API returns.
+
+## 2026-09-13 — Yahoo 429'd Supabase's IP and stayed angry
+**Symptom:** three probe requests fired 3 minutes after the backfill returned plain-text
+`429 Too Many Requests`; a single probe 6 minutes after still did. The backfill itself — ~90
+requests in 6.9 seconds — had a 100% success rate, so nothing warned us on the way in.
+**Root cause:** 4 concurrent requests with 250 ms pauses is roughly 13 requests/second. That is
+inside whatever burst Yahoo tolerates but outside its sustained budget, and exceeding it buys a
+penalty window measured in minutes, not seconds.
+**Fix:** concurrency 4 → 2, pause 250 ms → 1000 ms (~2 req/s), and a 429 now raises
+`RateLimitError`, which abandons the rest of the run instead of hammering. Abandoned symbols
+land in `deferred` and the next run picks them up, because a symbol with no bars still qualifies
+for the automatic full catch-up.
+**Earlier detection:** none available — the limit is invisible until crossed, and Yahoo publishes
+no number. What we can do is not discover it again: the cooldown length is still unmeasured, and
+`detail->>'rate_limited'` now names this cause directly in `ingest_runs`.
