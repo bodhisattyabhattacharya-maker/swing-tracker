@@ -196,25 +196,37 @@ async function ingestBars(
     if (since < provider.minIntervalMs) await sleep(provider.minIntervalMs - since);
     lastRequestAt.set(provider.name, Date.now());
 
+    // Counted HERE, once, because this is the moment the rate budget is spent. Counting inside
+    // the try (and again in the catch) double-charged a symbol that failed after its request,
+    // which silently halved the run - a `bigint` upsert rejection is exactly that case.
+    fetched++;
+
+    // Breadcrumbs. The run row is only written at the end, so a run killed by the 150 s wall
+    // clock leaves NO record of where it got to - the first live attempt was diagnosed from a
+    // bare "504" and nothing else. These lines are the difference between a mystery and a fix.
+    console.log(`${kind} ${symbol} via ${provider.name} (${range})`);
+
     try {
       const rows = kind === "daily"
         ? await provider.daily(symbol, range)
         : await provider.hourly(symbol, range);
 
       // null means "this provider does not serve this timeframe" - not a failure, and not zero
-      // bars either. Distinguishing the two is what keeps `ok` meaningful.
+      // bars either. Distinguishing the two is what keeps `ok` meaningful. No request was made,
+      // so hand the budget back.
       if (rows === null) {
+        fetched--;
         result.skipped.push(symbol);
         continue;
       }
 
-      fetched++;
       await upsertChunked(sb, table, rows, key);
       result.counts[symbol] = rows.length;
       result.written += rows.length;
+      console.log(`  ${symbol}: ${rows.length} rows`);
     } catch (e) {
-      fetched++; // a failed request still consumed rate budget
       result.errors[symbol] = e instanceof Error ? e.message : String(e);
+      console.error(`  ${symbol} FAILED: ${result.errors[symbol]}`);
       if (e instanceof RateLimitError) {
         result.rate_limited = true;
         // Abandon the rest; they are all still eligible for the full catch-up next run.
