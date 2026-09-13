@@ -430,3 +430,30 @@ full-access credential and this repo is public, so a single wrong prefix would b
 leak. The variable is therefore named `SUPABASE_SERVICE_ROLE_KEY` with no prefix, `lib/grid.ts`
 says so at the top, and the PR verified it by building with a sentinel value and grepping the
 client bundle for it.
+
+## 0026 — 2026-09-13 — Staleness measures the pipeline, not the calendar
+**Decided:** `grid_status.is_stale` is true when the **daily ingest has not completed successfully
+within `pipeline_stale_after_hours`** (default 30). It is no longer derived from the gap between
+today and the newest bar. `data_through` and `days_behind` are still published, as facts, but they
+are not the verdict.
+**Why:** the original test tolerated a Friday-to-Monday gap exactly, so the first public holiday
+would have fired the banner on perfectly healthy data — Friday's bar, a closed Monday, and
+Tuesday's check reading four days. **A banner that lies once is ignored forever after**, and its
+entire job is to be believed on the day something actually breaks. Ten people read this page and
+none of them can refresh it, so a false positive is not cosmetic; it is the failure of the feature.
+**Why hours rather than days:** the schedule is daily, so "a cycle was missed" is naturally measured
+in hours. A day-granular threshold cannot tell "ran late last night" from "did not run at all".
+**Why only runs that fetched bars count:** a `scope=tickers` run syncs the watchlist and the norms
+and reports ok=true without touching a price. Counting it would let a config sync mask a week of
+failed price ingests. The filter is on the run's detail carrying a `daily` section, which only the
+bar-fetching path writes.
+**Why `last_run` and `last_success` are both published:** they answer different questions, and the
+difference between "nothing has run" and "it ran and failed" needs different fixes.
+**Rejected:** counting weekdays instead of calendar days (closer, but still wrong on holidays —
+it trades a wrong answer four times a year for a wrong answer nine times a year in the US); a
+hard-coded market calendar (a dependency and a maintenance burden for a question we can answer
+without one); and simply raising the threshold to 4 days, which buys silence about real failures
+for a day and still breaks on a Thursday-Friday holiday pair.
+**Verified against seven scenarios** rather than reasoned about, including the two that matter:
+a Monday holiday with a healthy cron reads **fresh**, and a config-only sync an hour ago does not
+stop a 40-hour-old price pipeline reading **stale**.

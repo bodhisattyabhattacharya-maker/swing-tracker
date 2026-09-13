@@ -352,3 +352,27 @@ about.
 **Not yet verified:** the page has never rendered real data. The sandbox has no network route to
 `*.supabase.co`, so the happy path is confirmed only by the first deploy with the env vars set.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Freshness that will not cry wolf
+**What:** `grid_status` rewritten so staleness measures the pipeline — hours since the daily ingest
+last completed successfully — instead of the gap to the newest bar. The dashboard banner and the
+header stat follow. `stale_days_price` in `config/norms.yml` becomes
+`pipeline_stale_after_hours: 30`.
+**Why:** the first version would have fired the banner on the first market holiday. Friday's bar, a
+closed Monday, Tuesday's check reads four days against a three-day threshold, and the page tells ten
+people that healthy data is broken. Decision 0026.
+**Architecture impact:** none structurally, but it changes what the page is asserting. It no longer
+claims to know the market calendar; it claims to know whether its own pipeline ran. That is a
+smaller claim and a true one, and it is the claim the email digest will need too — which is why it
+was fixed before the digest rather than after.
+**Verified by:** seven scenarios exercised against a local PostgreSQL 16 fixture, each inserting a
+different run history and reading the verdict. Ordinary weekday, Sunday, and **Monday holiday with
+a healthy cron** all read fresh. Failed cron, a week of silence, and never-succeeded-at-all all read
+stale. The subtle one: a config-only sync one hour ago does **not** mask a price pipeline that last
+succeeded 40 hours back — it still reads stale, because only runs that actually fetched bars count
+as evidence. `next build` with no environment still passes.
+**Also caught:** `create or replace view` cannot rename a column, so the migration drops and
+recreates. Worth knowing because the error is clear but only appears at apply time — and because a
+test script of mine printed "OK" after the failed step, which is exactly the kind of false green
+this project keeps finding.
+**By:** Bodhi + Claude
