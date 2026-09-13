@@ -81,5 +81,11 @@ penalty window measured in minutes, not seconds.
 land in `deferred` and the next run picks them up, because a symbol with no bars still qualifies
 for the automatic full catch-up.
 **Earlier detection:** none available — the limit is invisible until crossed, and Yahoo publishes
-no number. What we can do is not discover it again: the cooldown length is still unmeasured, and
-`detail->>'rate_limited'` now names this cause directly in `ingest_runs`.
+no number. What we can do is not discover it again: `detail->>'rate_limited'` names this cause
+directly in `ingest_runs`, and pacing is now declared by each provider from its *published*
+limit rather than guessed.
+**Outcome (same day):** there was no cooldown. `429` persisted through 90 minutes of silence,
+then through 4.5 hours, then on `query2.finance.yahoo.com` as well. The endpoint was abandoned
+and the provider replaced — decision 0019. The lasting lesson is not about pacing: it is that
+an unofficial endpoint can withdraw consent permanently and without recourse, so the thing to
+avoid was depending on one, not merely hitting it too fast.

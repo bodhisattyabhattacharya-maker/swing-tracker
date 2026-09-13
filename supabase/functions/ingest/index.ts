@@ -1,68 +1,77 @@
 /**
- * ingest — sync the watchlist and pull daily / hourly bars into Postgres.
+ * ingest — sync the watchlist and pull daily bars into Postgres.
  *
- * In:      Authorization: Bearer <service_role key>   (anything else -> 401, see AUTH below)
+ * In:      Authorization: Bearer <service_role key>   (anything else -> 401, see auth.ts)
  *          ?scope=tickers|daily|hourly|all            default all
  *          ?symbols=MU,NVDA                           restrict to these (default: every active row)
  *          ?full=1                                    force the full range, not incremental
- *          ?limit=8                                   max full-range symbols per run (default 8)
+ *          ?limit=10                                  max symbols fetched this run (default 10)
  *          ?by=<who>                                  ingest_runs.triggered_by (default "schedule")
  * Out:     JSON { ok, run_id, scope, tickers, daily, hourly } and one row in ingest_runs.
  *          A per-symbol failure is recorded in `errors` and does not abort the run; `ok` is
  *          false if any symbol failed, so a partial run is visible, not silent.
- * Source:  Yahoo v8/finance/chart via ./yahoo.ts. Swap providers in PROVIDERS below.
- * Fails:   see yahoo.ts for the two "HTTP 200 but broken" shapes. A watchlist fetch or parse
- *          failure aborts the whole run (a wrong watchlist must not deactivate everything).
- * Rate:    2 symbols concurrently, 1 s between chunks, and a 429 aborts the whole run. The
- *          first live backfill did ~90 requests in 7 s and earned a 429 that was still in force
- *          6 minutes later (INCIDENTS.md 2026-09-13), so politeness here is not cosmetic.
+ * Sources: equities from ./polygon.ts, index series from ./fred.ts, routed by `supports()`
+ *          (decision 0019). A symbol no provider claims is an error, never a silent gap.
+ * Fails:   see each provider for the shapes that arrive as HTTP 200 but are not usable. A
+ *          watchlist fetch or parse failure aborts the whole run, because a truncated watchlist
+ *          would otherwise deactivate every ticker.
  *
- * AUTH:    the function URL is derivable from the public repo, so it must not be callable by
- *          strangers - each call is ~80 requests to Yahoo on our egress. The bearer must be the
- *          project's service_role key: either its JWT payload says `role: service_role` (the
- *          gateway has already verified the signature - verify_jwt is on) or it byte-matches the
- *          runtime env var. See auth.ts for why both. pg_cron supplies the key from Vault
- *          (scheduling migration); a human supplies it from the SQL editor the same way.
+ * WHY THIS RUNS IN BATCHES - the thing to understand before "fixing" the limit:
+ *   Polygon's free plan allows 5 requests/minute, so each equity costs 12.5 s of wall clock and
+ *   an edge function does not live long enough to walk 36 of them. One run therefore fetches
+ *   `limit` symbols and lists the rest in `deferred`; the next run picks them up, because a
+ *   symbol with no bars still qualifies for the automatic full catch-up. Four runs cover the
+ *   watchlist. Raising `limit` past ~11 does not go faster, it just gets the run killed halfway.
+ *   Upgrading to Polygon Starter makes calls unlimited and this whole batching story goes away.
  *
- * CATCH-UP: a symbol with no bars yet gets the full range automatically, so "add a line to the
- *          yml, commit" is enough - the next scheduled run backfills it. Full fetches are capped
- *          per run (`limit`) because a first run over 41 symbols would blow the wall-clock
- *          budget; the leftovers are listed in `deferred` and picked up next run. Calling with
- *          the same parameters again is safe: upserts are keyed on (symbol, d) / (symbol, ts).
+ *   Not done yet, deliberately: Polygon's GROUPED daily endpoint returns every US ticker for one
+ *   date in a single call, which would make the incremental path 1 request instead of 36. Worth
+ *   doing once the per-symbol path is proven - see FEATURES.md.
  *
- * PARTIAL BARS: during the session Yahoo's last daily bar and last hourly bar are live and
- *          partial. They are written as-is and overwritten by the next run. Only the close-time
- *          daily run and the Saturday weekly roll should be trusted for settled values - that
- *          is what the four clocks in PROPOSAL.md are for.
+ * AUTH:    the function URL is derivable from a public repo, so the bearer must be the project's
+ *          service_role key. auth.ts explains how that is checked and why both paths exist.
+ *
+ * PARTIAL BARS: during the session the last daily bar is live and partial. It is written as-is
+ *          and overwritten by the next run. Only the post-close run should be trusted for
+ *          settled values - that is what the four clocks in PROPOSAL.md are for.
  */
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "./auth.ts";
-import type { BarProvider, Range } from "./provider.ts";
-import { RateLimitError, yahoo } from "./yahoo.ts";
+import { type BarProvider, type Range, RateLimitError } from "./provider.ts";
+import { polygon } from "./polygon.ts";
+import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
 
-/** Registered providers. The active one is chosen by env `BAR_PROVIDER`, default yahoo. */
-const PROVIDERS: Record<string, BarProvider> = { [yahoo.name]: yahoo };
+/**
+ * Providers in routing order. The first one whose `supports()` returns true wins, so order
+ * matters only if two ever overlap - today FRED claims "^"-prefixed series and Polygon claims
+ * everything else, which is exhaustive and disjoint.
+ */
+const PROVIDERS: BarProvider[] = [fred, polygon];
 
-// Yahoo rate-limits by IP and the penalty outlives the burst, so this is ~2 requests/second.
-// Do not raise these to make a backfill finish sooner: a 429 costs the whole run and then some.
-const CONCURRENCY = 2; // symbols in flight at once
-const PAUSE_MS = 1000; // between chunks
 const UPSERT_CHUNK = 1000; // PostgREST is happiest under a few thousand rows per call
-const DEFAULT_FULL_LIMIT = 8;
+const DEFAULT_LIMIT = 10; // see "WHY THIS RUNS IN BATCHES"
 
 type Scope = "tickers" | "daily" | "hourly" | "all";
 
 interface SymbolResult {
   counts: Record<string, number>;
   errors: Record<string, string>;
-  full: string[]; // symbols fetched with the full range this run
-  deferred: string[]; // symbols that needed full but exceeded `limit`, or skipped after a 429
+  /** Symbols left for the next run: over the per-run limit, or abandoned after a 429. */
+  deferred: string[];
+  /** Symbols whose provider does not serve this timeframe at all (FRED has no hourly). */
+  skipped: string[];
   written: number;
-  /** Set when Yahoo returned 429 and the remaining symbols were abandoned deliberately. */
+  /** Set when a provider returned 429 and the rest of the run was abandoned deliberately. */
   rate_limited?: true;
 }
+
+function providerFor(symbol: string): BarProvider | null {
+  return PROVIDERS.find((p) => p.supports(symbol)) ?? null;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
 // Auth - see auth.ts
@@ -81,8 +90,16 @@ async function syncTickers(sb: SupabaseClient, url?: string) {
   // An empty parse is far more likely a broken file than an intentionally empty watchlist,
   // and acting on it would deactivate every ticker. Refuse.
   if (rows.length === 0) throw new Error("watchlist parsed to zero rows; refusing to sync");
-  const synced_at = new Date().toISOString();
 
+  // Catch a watchlist symbol that no provider can serve NOW, at sync time, rather than as a
+  // mystery gap in the grid later. Cheap, and it makes adding a ticker fail loudly if it needs
+  // a provider we do not have (an index without a FRED series, say).
+  const orphans = rows.filter((r) => providerFor(r.symbol) === null).map((r) => r.symbol);
+  if (orphans.length) {
+    throw new Error(`watchlist has symbols no provider serves: ${orphans.join(", ")}`);
+  }
+
+  const synced_at = new Date().toISOString();
   const { error: upErr } = await sb
     .from("tickers")
     .upsert(rows.map((r) => ({ ...r, synced_at })), { onConflict: "symbol" });
@@ -132,61 +149,81 @@ async function upsertChunked(sb: SupabaseClient, table: string, rows: unknown[],
 }
 
 /**
- * Shared driver for both tables. Decides the range per symbol, caps full fetches, then runs
- * the provider in polite chunks. Never throws for a single symbol - records it and moves on.
+ * Shared driver for both tables. Strictly sequential: each provider declares the gap it needs
+ * between requests and we honour it per provider, so a slow equity API does not make the three
+ * FRED series wait 12.5 s each.
+ *
+ * Never throws for a single symbol - it records the error and moves on. A 429 is the exception:
+ * that aborts the run, because the next request would deepen the penalty rather than succeed.
  */
 async function ingestBars(
   sb: SupabaseClient,
-  provider: BarProvider,
   kind: "daily" | "hourly",
   symbols: string[],
   forceFull: boolean,
-  fullLimit: number,
+  limit: number,
 ): Promise<SymbolResult> {
   const table = kind === "daily" ? "daily_bars" : "hourly_bars";
   const key = kind === "daily" ? "symbol,d" : "symbol,ts";
-  const result: SymbolResult = { counts: {}, errors: {}, full: [], deferred: [], written: 0 };
+  const result: SymbolResult = {
+    counts: {},
+    errors: {},
+    deferred: [],
+    skipped: [],
+    written: 0,
+  };
 
-  // Plan first, fetch second, so the cap on full fetches is applied before any network call.
-  const plan: Array<{ symbol: string; range: Range }> = [];
-  for (const s of symbols) {
-    const needsFull = forceFull || !(await hasBars(sb, table, s));
-    if (!needsFull) {
-      plan.push({ symbol: s, range: "incremental" });
-    } else if (result.full.length < fullLimit) {
-      result.full.push(s);
-      plan.push({ symbol: s, range: "full" });
-    } else {
-      result.deferred.push(s);
+  /** Last request time per provider name, so pacing is per-provider rather than global. */
+  const lastRequestAt = new Map<string, number>();
+  let fetched = 0;
+
+  for (const symbol of symbols) {
+    const provider = providerFor(symbol);
+    if (!provider) {
+      result.errors[symbol] = "no provider serves this symbol";
+      continue;
     }
-  }
 
-  for (let i = 0; i < plan.length; i += CONCURRENCY) {
-    const chunk = plan.slice(i, i + CONCURRENCY);
-    await Promise.all(chunk.map(async ({ symbol, range }) => {
-      try {
-        const rows = kind === "daily"
-          ? await provider.daily(symbol, range)
-          : await provider.hourly(symbol, range);
-        await upsertChunked(sb, table, rows, key);
-        result.counts[symbol] = rows.length;
-        result.written += rows.length;
-      } catch (e) {
-        if (e instanceof RateLimitError) result.rate_limited = true;
-        result.errors[symbol] = e instanceof Error ? e.message : String(e);
-      }
-    }));
-
-    // A 429 means the IP is in a penalty window; the next request would extend it, not succeed.
-    // Abandon the rest and let the next run pick them up - every symbol not yet in the table
-    // still qualifies for the automatic full catch-up, so nothing is lost but time.
-    if (result.rate_limited) {
-      for (const { symbol } of plan.slice(i + CONCURRENCY)) {
-        if (!(symbol in result.counts)) result.deferred.push(symbol);
-      }
-      break;
+    // The per-run cap exists because of wall clock, not politeness - see the header.
+    if (fetched >= limit) {
+      result.deferred.push(symbol);
+      continue;
     }
-    if (i + CONCURRENCY < plan.length) await new Promise((r) => setTimeout(r, PAUSE_MS));
+
+    const range: Range = forceFull || !(await hasBars(sb, table, symbol)) ? "full" : "incremental";
+
+    const since = Date.now() - (lastRequestAt.get(provider.name) ?? 0);
+    if (since < provider.minIntervalMs) await sleep(provider.minIntervalMs - since);
+    lastRequestAt.set(provider.name, Date.now());
+
+    try {
+      const rows = kind === "daily"
+        ? await provider.daily(symbol, range)
+        : await provider.hourly(symbol, range);
+
+      // null means "this provider does not serve this timeframe" - not a failure, and not zero
+      // bars either. Distinguishing the two is what keeps `ok` meaningful.
+      if (rows === null) {
+        result.skipped.push(symbol);
+        continue;
+      }
+
+      fetched++;
+      await upsertChunked(sb, table, rows, key);
+      result.counts[symbol] = rows.length;
+      result.written += rows.length;
+    } catch (e) {
+      fetched++; // a failed request still consumed rate budget
+      result.errors[symbol] = e instanceof Error ? e.message : String(e);
+      if (e instanceof RateLimitError) {
+        result.rate_limited = true;
+        // Abandon the rest; they are all still eligible for the full catch-up next run.
+        for (const s of symbols.slice(symbols.indexOf(symbol) + 1)) {
+          if (!(s in result.counts)) result.deferred.push(s);
+        }
+        break;
+      }
+    }
   }
   return result;
 }
@@ -212,19 +249,15 @@ Deno.serve(async (req) => {
   }
   const only = url.searchParams.get("symbols")?.split(",").map((s) => s.trim()).filter(Boolean) ?? null;
   const forceFull = url.searchParams.get("full") === "1";
-  const fullLimit = Number(url.searchParams.get("limit") ?? DEFAULT_FULL_LIMIT);
+  const limit = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT);
   const triggeredBy = url.searchParams.get("by") ?? "schedule";
-
-  const providerName = Deno.env.get("BAR_PROVIDER") ?? yahoo.name;
-  const provider = PROVIDERS[providerName];
-  if (!provider) return json({ error: `unknown BAR_PROVIDER "${providerName}"` }, 500);
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
   // Open the run row first so a crash mid-way still leaves a started-but-unfinished record.
   const { data: run, error: runErr } = await sb
     .from("ingest_runs")
-    .insert({ source: provider.name, scope, triggered_by: triggeredBy })
+    .insert({ source: PROVIDERS.map((p) => p.name).join("+"), scope, triggered_by: triggeredBy })
     .select("id")
     .single();
   if (runErr) return json({ error: `ingest_runs insert: ${runErr.message}` }, 500);
@@ -239,18 +272,20 @@ Deno.serve(async (req) => {
       out.tickers = await syncTickers(sb, Deno.env.get("WATCHLIST_URL") ?? undefined);
     }
     if (scope === "daily" || scope === "all") {
-      // Indices included: ^VIX, ^GSPC, ^SOX are daily-only context (params 22-25).
+      // Indices included: ^VIX, ^VIX3M and ^GSPC are the market block and relative-strength base.
       const syms = await activeSymbols(sb, only, true);
-      const r = await ingestBars(sb, provider, "daily", syms, forceFull, fullLimit);
+      const r = await ingestBars(sb, "daily", syms, forceFull, limit);
       out.daily = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `daily:${s}`));
     }
     if ((scope === "hourly" || scope === "all") && !rateLimited) {
-      // Hourly feeds RSI-hourly only (param 10), which is not computed for indices.
+      // Hourly feeds RSI-hourly only, which is not computed for indices. No provider serves
+      // session-aligned hourly yet, so this currently reports every symbol as skipped - see
+      // the HOURLY note in polygon.ts for why that is deliberate rather than broken.
       const syms = await activeSymbols(sb, only, false);
-      const r = await ingestBars(sb, provider, "hourly", syms, forceFull, fullLimit);
+      const r = await ingestBars(sb, "hourly", syms, forceFull, limit);
       out.hourly = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;

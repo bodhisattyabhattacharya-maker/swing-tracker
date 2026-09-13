@@ -76,8 +76,8 @@ Applied identically on hourly, daily and weekly bars. The only difference betwee
 | **Daily SMA 50 / 200** | `sma(close, 50)`, `sma(close, 200)` on daily bars | Position reported as `100 × (close / sma − 1)`. |
 | **Weekly 21 EMA** | `ema(close, 21)` on weekly bars | |
 | **Weekly 30W / 200W SMA** | `sma(close, 30)`, `sma(close, 200)` on weekly bars | |
-| **% off all-time high** | `100 × (close / max(high over full listing history) − 1)` | **Intraday highs, not closes.** Split- and dividend-adjusted, matching the basis of today's price. |
-| **% above all-time low** | `100 × (close / min(low over full listing history) − 1)` | Intraday lows. |
+| **% off all-time high** | `100 × (close / max(high over stored history) − 1)` | **Intraday highs, not closes.** Split-adjusted, NOT dividend-adjusted — see §Basis. **Bounded by what we store:** the provider's free plan carries 2 years, so for a name whose peak predates that (INTC, QCOM and GE all peaked in 2000) this understates the true all-time figure. The column is labelled with the window it actually covers rather than claiming "all time". Decision 0019; a one-time deep backfill is the fix and is not built yet. |
+| **% above all-time low** | `100 × (close / min(low over stored history) − 1)` | Intraday lows. Same stored-window bound as the high above. |
 | **% off 52-week high** | `100 × (close / max(high over last 252 trading bars) − 1)` | **252 trading bars, not 52 calendar weeks.** Intraday highs. |
 | **Realized volatility** | `stdev_sample(r, 20) × √252 × 100` where `r[t] = ln(close[t] / close[t−1])` | **Our definition — TradingView has no canonical equivalent.** Log returns; sample standard deviation (n−1 denominator); 252-day annualisation; 20-bar window. |
 | **Volume ratio** | `volume[t] / sma(volume, 50)[t]` | The 50-bar average **includes** the current bar. |
@@ -94,7 +94,8 @@ Every weekly parameter depends on this, so it is pinned explicitly:
 
 | Parameter | Definition |
 |---|---|
-| **Relative strength vs SPX / SOX** | `(close[t]/close[t−n] − 1) − (index[t]/index[t−n] − 1)`, for n ∈ {63, 126, 252} **trading bars** — not calendar months. Reported as percentage points of out/under-performance. |
+| **Relative strength vs SPX** | `(close[t]/close[t−n] − 1) − (index[t]/index[t−n] − 1)`, for n ∈ {63, 126, 252} **trading bars** — not calendar months. Reported as percentage points of out/under-performance. SPX comes from FRED `SP500`, a price index (no dividends), which is the right comparison for a price-basis stock series. |
+| ~~Relative strength vs SOX~~ | **Dropped in v1 (decision 0019).** No free data source carries the PHLX Semiconductor Index, and a proxy ETF would have meant reporting one thing while labelling it another. Restore the parameter and the `rs_vs_sox_6m` norm together if index data is ever paid for. |
 | **Sector-relative valuation rank** | Percentile rank of the name's FCF yield within its theme group, computed across the group on the same date. |
 | **Sector-relative margin rank** | Same, on trailing-twelve-month gross margin. |
 
@@ -126,9 +127,34 @@ SMAs have no seed and are simply null until the window fills.
 
 ---
 
+## 4a. Basis — which price series everything is computed on
+
+**Every price in this system is split-adjusted and NOT dividend-adjusted.** That is one
+sentence with a lot riding on it, so: a 2-for-1 split halves the historical prices, and a
+dividend payment does not touch them.
+
+Why this basis and not another:
+
+- It is **TradingView's default**, and TradingView is our anchor (§1). Dividend adjustment is
+  an opt-in setting there, off unless a user turns it on.
+- It is what the golden values in §6 were computed on. Those came from Yahoo's `close` column,
+  which is split-adjusted only; Polygon's `adjusted=true` is also split-adjusted only
+  ("adjusted for splits, but not dividends", vendor knowledge base, verified 2026-09-13). The
+  provider changed in decision 0019 and the basis did not, so the verified figures still hold.
+- It keeps `close` and `high` on the **same** basis, which is what makes "% off the high"
+  meaningful. Mixing a dividend-adjusted history against a raw close would quietly overstate
+  every drawdown on a dividend payer.
+
+Consequence to be honest about: for a high-yield name held over years, a dividend-adjusted
+total-return series would show a different — arguably fairer — drawdown. We are measuring price,
+not total return, and the columns mean price. The `adj_close` column exists in `daily_bars` for
+a provider that supplies a dividend-adjusted series, and is **null** today. Nothing reads it,
+and nothing may fill it from `close`.
+
 ## 5. Where we knowingly differ from consumer apps
 
-**Technicals: we match TradingView.** The formulas above are theirs.
+**Technicals: we match TradingView.** The formulas above are theirs, and so is the price basis
+(§4a) — split-adjusted, dividends not.
 
 **Fundamentals: we cannot match, and should not pretend to.** Robinhood and similar apps buy adjusted vendor data; we compute from GAAP filings via SEC XBRL. Our trailing P/E will differ from theirs whenever they use non-GAAP earnings, and no amount of care closes that gap. The column carries a note saying so.
 

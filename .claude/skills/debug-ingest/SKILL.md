@@ -26,9 +26,15 @@ from ingest_runs order by started_at desc limit 10;
 
 ## Narrow it down
 
-- **All tickers failing** → endpoint shape or egress. Test one symbol with `net.http_get` from SQL.
+- **All equities failing, indices fine** → Polygon: key, plan, or rate limit. Check the error text.
+- **All indices failing, equities fine** → FRED: key, or a series id that changed.
 - **One ticker failing** → delisted, renamed, or a bad symbol in `watchlist.yml`.
+- **`rate_limited: true`** → Polygon's 5/min was exceeded. Lower `&limit=`; do not raise it.
+- **Everything `deferred`** → normal on a backfill. Re-run until `deferred` is empty (4 runs).
 - **Data present but wrong** → not ingest. Go to `docs/DEFINITIONS.md`; check formula and warm-up.
+- **Bars present but suspiciously few, or oddly spaced** → check median spacing before trusting
+  anything. A provider can return a coarser granularity than you asked for without erroring
+  (INCIDENTS.md 2026-09-13).
 
 ## Run it by hand (from the SQL editor or an in-session `execute_sql` — a hard stop: confirm first)
 
@@ -52,6 +58,8 @@ Useful variants: `&scope=tickers` (sync only), `&symbols=MU,NVDA`, `&full=1` (fo
 
 ## Afterwards
 
-Yahoo is unofficial and breaks without warning. When it does: `docs/CONSTRAINTS.md` with the
-date, then `docs/INCIDENTS.md`, then the fix. Before declaring it fixed, confirm one ticker
-end to end: a run row with `ok=true` and a fresh `max(d)` in `daily_bars` for that symbol.
+Both providers are keyed and publish their limits, so a failure is usually ours: an expired key,
+a plan boundary, or too many requests. Record anything learned about either API in
+`docs/CONSTRAINTS.md` with the date, then `docs/INCIDENTS.md`, then fix. Before declaring it
+fixed, confirm one ticker end to end: a run row with `ok=true`, a fresh `max(d)` in
+`daily_bars`, and bar spacing that looks like trading days.

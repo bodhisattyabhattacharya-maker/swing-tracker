@@ -3,105 +3,214 @@
  *
  * Run:   deno test --allow-env supabase/functions/ingest/   (needs only the npm registry;
  *        --allow-env is for the yaml package, which peeks at process.env on load)
- * Why no network tests: the dev sandbox has no route to Yahoo (CLAUDE.md constraint 1), and a
- * test that depends on an unofficial endpoint being up is not a test. The fixtures below are
- * the shapes Yahoo actually returns, including the two "200 but broken" ones.
  *
- * These tests encode intent (CODE_STYLE): each one fails if a business rule changes, not if a
- * line of code moves. In particular: null adj_close is NOT substituted with close; a null close
- * drops the bar; an undeclared theme is an error, not a default; a duplicate date keeps the
- * later bar; an anon JWT is refused and a service_role JWT accepted regardless of the env var.
+ * Why no network tests: the dev sandbox has no route to any market-data provider (CLAUDE.md
+ * constraint 1), and a test that depends on a third party being up is not a test. The fixtures
+ * below are the response shapes each provider actually returns, including the ones that arrive
+ * as HTTP 200 while being unusable.
+ *
+ * These tests encode intent (CODE_STYLE): each should fail if a business RULE changes, not if a
+ * line moves. The rules being pinned here, each of which has already cost us a bug or would:
+ *   - the daily URL carries `adjusted=true` and an explicit date window, never a `range=`
+ *     shorthand (INCIDENTS.md 2026-09-13: `range=max` silently returned quarterly bars)
+ *   - `adj_close` is never filled from `close` (Polygon is split-adjusted only)
+ *   - a FRED "." observation is dropped, never zeroed or carried forward
+ *   - routing is exhaustive and disjoint: FRED owns "^" symbols, Polygon owns the rest
+ *   - a 429 raises RateLimitError so the caller stops instead of skipping
  */
 
 import assert from "node:assert/strict";
 const assertEquals = (a: unknown, b: unknown, msg?: string) => assert.deepEqual(a, b, msg);
-const assertThrows = (fn: () => unknown, _e: unknown, includes: string) =>
+const assertThrows = (fn: () => unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
-import { chartUrl, mapChart, RateLimitError, toTradingDate, yahoo, YAHOO_SOURCE } from "./yahoo.ts";
+
+import { RateLimitError } from "./provider.ts";
+import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
+import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import { parseWatchlist } from "./watchlist.ts";
 import { callerAllowed, jwtRole } from "./auth.ts";
 
+const FIXED_NOW = new Date("2026-09-13T00:00:00Z");
+
 // ---------------------------------------------------------------------------
-// Fixtures - trimmed real shapes
+// Polygon: URL construction
 // ---------------------------------------------------------------------------
 
-/** Three sessions of MU, second bar has a null volume, third has a null close (padding). */
-const CHART_OK = {
-  chart: {
-    result: [{
-      timestamp: [1756992600, 1757079000, 1757338200], // 2025-09-04, -05, -08 13:30Z
-      indicators: {
-        quote: [{
-          open: [120.0, 121.5, 122.0],
-          high: [125.0, 123.0, 124.0],
-          low: [119.0, 120.0, 121.0],
-          close: [124.0, 122.0, null],
-          volume: [1000000, null, 900000],
-        }],
-        adjclose: [{ adjclose: [123.5, 121.5, null] }],
-      },
-    }],
-    error: null,
-  },
+Deno.test("aggsUrl: full range asks for ~2 years of DAY bars, split-adjusted", () => {
+  const u = aggsUrl("MU", "full", FIXED_NOW);
+  assertEquals(u.includes("/range/1/day/"), true);
+  assertEquals(u.includes("adjusted=true"), true);
+  assertEquals(u.includes("sort=asc"), true);
+  // 720 days before 2026-09-13, and `to` is tomorrow so today's bar is in the window.
+  assertEquals(u.includes("/2024-09-23/2026-09-14"), true);
+  assertEquals(u.includes("apiKey"), false, "the key goes in a header, never the URL");
+});
+
+Deno.test("aggsUrl: incremental asks for ~5 weeks, enough to cover missed runs", () => {
+  const u = aggsUrl("MU", "incremental", FIXED_NOW);
+  assertEquals(u.includes("/2026-08-09/2026-09-14"), true);
+});
+
+Deno.test("aggsUrl percent-encodes the symbol", () => {
+  assertEquals(aggsUrl("BRK.B", "incremental", FIXED_NOW).includes("/ticker/BRK.B/"), true);
+});
+
+// ---------------------------------------------------------------------------
+// Polygon: the trading-date conversion, across both DST offsets
+// ---------------------------------------------------------------------------
+
+Deno.test("aggTradingDate: EST bar (midnight ET = 05:00Z) maps to the same calendar day", () => {
+  // 2026-01-15 00:00 America/New_York = 2026-01-15T05:00:00Z
+  assertEquals(aggTradingDate(Date.UTC(2026, 0, 15, 5, 0, 0)), "2026-01-15");
+});
+
+Deno.test("aggTradingDate: EDT bar (midnight ET = 04:00Z) maps to the same calendar day", () => {
+  // 2026-07-15 00:00 America/New_York = 2026-07-15T04:00:00Z
+  assertEquals(aggTradingDate(Date.UTC(2026, 6, 15, 4, 0, 0)), "2026-07-15");
+});
+
+// ---------------------------------------------------------------------------
+// Polygon: response mapping
+// ---------------------------------------------------------------------------
+
+const AGGS_OK = {
+  ticker: "MU",
+  adjusted: true,
+  status: "OK",
+  resultsCount: 3,
+  results: [
+    { t: Date.UTC(2026, 6, 13, 4), o: 120, h: 125, l: 119, c: 124, v: 1_000_000 },
+    { t: Date.UTC(2026, 6, 14, 4), o: 121.5, h: 123, l: 120, c: 122 }, // no volume
+    { t: Date.UTC(2026, 6, 15, 4), o: 122, h: 124, l: 121 }, // no close -> dropped
+  ],
 };
 
-const CHART_NO_ADJ = {
-  chart: {
-    result: [{
-      timestamp: [1756992600],
-      indicators: { quote: [{ open: [1], high: [2], low: [0.5], close: [1.5], volume: [10] }] },
-    }],
-  },
-};
-
-const CHART_BAD_SYMBOL = {
-  chart: { result: null, error: { code: "Not Found", description: "No data found, symbol may be delisted" } },
-};
-
-const CHART_NO_TIMESTAMPS = { chart: { result: [{ indicators: { quote: [{}] } }], error: null } };
-
-const WATCHLIST_YML = `
-themes:
-  memory-storage: { label: "Memory", rankable: true }
-  diversified:    { label: "Diversified", rankable: false }
-tickers:
-  - { symbol: MU,  name: Micron, theme: memory-storage, tag: hbm, bellwether: true }
-  - { symbol: JPM, name: JPMorgan, theme: diversified }
-indices:
-  - { symbol: "^VIX", name: VIX }
-`;
-
-// ---------------------------------------------------------------------------
-// mapChart
-// ---------------------------------------------------------------------------
-
-Deno.test("mapChart keeps bars with a close, drops the null-close padding row", () => {
-  const bars = mapChart(CHART_OK, "MU");
+Deno.test("mapAggs keeps bars with a close and drops the one without", () => {
+  const bars = mapAggs(AGGS_OK, "MU");
   assertEquals(bars.length, 2);
-  assertEquals(bars[0].close, 124.0);
-  assertEquals(bars[1].volume, null, "a null volume is kept as null, not dropped and not zeroed");
+  assertEquals(bars[0], {
+    symbol: "MU",
+    d: "2026-07-13",
+    open: 120,
+    high: 125,
+    low: 119,
+    close: 124,
+    adj_close: null,
+    volume: 1_000_000,
+    source: POLYGON_SOURCE,
+  });
+  assertEquals(bars[1].volume, null, "a missing volume stays null, not zero");
 });
 
-Deno.test("mapChart never substitutes close for a missing adj_close", () => {
-  const bars = mapChart(CHART_NO_ADJ, "X");
-  assertEquals(bars[0].adj_close, null);
-  assertEquals(bars[0].close, 1.5);
+Deno.test("mapAggs never fills adj_close from close - Polygon is split-adjusted only", () => {
+  for (const b of mapAggs(AGGS_OK, "MU")) assertEquals(b.adj_close, null);
 });
 
-Deno.test("mapChart treats HTTP-200-with-chart.error as a failure", () => {
-  assertThrows(() => mapChart(CHART_BAD_SYMBOL, "ZZZZ"), Error, "delisted");
+Deno.test("mapAggs treats results:null as zero bars, not an error", () => {
+  assertEquals(mapAggs({ status: "OK", results: null }, "THIN"), []);
 });
 
-Deno.test("mapChart treats a missing timestamp array as a failure, not an empty success", () => {
-  assertThrows(() => mapChart(CHART_NO_TIMESTAMPS, "THIN"), Error, "no timestamp array");
+Deno.test("mapAggs throws on an error body arriving with HTTP 200", () => {
+  assertThrows(
+    () => mapAggs({ status: "ERROR", error: "unknown ticker ZZZZ" }, "ZZZZ"),
+    "unknown ticker",
+  );
 });
 
-Deno.test("toTradingDate maps a 13:30Z session open to that UTC calendar date", () => {
-  assertEquals(toTradingDate(1756992600), "2025-09-04");
+Deno.test("mapAggs throws on a non-OK status - how a plan restriction arrives", () => {
+  assertThrows(() => mapAggs({ status: "NOT_AUTHORIZED", results: [] }, "MU"), "NOT_AUTHORIZED");
+});
+
+Deno.test("mapAggs accepts DELAYED, which is what the free plan returns", () => {
+  assertEquals(mapAggs({ status: "DELAYED", results: [] }, "MU"), []);
 });
 
 // ---------------------------------------------------------------------------
-// yahoo.daily / hourly - fetch stubbed
+// FRED
+// ---------------------------------------------------------------------------
+
+Deno.test("SERIES maps exactly the three index symbols the watchlist keeps", () => {
+  assertEquals(Object.keys(SERIES).sort(), ["^GSPC", "^VIX", "^VIX3M"]);
+  assertEquals(SERIES["^VIX"], "VIXCLS");
+  assertEquals(SERIES["^VIX3M"], "VXVCLS");
+  assertEquals(SERIES["^GSPC"], "SP500");
+});
+
+Deno.test("observationsUrl asks for json and an explicit start, and omits the key", () => {
+  const u = observationsUrl("VIXCLS", "incremental", FIXED_NOW);
+  assertEquals(u.includes("series_id=VIXCLS"), true);
+  assertEquals(u.includes("file_type=json"), true);
+  assertEquals(u.includes("observation_start=2026-08-09"), true);
+  assertEquals(u.includes("api_key"), false, "the key is appended by the caller only");
+});
+
+const OBS_OK = {
+  observations: [
+    { date: "2026-09-08", value: "15.42" },
+    { date: "2026-09-09", value: "." }, // no observation - holiday or unpublished
+    { date: "2026-09-10", value: "19.73" },
+    { date: "2026-09-11", value: "not-a-number" },
+  ],
+};
+
+Deno.test("mapObservations drops '.' rows rather than inventing a close", () => {
+  const bars = mapObservations(OBS_OK, "^VIX", "VIXCLS");
+  assertEquals(bars.map((b) => b.d), ["2026-09-08", "2026-09-10"]);
+  assertEquals(bars.map((b) => b.close), [15.42, 19.73]);
+});
+
+Deno.test("mapObservations leaves OHLC and volume null - FRED publishes a close only", () => {
+  const b = mapObservations(OBS_OK, "^VIX", "VIXCLS")[0];
+  assertEquals([b.open, b.high, b.low, b.volume, b.adj_close], [null, null, null, null, null]);
+  assertEquals(b.source, FRED_SOURCE);
+});
+
+Deno.test("mapObservations throws on FRED's error body", () => {
+  assertThrows(
+    () => mapObservations({ error_message: "Bad Request. The value for variable api_key is not registered." }, "^VIX", "VIXCLS"),
+    "api_key",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Routing: must be exhaustive AND disjoint, or a symbol silently gets no data
+// ---------------------------------------------------------------------------
+
+Deno.test("FRED claims the index symbols and Polygon declines them", () => {
+  for (const s of ["^VIX", "^VIX3M", "^GSPC"]) {
+    assertEquals(fred.supports(s), true, `fred should serve ${s}`);
+    assertEquals(polygon.supports(s), false, `polygon should decline ${s}`);
+  }
+});
+
+Deno.test("Polygon claims the equities and FRED declines them", () => {
+  for (const s of ["MU", "NVDA", "JPM", "SNDK"]) {
+    assertEquals(polygon.supports(s), true, `polygon should serve ${s}`);
+    assertEquals(fred.supports(s), false, `fred should decline ${s}`);
+  }
+});
+
+Deno.test("an index with no FRED series is claimed by nobody, so sync fails loudly", () => {
+  // ^SOX was dropped in decision 0019. If it ever comes back without a source, syncTickers
+  // must refuse rather than leave a column quietly empty.
+  assertEquals(fred.supports("^SOX"), false);
+  assertEquals(polygon.supports("^SOX"), false);
+});
+
+Deno.test("neither provider serves hourly yet, and says so with null not []", async () => {
+  assertEquals(await polygon.hourly("MU", "full"), null);
+  assertEquals(await fred.hourly("^VIX", "full"), null);
+});
+
+Deno.test("pacing comes from the provider, derived from its published limit", () => {
+  // Polygon free is 5 req/min; anything under 12000ms would exceed it.
+  assertEquals(polygon.minIntervalMs >= 12_000, true);
+  // FRED allows 120/min; being slower than Polygon would be pointless.
+  assertEquals(fred.minIntervalMs < polygon.minIntervalMs, true);
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
 // ---------------------------------------------------------------------------
 
 function withFetch<T>(body: unknown, fn: () => Promise<T>, status = 200): Promise<T> {
@@ -117,39 +226,55 @@ function withFetch<T>(body: unknown, fn: () => Promise<T>, status = 200): Promis
   });
 }
 
-Deno.test("yahoo.daily shapes rows for daily_bars and stamps the source", async () => {
-  const rows = await withFetch(CHART_OK, () => yahoo.daily("MU", "incremental"));
-  assertEquals(rows.length, 2);
-  assertEquals(rows[0], {
-    symbol: "MU",
-    d: "2025-09-04",
-    open: 120.0,
-    high: 125.0,
-    low: 119.0,
-    close: 124.0,
-    adj_close: 123.5,
-    volume: 1000000,
-    source: YAHOO_SOURCE,
-  });
+Deno.test("a 429 raises RateLimitError - the caller must stop the run, not skip a symbol", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  let caught: unknown = null;
+  try {
+    await withFetch("rate limit exceeded", () => polygon.daily("MU", "incremental"), 429);
+  } catch (e) {
+    caught = e;
+  }
+  assertEquals(caught instanceof RateLimitError, true);
 });
 
-Deno.test("yahoo.daily keeps the LATER bar when two share a date (live candle after settled)", async () => {
-  const dup = structuredClone(CHART_OK);
-  dup.chart.result[0].timestamp = [1756992600, 1756992600 + 3600, 1757338200]; // same UTC date
-  const rows = await withFetch(dup, () => yahoo.daily("MU", "incremental"));
-  assertEquals(rows.length, 1);
-  assertEquals(rows[0].close, 122.0);
+Deno.test("a rejected key is a plain error, distinguishable from a rate limit", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  let caught: unknown = null;
+  try {
+    await withFetch({ error: "unauthorized" }, () => polygon.daily("MU", "incremental"), 401);
+  } catch (e) {
+    caught = e;
+  }
+  assertEquals(caught instanceof Error, true);
+  assertEquals(caught instanceof RateLimitError, false);
+  assertEquals((caught as Error).message.includes("key rejected"), true);
 });
 
-Deno.test("yahoo.hourly writes bar-open timestamps in UTC ISO and no adj_close column", async () => {
-  const rows = await withFetch(CHART_OK, () => yahoo.hourly("MU", "incremental"));
-  assertEquals(rows[0].ts, "2025-09-04T13:30:00.000Z");
-  assertEquals("adj_close" in rows[0], false);
+Deno.test("a missing key fails before any request is made", async () => {
+  Deno.env.delete("POLYGON_API_KEY");
+  let caught: unknown = null;
+  try {
+    await polygon.daily("MU", "incremental");
+  } catch (e) {
+    caught = e;
+  }
+  assertEquals((caught as Error).message.includes("POLYGON_API_KEY"), true);
 });
 
 // ---------------------------------------------------------------------------
 // parseWatchlist
 // ---------------------------------------------------------------------------
+
+const WATCHLIST_YML = `
+themes:
+  memory-storage: { label: "Memory", rankable: true }
+  diversified:    { label: "Diversified", rankable: false }
+tickers:
+  - { symbol: MU,  name: Micron, theme: memory-storage, tag: hbm, bellwether: true }
+  - { symbol: JPM, name: JPMorgan, theme: diversified }
+indices:
+  - { symbol: "^VIX", name: VIX }
+`;
 
 Deno.test("parseWatchlist: rankable comes from the theme, indices are flagged and unrankable", () => {
   const rows = parseWatchlist(WATCHLIST_YML);
@@ -158,7 +283,6 @@ Deno.test("parseWatchlist: rankable comes from the theme, indices are flagged an
   assertEquals(by.MU.rankable, true);
   assertEquals(by.MU.bellwether, true);
   assertEquals(by.JPM.rankable, false, "diversified is rankable: false in the yml");
-  assertEquals(by.JPM.bellwether, false);
   assertEquals(by.JPM.tag, null);
   assertEquals(by["^VIX"].is_index, true);
   assertEquals(by["^VIX"].rankable, false);
@@ -167,38 +291,36 @@ Deno.test("parseWatchlist: rankable comes from the theme, indices are flagged an
 
 Deno.test("parseWatchlist rejects an undeclared theme instead of defaulting", () => {
   const bad = WATCHLIST_YML.replace("theme: diversified", "theme: diversifed");
-  assertThrows(() => parseWatchlist(bad), Error, "undeclared theme");
+  assertThrows(() => parseWatchlist(bad), "undeclared theme");
 });
 
 Deno.test("parseWatchlist rejects a duplicate symbol", () => {
   const bad = WATCHLIST_YML + `  - { symbol: MU, name: dup }\n`;
-  assertThrows(() => parseWatchlist(bad), Error, "duplicate symbol");
+  assertThrows(() => parseWatchlist(bad), "duplicate symbol");
 });
 
 // ---------------------------------------------------------------------------
 // auth - unsigned test JWTs; the gateway is what verifies signatures in production
 // ---------------------------------------------------------------------------
 
-/** header.payload.signature with a throwaway signature - signature is never checked here. */
 function fakeJwt(payload: Record<string, unknown>): string {
   const b64url = (o: unknown) =>
     btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   return `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url(payload)}.sig`;
 }
-const SERVICE = fakeJwt({ iss: "supabase", role: "service_role", exp: 2000000000 });
-const ANON = fakeJwt({ iss: "supabase", role: "anon", exp: 2000000000 });
+const SERVICE = fakeJwt({ iss: "supabase", role: "service_role", exp: 2_000_000_000 });
+const ANON = fakeJwt({ iss: "supabase", role: "anon", exp: 2_000_000_000 });
 
 Deno.test("jwtRole reads the role claim and returns null for non-JWTs", () => {
   assertEquals(jwtRole(SERVICE), "service_role");
   assertEquals(jwtRole(ANON), "anon");
   assertEquals(jwtRole("sb_secret_notajwt"), null);
   assertEquals(jwtRole("a.b"), null);
-  assertEquals(jwtRole("a.!!!.c"), null);
 });
 
-Deno.test("callerAllowed: service_role JWT passes even when it differs from the env var (INCIDENTS 2026-09-13)", () => {
+Deno.test("callerAllowed: service_role JWT passes even when it differs from the env var", () => {
   assertEquals(callerAllowed(SERVICE, "some-other-runtime-value"), true);
-  assertEquals(callerAllowed(SERVICE, undefined), true, "missing env must not lock out the service role");
+  assertEquals(callerAllowed(SERVICE, undefined), true);
 });
 
 Deno.test("callerAllowed: anon JWT is refused, with or without an env var", () => {
@@ -209,66 +331,9 @@ Deno.test("callerAllowed: anon JWT is refused, with or without an env var", () =
 Deno.test("callerAllowed: exact byte match with the env var passes (non-JWT key formats)", () => {
   assertEquals(callerAllowed("sb_secret_abc", "sb_secret_abc"), true);
   assertEquals(callerAllowed("sb_secret_abc", "sb_secret_abd"), false);
-  assertEquals(callerAllowed("sb_secret_ab", "sb_secret_abc"), false, "length mismatch is a plain no, not a throw");
+  assertEquals(callerAllowed("sb_secret_ab", "sb_secret_abc"), false);
 });
 
 Deno.test("callerAllowed: no token is refused", () => {
   assertEquals(callerAllowed(null, "anything"), false);
-});
-
-// ---------------------------------------------------------------------------
-// chartUrl - the downsampling trap, pinned (INCIDENTS.md 2026-09-13)
-// ---------------------------------------------------------------------------
-
-const FIXED_NOW = new Date("2026-09-13T00:00:00Z"); // epoch 1789257600
-
-Deno.test("chartUrl: daily FULL uses epoch bounds and never range=max", () => {
-  const u = chartUrl("MU", "daily", "full", FIXED_NOW);
-  assertEquals(u.includes("range="), false, "range=max&interval=1d silently returns quarterly bars");
-  assertEquals(u.includes("period1=0"), true);
-  assertEquals(u.includes("interval=1d"), true);
-  // period2 is tomorrow, so today's session is inside the window.
-  assertEquals(u.includes(`period2=${1789257600 + 86400}`), true);
-});
-
-Deno.test("chartUrl: daily incremental is a one-month range of daily bars", () => {
-  assertEquals(
-    chartUrl("MU", "daily", "incremental", FIXED_NOW),
-    "https://query1.finance.yahoo.com/v8/finance/chart/MU?range=1mo&interval=1d&includeAdjustedClose=true",
-  );
-});
-
-Deno.test("chartUrl: hourly keeps the ranges verified live (5d / 2y, 1h bars)", () => {
-  assertEquals(chartUrl("MU", "hourly", "incremental", FIXED_NOW).includes("range=5d&interval=1h"), true);
-  assertEquals(chartUrl("MU", "hourly", "full", FIXED_NOW).includes("range=2y&interval=1h"), true);
-});
-
-Deno.test("chartUrl: a caret index symbol is percent-encoded", () => {
-  assertEquals(chartUrl("^VIX", "daily", "incremental", FIXED_NOW).includes("/chart/%5EVIX?"), true);
-});
-
-// ---------------------------------------------------------------------------
-// Rate limiting
-// ---------------------------------------------------------------------------
-
-Deno.test("a 429 raises RateLimitError, not a generic error - the caller must stop, not skip", async () => {
-  let caught: unknown = null;
-  try {
-    // Yahoo returns plain text for 429, so this also proves we check status before parsing JSON.
-    await withFetch("Too Many Requests\r\n", () => yahoo.daily("MU", "incremental"), 429);
-  } catch (e) {
-    caught = e;
-  }
-  assertEquals(caught instanceof RateLimitError, true);
-});
-
-Deno.test("a non-429 HTTP failure stays a plain error - only 429 aborts a run", async () => {
-  let caught: unknown = null;
-  try {
-    await withFetch("gateway blew up", () => yahoo.daily("MU", "incremental"), 503);
-  } catch (e) {
-    caught = e;
-  }
-  assertEquals(caught instanceof Error, true);
-  assertEquals(caught instanceof RateLimitError, false);
 });

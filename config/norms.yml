@@ -28,7 +28,8 @@ norms:
   gross_margin_trend: { low: 0 }            # falling over four quarters
 
   rs_vs_spx_6m:     { low: 0 }              # lagging the market
-  rs_vs_sox_6m:     { low: 0 }              # lagging its own sector
+  # rs_vs_sox_6m removed in decision 0019 - no free source for the PHLX Semiconductor Index.
+  # Restore this line and the parameter together if we ever pay for index data.
 
   vix:              { low: 16,  high: 30 }  # hedge zone / scaling zone
   vix_term_struct:  { low: 0 }              # backwardation

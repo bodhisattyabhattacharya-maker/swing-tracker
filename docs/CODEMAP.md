@@ -11,10 +11,10 @@ next agent to the wrong file confidently.
 ## Data flow
 
 ```
-                 ┌─ Yahoo chart API ──┐
-                 │  hourly / daily /  │        (keyless, unofficial)
-                 │  full history      │
-                 └────────┬───────────┘
+                 ┌─ Polygon aggregates ┐       (keyed; 5 req/min, 2y on free)
+                 │  daily OHLCV        │
+                 └────────┬────────────┘
+   ┌─ FRED ───────────────┤                    (keyed; VIX, VIX3M, SP500 - closes only)
    ┌─ SEC XBRL ───────────┤                    (keyless, point-in-time)
    │                      │
    │              ┌───────▼──────────────┐
@@ -45,7 +45,7 @@ next agent to the wrong file confidently.
 |---|---|---|
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
-| `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam) → `yahoo.ts` (implementation), `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
+| `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js 16 App Router, TypeScript, desktop-first. Only `app/page.tsx` exists: a deployment check that reads no data. The grid is _(planned)_ and blocked on parameter views + read policies. | `app/page.tsx`; Vercel root directory is `web/` |
 | `scripts/` | Local helpers — verification, one-off checks _(planned)_ | — |
 | `docs/` | Context files. Start at `ONBOARDING.md` | — |

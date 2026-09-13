@@ -1,13 +1,13 @@
 /**
  * provider.ts — the seam between "where bars come from" and "what we do with them".
  *
- * Why a seam at all: decision 0003 says no paid feed for v1, but the proposal promises that
- * one can slot in later without touching the ingest logic. This interface is the whole of
- * that promise. A paid provider implements `BarProvider`, `index.ts` picks it by name, and
- * every row it writes carries `source` so the two can coexist in one table and be told apart.
+ * Why a seam at all: it let us replace the entire data source in one PR when Yahoo blocked
+ * Supabase's egress IP (decision 0019, INCIDENTS.md 2026-09-13). `index.ts` never learned that
+ * the provider changed; it asks for bars and writes what it gets. Every row carries `source`,
+ * so bars from different providers coexist in one table and can always be told apart.
  *
- * Deliberately minimal: two methods, two range vocabularies. Do not add methods here until a
- * second implementation actually needs them (CODE_STYLE: "two call sites is not a framework").
+ * Deliberately minimal. Do not add methods here until a second implementation actually needs
+ * them (CODE_STYLE: "two call sites is not a framework").
  */
 
 /** One trading day. Matches `daily_bars` column for column (20260912120000_foundation). */
@@ -19,9 +19,14 @@ export interface DailyBar {
   high: number | null;
   low: number | null;
   close: number;
-  /** Split- and dividend-adjusted close. Null when the provider does not supply one —
-   *  never silently copied from `close`, because "% off all-time high" reads this column
-   *  and a raw close masquerading as adjusted would put the ATH on the wrong basis. */
+  /**
+   * DIVIDEND-adjusted close, and only that. Null when the provider does not supply one, which
+   * is the normal case now: Polygon adjusts for splits but not dividends, so `close` above is
+   * already the split-adjusted series and there is nothing extra to record here.
+   *
+   * Never copy `close` into this column. A raw close masquerading as dividend-adjusted would
+   * silently change the basis of any parameter that reads it. See DEFINITIONS.md §"basis".
+   */
   adj_close: number | null;
   volume: number | null;
   source: string;
@@ -42,13 +47,45 @@ export interface HourlyBar {
 /**
  * Range vocabularies are intentionally tiny. `incremental` is what the scheduled clocks ask
  * for; `full` is the one-time backfill (and the automatic catch-up for a symbol with no bars
- * yet). A provider maps these to its own API's parameters.
+ * yet). A provider maps these to its own API's parameters and its own plan's history limit.
  */
 export type Range = "incremental" | "full";
 
 export interface BarProvider {
   /** Written to `source` on every row. Keep it stable; it is how a provider swap is audited. */
   readonly name: string;
+
+  /**
+   * Minimum gap between requests, in milliseconds, that this provider's plan tolerates.
+   *
+   * This exists because pacing is a property of the PROVIDER, not of the ingest loop. Yahoo had
+   * no published limit and punished us for guessing (INCIDENTS.md 2026-09-13); Polygon's free
+   * plan publishes 5 requests/minute, so the number below is derived from a documented figure
+   * rather than a hunch. A provider that raises its limit changes this one line.
+   */
+  readonly minIntervalMs: number;
+
+  /**
+   * True if this provider can serve the symbol at all. `index.ts` uses it to route: FRED knows
+   * the index series, Polygon knows the equities, and a symbol nobody claims is an error rather
+   * than a silent gap.
+   */
+  supports(symbol: string): boolean;
+
   daily(symbol: string, range: Range): Promise<DailyBar[]>;
-  hourly(symbol: string, range: Range): Promise<HourlyBar[]>;
+
+  /**
+   * Hourly bars. A provider that cannot serve them returns null — distinct from returning an
+   * empty array, which would mean "I serve hourly and there were no bars". FRED is closes-only,
+   * so it returns null and the caller records the symbol as skipped rather than failed.
+   */
+  hourly(symbol: string, range: Range): Promise<HourlyBar[] | null>;
+}
+
+/** A rate-limit rejection. Distinct from a per-symbol failure: it means stop, not skip. */
+export class RateLimitError extends Error {
+  constructor(provider: string, symbol: string) {
+    super(`${provider}/${symbol}: rate limited (HTTP 429) - aborting run`);
+    this.name = "RateLimitError";
+  }
 }
