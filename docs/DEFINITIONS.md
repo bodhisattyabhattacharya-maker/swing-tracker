@@ -88,7 +88,8 @@ Every weekly parameter depends on this, so it is pinned explicitly:
 
 - **Week starts Monday** (ISO week).
 - `open` = first daily open of the week; `high` = max daily high; `low` = min daily low; `close` = last daily close; `volume` = sum.
-- The **current partial week is stored** but rules and the dashboard read the **last completed week** (`week_start − 7 days`), so no backtest can see the remainder of a week it is standing in.
+- The **current partial week is stored** but rules and the dashboard read the **last completed week**, so no backtest can see the remainder of a week it is standing in.
+- **"Completed" is defined negatively, and deliberately: a week is complete when it is not the most recent week for that symbol.** We have no market calendar, so we cannot know a week has *ended*; what we do know is that only the newest week can still gain bars. That definition needs no calendar, is per-symbol (a name that stopped trading does not make every other name's latest week look finished), and handles holidays for free — **a holiday-shortened week is a normal week with fewer bars, not a gap.** The published `bars_in_week` lets a reader see a short week; `is_complete` is the flag readers filter on. The tempting wrong definition is `bars_in_week = 5`, which would silently drop every holiday week, and `scripts/verify_parameters.sql` has a check whose only job is to fail the day someone writes it.
 
 ### Relative
 
@@ -122,6 +123,8 @@ A recursive indicator's seed decays as `(1−α)^bars`. Below the bar counts her
 | EMA(200) | 0.009950 | 922 |
 
 SMAs have no seed and are simply null until the window fills.
+
+**These floors are counts of bars, not of days.** A bar is whatever the timeframe says it is, so the same 125 and 97 apply to weekly series — which is why they bite there and not on daily: 125 weeks is nearly two and a half years of history.
 
 **Live consequence on the current watchlist.** Every name clears the daily thresholds.
 
@@ -258,7 +261,7 @@ Two things this establishes beyond "the numbers still work":
   the split is structural rather than temporary: CI proves we compute what we said; the goldens
   prove the vendor's data and adjustment basis still match TradingView. Decision 0029.
 - **Golden values.** **Scripted, and gated only in part — see above.** `scripts/verify_parameters.sql` asserts all
-  four figures above, plus MU's peak intraday high as of the same date, at 1e-3 absolute
+  six figures above, plus MU's peak intraday high as of the same date, at 1e-3 absolute
   tolerance — chosen because observed cross-provider agreement is 2.4×10⁻⁵ to 1.5×10⁻⁴ while the
   error it exists to catch (a plain rolling mean instead of Wilder's) is 9.4 RSI *points* wide.
   A human still has to run it and read the result; nothing fails a build yet.
@@ -274,6 +277,19 @@ Two things this establishes beyond "the numbers still work":
   2026-09-13 position, not a substitute for CI. The script reports `MISSING` rather than `PASS`
   when the row it needs is absent, which is the whole point — a check that silently verifies zero
   rows is the "successful operation that changed nothing" bug wearing a green tick.
+  **The two weekly goldens are pinned to a WEEK, at the same 1e-3, and that last part is a
+  correction.** They sit on MU's week of **2026-08-31** — Monday 08-31 to Friday 09-04, so its close
+  *is* the 2026-09-04 close the four daily goldens use: one hand-reading, both timeframes. The plan
+  recorded against task #45 said the weekly tolerance would have to be *derived* and looser, because
+  a weekly series carries ~1/5 the bars and therefore a heavier seed residual. Re-measured on the
+  5-year backfill (257 weekly bars): residual seed weight is **1.75×10⁻⁸** for RMA(14) and
+  **1.87×10⁻¹⁰** for EMA(21), and SQL agrees with the Python reference to 5.0×10⁻⁸ and 9.9×10⁻⁸ —
+  five orders of margin inside 1e-3. The plan was right for the 102 weekly bars we held when it was
+  written; the backfill, not an error, is what invalidated it. `sma30w` and `sma200w` are
+  deliberately **not** goldens: no hand-read TradingView figure exists for either, so pinning our own
+  output would assert only that we agree with ourselves. They are covered at 1e-9 against an
+  independent implementation in CI instead. A golden read against a week flagged incomplete reports
+  a distinct failure message, because that is a rollup or data-end-date problem, not a formula one.
 - **Formula-level verification against an independent reference, 2026-09-13.** The
   `daily_features` SQL was run against a synthetic 300-bar series in a throwaway PostgreSQL 16
   instance and compared column by column with a Python implementation written from these
@@ -283,6 +299,13 @@ Two things this establishes beyond "the numbers still work":
   and a close-only series shaped like a FRED index (every high/low/volume column null). This is
   the check that proves the *formulas*; the golden values prove the *basis and the data*. Neither
   substitutes for the other.
+- **The weekly layer got the same treatment, 2026-09-13.** `weekly_features` is compared against
+  independently computed weekly expectations from the same synthetic series (`ci_expected_weekly`)
+  at 1e-9, and three structural claims about the rollup are asserted rather than assumed: every
+  daily bar lands in exactly one week, each weekly close equals the **last** daily close of its week
+  (not Friday's — the classic rollup bug, and in a holiday week it reads a bar that does not exist),
+  and exactly one week per symbol is incomplete. Those three are the errors that a formula check
+  cannot see, because a wrong rollup feeds a correct formula.
 - **Cross-implementation.** Three implementations have now agreed: the Python reference,
   production SQL over Yahoo data, and production SQL over Polygon data.
 - **Invariants.** Now in `scripts/verify_parameters.sql` as 21 checks — impossible bars, future

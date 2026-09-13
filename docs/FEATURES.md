@@ -446,3 +446,42 @@ MISSING, which the runner treats as expected rather than as failure, and says so
 be re-applied — false, and correctly failing, since migrations here are forward-only; and a counter
 treating the SUMMARY row as a check, which reported a clean run as failing.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — The weekly layer, and Wilder's recursion stops existing twice
+**What:** weekly parameters. `public.weekly_bars` rolls daily bars into ISO (Monday) weeks;
+`public.weekly_features` publishes `rsi_weekly`, `ema21_weekly`, `sma30w`, `sma200w`, the three
+`close_vs_*` distances, `weeks_available`, and the two seed flags. Hard constraint 5 — weekly reads
+the last completed week — is now a column (`is_complete`) rather than a rule someone has to
+remember.
+**How:** migration `20260914010000_weekly_features.sql`, decision 0030. Wilder's smoothing and the
+EMA seeding moved into `public.recursive_indicators(date[], double precision[])`, which knows
+nothing about tables or timeframes; `daily_recursive` became a thin wrapper over it and the weekly
+matview calls the same function. Arrays rather than a table name, so it cannot re-couple to one
+timeframe. `close` is the **last** daily close of the week, not Friday's, so a holiday-shortened week
+is a normal week with fewer bars.
+**Architecture impact:** the formula exists once, which is the point — two copies is how a project
+ends up shipping a daily RSI and a weekly RSI that disagree about what RSI means, and hard constraint
+7 puts that gap at 9.4 points. Also, `swing-refresh-features` now refreshes **both** matviews; it
+named only `daily_features` before.
+**What made a risky refactor safe:** rewriting a function the daily layer already depends on would
+normally be reckless. The CI formula gate from decision 0029 compares `daily_features` against an
+independent implementation at 1e-9, so it reported *every daily formula value unchanged by the
+refactor*. First time a gate built for one purpose has paid for itself on a different one.
+**Verified by:** `scripts/ci/run.sh` green end to end — 9 weekly formula assertions against
+independently computed expectations (worst relative difference **3.8e-16**, and a null expectation
+matched by a null), 3 weekly structural checks, every daily assertion unmoved, and all invariants
+passing. Production goldens: MU's week of 2026-08-31 at `rsi_weekly` 63.562709 and `ema21_weekly`
+839.355683, now scripted in `verify_parameters.sql` at the **same 1e-3 as the daily goldens** —
+re-measured residual seed weight is 1.75e-08 and 1.87e-10, five orders of margin, which overturned
+the recorded plan for this task.
+**The sixth "operation that succeeds and changes nothing", caught by CI rather than by production:**
+a matview is populated once, at creation. Without amending the refresh job, `weekly_features` would
+have been correct on day one and a day staler every day after, silently. The weekly assertions came
+back MISSING — in CI the migration runs before the fixture loads — and the fix there is the same fix
+as the one production needed.
+**A check that was wrong in a way worth recording:** the short-week assertion was first written
+against a *global* newest week and failed on the fixture's deliberately-short `SHORT` series, whose
+own newest week is older than another symbol's — correctly incomplete, wrongly flagged. A short
+history and a short week are different things. Now per-symbol.
+**By:** Bodhi + Claude
+

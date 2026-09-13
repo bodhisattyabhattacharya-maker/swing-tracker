@@ -80,6 +80,79 @@ golden_actual as (
   left join public.daily_features f
     on f.symbol = g.symbol and f.d = g.on_date
 ),
+-- ---------------------------------------------------------------------------
+-- 1b. WEEKLY GOLDENS. Same anchor, different timeframe, and pinned to the WEEK rather than the
+--     day: MU's week of 2026-08-31, which ran Mon 08-31 to Fri 09-04 - so its close IS the
+--     2026-09-04 close the daily goldens use. One date, both timeframes, no second hand-reading.
+--
+--     TOLERANCE IS THE SAME 1e-3 AS THE DAILY GOLDENS, and that is a change from the plan recorded
+--     against task #45, which said to derive a looser one because a weekly series has ~1/5 the bars
+--     and therefore a heavier seed residual. Measured on the 5-year backfill (257 weekly bars,
+--     2026-09-13): residual seed weight is 1.75e-08 for RMA(14) and 1.87e-10 for EMA(21), and the
+--     SQL agrees with the Python reference to 5.0e-08 and 9.9e-08. That is five orders of margin
+--     inside 1e-3. The earlier plan was right for the data we had then - 102 weekly bars - and the
+--     backfill, not a mistake, is what invalidated it.
+--
+--     WHY 2026-08-31 CANNOT DRIFT: it is the last COMPLETE week, and a complete week never gains
+--     another bar (hard constraint 5). The following week, 2026-09-07, has 4 bars because Labor Day
+--     closed the Monday - which is exactly the case the rollup has to treat as a normal short week
+--     rather than a gap, and the invariants below assert it.
+--
+--     NOT GOLDEN HERE: sma30w and sma200w. There is no hand-read TradingView figure for either, so
+--     pinning our own computation would assert only that we agree with ourselves. Both are covered
+--     at 1e-9 against an independent implementation in scripts/ci/check_formulas.sql instead.
+-- ---------------------------------------------------------------------------
+golden_w(check_name, symbol, on_week, col, expected_value, tolerance) as (
+  values
+    ('golden MU RSI(14) weekly', 'MU', date '2026-08-31', 'rsi_weekly',
+       63.562709::double precision, 1e-3::double precision),
+    ('golden MU EMA(21) weekly', 'MU', date '2026-08-31', 'ema21_weekly',
+       839.355683::double precision, 1e-3::double precision)
+),
+golden_w_actual as (
+  select
+    g.check_name, g.symbol, g.on_week, g.expected_value, g.tolerance,
+    case g.col
+      when 'rsi_weekly'   then f.rsi_weekly
+      when 'ema21_weekly' then f.ema21_weekly
+    end as actual_value,
+    (f.symbol is null) as row_absent,
+    f.weeks_available,
+    f.is_complete
+  from golden_w g
+  left join public.weekly_features f
+    on f.symbol = g.symbol and f.week_start = g.on_week
+),
+golden_w_rows as (
+  select
+    'golden (weekly)'::text as section,
+    check_name,
+    case
+      when row_absent then 'MISSING'
+      when actual_value is null then 'FAIL'
+      -- A golden read against an INCOMPLETE week is comparing a partial bar to a settled reference.
+      -- It would fail, but for a reason that has nothing to do with the formula, so say which.
+      when not is_complete then 'FAIL'
+      when abs(actual_value - expected_value) <= tolerance then 'PASS'
+      else 'FAIL'
+    end as status,
+    to_char(expected_value, 'FM999999990.000000') as expected,
+    coalesce(to_char(actual_value, 'FM999999990.000000'), '(null)') as actual,
+    case
+      when row_absent
+        then 'no weekly_features row for ' || symbol || ' in the week of ' || on_week ||
+             ' - refresh weekly_features, or check the ingest stored that week'
+      when actual_value is null
+        then 'row exists but the value is null - weeks_available = ' ||
+             coalesce(weeks_available::text, '?') || ', so this is a warm-up'
+      when not is_complete
+        then 'the week of ' || on_week || ' is flagged INCOMPLETE, so this golden is being read ' ||
+             'against a partial bar - the rollup or the data end date is wrong, not the formula'
+      else 'diff ' || trim(to_char(abs(actual_value - expected_value), '0.000EEEE')) ||
+           ' against tolerance ' || trim(to_char(tolerance, '0.000EEEE'))
+    end as note
+  from golden_w_actual
+),
 golden_rows as (
   select
     'golden'::text as section,
@@ -305,6 +378,62 @@ invariant_rows as (
            case when index_or_inactive_in_grid = 0 then 'PASS' else 'FAIL' end, '0', index_or_inactive_in_grid::text,
            'indices are market context, not rows; inactive tickers left the watchlist' from counts
     union all
+    -- ---------------------------------------------------------------------------
+    -- The weekly layer. Each of these would break under a wrong rollup while every daily check
+    -- above stayed green, which is why they are their own rows rather than a footnote.
+    -- ---------------------------------------------------------------------------
+    select 'weekly', 'exactly one incomplete week per symbol',
+           case when (select count(*) from (
+                        select symbol from public.weekly_features
+                        where not is_complete group by symbol having count(*) <> 1) x) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select symbol from public.weekly_features
+              where not is_complete group by symbol having count(*) <> 1) x),
+           'only the newest week can still gain bars; more than one means the grouping is wrong'
+    union all
+    -- PER SYMBOL, not against a global newest week. Written globally first, and it failed on the CI
+    -- fixture's deliberately-short SHORT series, whose own newest week is older than another
+    -- symbol's - correctly incomplete, wrongly flagged. A short HISTORY and a short WEEK are
+    -- different things and this row must only speak about the second.
+    select 'weekly', 'a short week is never treated as incomplete',
+           case when (select count(*) from public.weekly_features f
+                      where f.bars_in_week < 5 and not f.is_complete
+                        and f.week_start < (select max(g.week_start) from public.weekly_features g
+                                             where g.symbol = f.symbol)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.weekly_features f
+             where f.bars_in_week < 5 and not f.is_complete
+               and f.week_start < (select max(g.week_start) from public.weekly_features g
+                                    where g.symbol = f.symbol)),
+           'a 4-bar week is Labor Day, not missing data. This starts failing the day someone '
+           'redefines is_complete as bars_in_week = 5, which is the tempting wrong definition'
+    union all
+    select 'weekly', 'every weekly close is the last daily close of its week',
+           case when (select count(*) from public.weekly_features f
+                      join public.daily_bars b
+                        on b.symbol = f.symbol and b.d = f.last_bar
+                      where abs(b.close - f.close) > 1e-9) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.weekly_features f
+             join public.daily_bars b on b.symbol = f.symbol and b.d = f.last_bar
+             where abs(b.close - f.close) > 1e-9),
+           'using Friday''s close instead of the LAST close is the classic weekly rollup bug, and '
+           'in a holiday week it silently reads a bar that does not exist'
+    union all
+    -- Informational, and the positive half of the short-week row above: that one proves no short
+    -- week is mishandled, this one shows short weeks actually OCCUR in the data being checked. On
+    -- the CI fixture it reads 0 by construction; on production it should be roughly one per market
+    -- holiday per symbol, and a sudden 0 there would mean the rollup stopped seeing them.
+    select 'info', 'complete weeks with fewer than 5 bars',
+           'PASS', '(informational)',
+           (select count(*)::text from public.weekly_features
+             where bars_in_week < 5 and is_complete),
+           'market holidays, handled - Labor Day, Thanksgiving, Good Friday and the rest'
+    union all
     -- Always PASS by construction. It is here because a count nobody looks at is a count nobody
     -- notices changing, and "why is half the grid blank" is a question this row answers instantly.
     select 'info', 'rows still seed-sensitive (suppress at display)',
@@ -318,6 +447,8 @@ invariant_rows as (
 ),
 all_rows as (
   select * from golden_rows
+  union all
+  select * from golden_w_rows
   union all
   select * from invariant_rows
 )

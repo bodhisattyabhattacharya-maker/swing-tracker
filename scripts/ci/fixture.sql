@@ -385,3 +385,26 @@ insert into ci_expected (d, param, expected) values
   ('2021-09-06','sma200',null),
   ('2021-09-06','realized_vol_20',44.53372410687711),
   ('2021-09-06','volume_ratio',1.003564766993297);
+
+-- ---------------------------------------------------------------------------
+-- Weekly expectations, from the SAME series rolled into ISO weeks by the reference implementation.
+--
+-- The weekly rollup is where a subtle error is most likely and least visible: taking Friday's
+-- close instead of the last close, starting weeks on Sunday, or letting a holiday-shortened week
+-- look like a gap. None of those would trip an invariant - they would just produce plausible,
+-- wrong numbers - which is exactly the class this gate exists for.
+-- ---------------------------------------------------------------------------
+create table ci_expected_weekly (
+  week_start date not null, param text not null, expected double precision,
+  primary key (week_start, param)
+);
+insert into ci_expected_weekly (week_start, param, expected) values
+  ('2022-03-21','rsi_weekly',75.6424864649548),
+  ('2022-03-21','ema21_weekly',133.19513911338356),
+  ('2022-03-21','sma30w',126.19477333333336),
+  ('2021-10-11','rsi_weekly',56.82130917560982),
+  ('2021-10-11','ema21_weekly',120.76560752385919),
+  ('2021-10-11','sma30w',126.26492333333331),
+  ('2021-06-28','rsi_weekly',64.35837589731862),
+  ('2021-06-28','ema21_weekly',126.75761325395001),
+  ('2021-06-28','sma30w',null);
