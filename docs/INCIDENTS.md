@@ -170,3 +170,25 @@ merged without applying its migration. Verify the state, not the operation.
 **Rule of thumb worth keeping:** when revoking on a function, check `proacl` for a leading `=`
 before naming roles. A revoke listing roles individually is almost always the wrong shape for a
 default grant.
+
+## 2026-09-13 — A function merged, deployed clean, and did not exist
+**Symptom:** `POST /functions/v1/digest?send=0` returned **404**. The PR had merged, the Supabase
+integration had run, the migration in the same PR applied, and `ingest` redeployed to version 23.
+Nothing anywhere reported a failure.
+**Cause:** the Supabase GitHub integration deploys only functions declared in
+`supabase/config.toml`. The file had a `[functions.ingest]` block and no `[functions.digest]` one.
+A new directory under `supabase/functions/` with a valid `index.ts`, its own tests and a passing
+`deno check` is **not** enough on its own.
+**Why it took a 404 to notice:** every signal available said success. The merge was green, the
+integration ran, a migration from the same commit landed in the database, and the one function
+that was declared got a new version. The deploy did exactly what it was configured to do — the
+configuration was just incomplete, and an incomplete configuration is indistinguishable from a
+complete one unless you go looking for the thing that should have appeared.
+**Fix:** a `[functions.digest]` block, plus a comment at the top of `config.toml` saying every
+function needs one and naming this incident.
+**The family it belongs to:** this is the fifth time on this project that a successful-looking
+operation changed nothing — after the "Deploy to production" toggle that deployed nothing, the
+merged PR that applied no migration, the `revoke` that revoked nothing, and the grid page
+prerendered against a schema that did not exist yet. The lesson has not changed: **verify the thing
+you wanted exists, not that the operation reported success.** `list_edge_functions` answered this
+in one call; the deploy log never would have.
