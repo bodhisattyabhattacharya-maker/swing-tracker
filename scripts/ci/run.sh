@@ -59,7 +59,11 @@ on conflict (key) do update set value = excluded.value;
 -- reports stale, which is correct but would fail the gate for the wrong reason.
 insert into public.ingest_runs (source, scope, triggered_by, finished_at, ok, detail)
 values ('fixture', 'all', 'ci', now(), true, '{"daily":{"written":1}}'::jsonb);
+-- Both matviews are populated at CREATE time, which in CI is before the fixture exists. Refreshing
+-- here is not a CI detail: it mirrors what swing-refresh-features does in production, and the
+-- weekly one was MISSING from that job until these assertions found it (20260914010000).
 refresh materialized view public.daily_features;
+refresh materialized view public.weekly_features;
 SQL
 
 # Both scripts return one row per check, with the status in a column. CI's only job is to insist
@@ -69,8 +73,9 @@ SQL
 #                         did not load, which invalidates everything else in that file.
 #   verify_parameters.sql — only FAIL fails the build. MISSING is EXPECTED here: the MU golden
 #                         values are real vendor data, deliberately not committed to a public repo
-#                         for licence reasons, so those five checks legitimately have nothing to
-#                         read. They remain a manual check against production (DEFINITIONS.md §6).
+#                         for licence reasons, so those seven checks - four daily, two weekly, and
+#                         the peak high - legitimately have nothing to read. They remain a manual
+#                         check against production (DEFINITIONS.md §6).
 
 # Counts CHECK rows only. The SUMMARY row is excluded deliberately: it is a derived line that
 # reports how many checks did not pass, so counting it as a check double-counts every failure and

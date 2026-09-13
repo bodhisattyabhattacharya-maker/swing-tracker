@@ -32,9 +32,9 @@ next agent to the wrong file confidently.
                   │  parameters          │  the 26 tracked numbers
                   │  + norms applied     │  → same query serves today's scan
                   └───────┬──────────────┘    and a 10-year replay
-                          │                   daily_features EXISTS (matview, refreshed
-                          │                   by hand); weekly, market context and the
-                          │                   joined grid are still planned
+                          │                   daily_features and weekly_features EXIST
+                          │                   (matviews, both refreshed at 22:45 UTC);
+                          │                   market context and fundamentals still planned
                  ┌────────┴────────┐
         ┌────────▼──────┐   ┌──────▼─────────┐
         │ Next.js grid  │   │ email digest   │
@@ -50,7 +50,7 @@ next agent to the wrong file confidently.
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. Includes the pg_cron schedule — `select jobname, schedule from cron.job` is the live answer to "what runs when". | Oldest first; never edit a merged one |
 | `supabase/functions/` | Deno edge functions, one directory each. `_shared/` holds code used by more than one (`auth.ts`); an underscore prefix means Supabase does not deploy it as a function. `digest/` renders and sends the weekday email — `render.ts` is the pure wording, separate so a test can import it without `index.ts`'s top-level `Deno.serve` starting a listener. `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces, `planLimit()` caps one run) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`) and `norms.ts` (yml → `norms`/`flags`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js 16 App Router, TypeScript, desktop-first. `app/page.tsx` is **the dashboard**; `app/status/page.tsx` is the deployment check, kept because it answers "is this deployment wired up" without needing the database. `lib/grid.ts` is the only file that talks to Postgres — **server only**, service_role over PostgREST, and nothing may import it into a client component. | `app/page.tsx`; Vercel root directory is `web/` |
-| `scripts/` | SQL you paste into the Supabase editor, plus the CI gate. `verify_parameters.sql` — goldens and invariants, one row per check. `ci/` — `run.sh` applies every migration to an empty database, loads a synthetic fixture and compares against an independent reference; runnable by hand against any empty PostgreSQL, which is how every migration here gets verified before its PR. | `scripts/ci/run.sh`; run `verify_parameters.sql` after any indicator change or ingest |
+| `scripts/` | SQL you paste into the Supabase editor, plus the CI gate. `verify_parameters.sql` — goldens and invariants, one row per check, daily and weekly. `ci/` — `run.sh` applies every migration to an empty database, loads a synthetic fixture and compares against an independent reference; runnable by hand against any empty PostgreSQL, which is how every migration here gets verified before its PR. | `scripts/ci/run.sh`; run `verify_parameters.sql` after any indicator change or ingest |
 | `docs/` | Context files. Start at `ONBOARDING.md` | — |
 | `.claude/skills/` | Per-task procedures | Matched to your task |
 | `.github/workflows/` | CI: secret scan, config validation, edge-function tests, web build, hygiene gate | `ci.yml` |
@@ -64,6 +64,8 @@ next agent to the wrong file confidently.
 | Why is this cell coloured? | `config/norms.yml` |
 | Which tickers, and why that peer group? | `config/watchlist.yml` (`theme` vs `tag`) |
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |
+| Where is RSI actually computed? | `public.recursive_indicators` — **once**, for every timeframe. `daily_recursive` and `weekly_features` are both callers. Do not add a second copy. |
+| Is this week finished? | `weekly_features.is_complete`, which means "not the newest week for this symbol". There is no market calendar and none is needed. |
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
@@ -76,5 +78,9 @@ next agent to the wrong file confidently.
    duplicates it.
 3. **Parameters are a pure function of `(ticker, date)`.** This is what makes replay free. Any
    change that breaks it costs us backtesting.
-4. **Weekly reads the last completed week.** Never the current partial one.
+4. **Weekly reads the last completed week.** Never the current partial one — filter
+   `weekly_features.is_complete`, which is true for every week except the newest one per symbol.
+   A holiday-shortened week is complete; `bars_in_week = 5` is the tempting wrong test.
 5. **Tables are RLS deny-by-default.** The schema is public; assume it is read.
+6. **Wilder's recursion exists exactly once**, in `public.recursive_indicators`. A second copy is
+   how a daily number and a weekly number come to disagree about what RSI means.

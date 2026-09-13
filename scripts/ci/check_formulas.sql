@@ -59,6 +59,43 @@ formula_rows as (
     end as note
   from expected
 ),
+-- The weekly layer, given the same treatment. The rollup is where a subtle error is most likely
+-- and least visible - Friday's close instead of the last close, Sunday weeks, a holiday week read
+-- as a gap - and none of those would trip an invariant.
+weekly as (
+  select e.week_start, e.param, e.expected,
+         case e.param
+           when 'rsi_weekly'   then f.rsi_weekly
+           when 'ema21_weekly' then f.ema21_weekly
+           when 'sma30w'       then f.sma30w
+         end as actual,
+         (f.symbol is null) as row_missing
+  from ci_expected_weekly e
+  left join public.weekly_features f on f.symbol = 'SYNTH' and f.week_start = e.week_start
+),
+weekly_rows as (
+  select
+    'formula (weekly)'::text as section,
+    param || ' @ ' || week_start as check_name,
+    case
+      when row_missing                               then 'MISSING'
+      when expected is null and actual is null        then 'PASS'
+      when expected is null or actual is null         then 'FAIL'
+      when abs(actual - expected)
+             <= 1e-9 * greatest(abs(expected), 1e-6)  then 'PASS'
+      else 'FAIL'
+    end as status,
+    coalesce(to_char(expected, 'FM999999990.0000000000'), '(null)') as expected_v,
+    coalesce(to_char(actual,   'FM999999990.0000000000'), '(null)') as actual_v,
+    case
+      when row_missing then 'no weekly_features row for SYNTH in this week'
+      when expected is null and actual is null then 'both null, as the reference says'
+      when expected is null or actual is null then 'one side is null and the other is not'
+      else 'relative diff ' ||
+           trim(to_char(abs(actual - expected) / greatest(abs(expected), 1e-6), '0.000EEEE'))
+    end as note
+  from weekly
+),
 -- The degenerate cases. Each is a statement DEFINITIONS.md makes, asserted rather than assumed.
 degenerate as (
   select * from (
@@ -103,6 +140,37 @@ degenerate as (
     union all
     -- The scheduling migrations are applied against stubs, so this asserts the only thing a stub
     -- CAN prove about them: that they registered what they claimed, and did not embed a secret.
+    select 'weekly', 'exactly one week is incomplete per symbol',
+           case when (select count(*) from (
+                        select symbol from public.weekly_features
+                        where not is_complete group by symbol having count(*) <> 1) x) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select symbol from public.weekly_features
+              where not is_complete group by symbol having count(*) <> 1) x),
+           'only the most recent week can still gain bars; any other incomplete week is a bug'
+    union all
+    select 'weekly', 'weekly closes equal the last daily close of the week',
+           case when (select count(*) from public.weekly_bars w
+                      join public.daily_bars b
+                        on b.symbol = w.symbol and b.d = w.last_bar
+                      where b.close <> w.close) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.weekly_bars w
+             join public.daily_bars b on b.symbol = w.symbol and b.d = w.last_bar
+             where b.close <> w.close),
+           'taking Friday''s close rather than the last close is the classic weekly rollup bug'
+    union all
+    select 'weekly', 'every daily bar lands in exactly one week',
+           case when (select count(*) from public.daily_bars)
+                   = (select coalesce(sum(bars_in_week), 0) from public.weekly_bars)
+                then 'PASS' else 'FAIL' end,
+           (select count(*)::text from public.daily_bars),
+           (select coalesce(sum(bars_in_week), 0)::text from public.weekly_bars),
+           'a bar counted twice or dropped would shift every weekly aggregate'
+    union all
     select 'scheduling', 'all three jobs registered exactly once',
            case when (select count(*) from cron.job where jobname like 'swing-%') = 3
                 then 'PASS' else 'FAIL' end,
@@ -122,6 +190,8 @@ degenerate as (
 ),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
+  union all
+  select section, check_name, status, expected_v, actual_v, note from weekly_rows
   union all
   select section, check_name, status, expected_v, actual_v, note from degenerate
 )

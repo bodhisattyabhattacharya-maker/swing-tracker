@@ -552,3 +552,53 @@ to live data and needs a full-access key in Actions); gating only invariants and
 migration could be re-applied - false, and correctly failing, because migrations here are
 forward-only and Supabase never re-runs them; and a counter that treated the SUMMARY row as a
 check, double-counting every failure and reporting a clean run as failing.
+
+## 0030 — 2026-09-13 — Wilder's recursion exists once; a week is complete when it is not the newest
+
+**Decision:** the weekly layer ships as `weekly_bars` (a view) and `weekly_features` (a matview),
+and getting there required extracting Wilder's smoothing and the EMA seeding into a single
+timeframe-agnostic function, `public.recursive_indicators(date[], double precision[])`. Both
+`daily_recursive` and the weekly matview call it. Neither contains the formula.
+
+**Why not just write the weekly recursion beside the daily one:** because hard constraint 7 says a
+plain rolling mean is a different indicator wearing the same name, and the gap runs to 9.4 RSI
+points. Two copies of that logic is the most plausible way this project ever ships a daily number
+and a weekly number that disagree about what RSI means — and the disagreement would look like
+market behaviour, not a bug. The function takes **arrays**, not a table name, so it cannot quietly
+couple itself to one timeframe's storage.
+
+**Rewriting a function the daily layer already depends on is normally reckless.** It was safe here
+for one specific reason: decision 0029's CI gate compares `daily_features` against an independent
+implementation at 1e-9, so a regression in the refactor fails the build instead of reaching the
+dashboard. The gate reported *every daily formula value unchanged* — and that, rather than
+confidence, is what made the change defensible. This is the first time a gate built for one purpose
+has paid for itself on a different one.
+
+**A week is complete when it is not the most recent week for that symbol.** We have no market
+calendar and are not buying one. That definition needs none: only the newest week can still gain
+bars, so every earlier week is finished. It is per-symbol, so a name that stopped trading cannot
+make another name's partial week look settled, and it handles holidays for free — a
+holiday-shortened week is a normal week with fewer bars. `bars_in_week` is published so a reader can
+see a short week; `is_complete` is what they filter on (hard constraint 5).
+**Rejected:** `bars_in_week = 5`, which is the obvious definition and silently drops every holiday
+week, so `scripts/verify_parameters.sql` now carries a check whose only job is to fail the day
+someone writes it. Also rejected: a hardcoded US market-holiday table, which would need maintaining
+forever to answer a question we do not have to ask.
+
+**The weekly goldens are pinned at the same 1e-3 as the daily ones**, which overturns the plan
+recorded against task #45. That plan said to derive a looser tolerance because a weekly series has
+~1/5 the bars and a heavier seed residual. Measured on the 5-year backfill: residual seed weight
+1.75×10⁻⁸ for RMA(14), 1.87×10⁻¹⁰ for EMA(21), with SQL–Python agreement at 5.0×10⁻⁸ and 9.9×10⁻⁸.
+Five orders of margin. The plan was right for the 102 weekly bars we held when it was written; the
+backfill invalidated it — the third time in one day a measurement was overturned by more data
+rather than by being wrong, which is an argument for re-measuring before trusting a plan, not for
+distrusting plans.
+
+**And the part CI caught that nobody would have:** a materialized view is populated once, at
+creation. `swing-refresh-features` named `daily_features` explicitly, so without an amendment
+`weekly_features` would have been correct on the day it shipped and a day staler every day
+afterwards, with no error anywhere — the **sixth** "operation that succeeds and changes nothing" on
+this project. The weekly assertions surfaced it as MISSING rather than FAIL, because in CI the
+migration runs before the fixture loads; the fix in `scripts/ci/run.sh` and the fix in production are
+the same fix, which is the useful part. The refresh job now names both matviews.
+
