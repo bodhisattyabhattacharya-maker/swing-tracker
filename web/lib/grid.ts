@@ -57,9 +57,16 @@ export interface Ticker {
 export interface Status {
   data_through: string | null;
   symbols: number | null;
+  /** Published as a fact, NOT as the verdict — a market holiday is not a failed pipeline. */
   days_behind: number | null;
-  stale_after_days: number | null;
+  /** Hours since the daily ingest last completed successfully. null means it never has. */
+  hours_since_success: number | null;
+  last_success_at: string | null;
+  stale_after_hours: number | null;
+  /** The verdict, and it measures the PIPELINE. See the grid_status view header. */
   is_stale: boolean | null;
+  /** The LAST run, which is a different question from the last GOOD run — showing both is what
+   *  distinguishes "nothing has run" from "it ran and failed". */
   last_run_at: string | null;
   last_run_ok: boolean | null;
   last_run_by: string | null;

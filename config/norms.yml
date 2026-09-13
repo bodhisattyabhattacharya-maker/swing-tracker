@@ -40,6 +40,10 @@ norms:
 
 # Factual states — NOT judgments. Rendered with an icon and a label, never colour alone.
 flags:
-  stale_days_price:      3
+  # Hours since the daily ingest last COMPLETED SUCCESSFULLY, before the dashboard calls itself
+  # stale. Measures the pipeline, not the gap to the newest bar — otherwise a market holiday reads
+  # as a failure and the banner cries wolf. 30 = one daily cycle plus six hours of slack.
+  # Replaced stale_days_price on 2026-09-13; see the header of 20260913200000_freshness_from_runs.
+  pipeline_stale_after_hours: 30
   stale_days_searched:   14
   min_bars_warning:      true   # suppress a value below its warm-up floor

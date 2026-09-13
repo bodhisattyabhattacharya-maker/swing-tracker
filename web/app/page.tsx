@@ -95,10 +95,12 @@ export default async function Grid() {
             <span className="stat-v">{tickers.length}</span>
           </div>
           <div className="stat">
-            <span className="stat-k">Age</span>
+            <span className="stat-k">Last ingest</span>
             <span className="stat-v">
-              {status?.days_behind ?? "—"}d
-              {status?.is_stale ? "" : " · current"}
+              {status?.hours_since_success === null || status?.hours_since_success === undefined
+                ? "never"
+                : `${Math.round(status.hours_since_success)}h ago`}
+              {status?.is_stale ? " · stale" : " · ok"}
             </span>
           </div>
         </div>
@@ -106,9 +108,14 @@ export default async function Grid() {
 
       {status?.is_stale ? (
         <div className="banner stale">
-          <b>This data is {status.days_behind} days old.</b> The scheduled run is the only way data
-          moves — there is no refresh button — so a gap here means a run did not complete. The
-          numbers below are real, they are just not today&apos;s.
+          <b>
+            {status.hours_since_success === null
+              ? "The daily ingest has never completed successfully."
+              : `The daily ingest last completed ${Math.round(status.hours_since_success)} hours ago.`}
+          </b>{" "}
+          It should run every weekday evening, and the schedule is the only way data moves — there
+          is no refresh button. The numbers below are real; they are just not as current as they
+          should be. Newest bar: {status.data_through ?? "none"}.
         </div>
       ) : null}
 
@@ -227,10 +234,11 @@ export default async function Grid() {
         the data plan carries five years, and several names on this list peaked in 2000.
         {status?.last_run_at ? (
           <>
-            {" "}Last ingest {new Date(status.last_run_at).toISOString().slice(0, 16).replace("T", " ")}
-            {" UTC"}
+            {" "}Most recent run of any kind:{" "}
+            {new Date(status.last_run_at).toISOString().slice(0, 16).replace("T", " ")} UTC
             {status.last_run_by ? ` (${status.last_run_by})` : ""}
-            {status.last_run_ok === false ? " — reported a problem" : ""}.
+            {status.last_run_ok === false ? ", which reported a problem" : ""}. A config-only sync
+            counts here but deliberately does not count as evidence that prices arrived.
           </>
         ) : null}
       </p>
