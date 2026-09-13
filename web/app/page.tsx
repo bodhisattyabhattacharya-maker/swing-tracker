@@ -1,102 +1,239 @@
 /**
- * Deployment check page. This is NOT the dashboard.
+ * The dashboard. One row per active non-index ticker, banded by theme, with every parameter that
+ * exists today and a verdict on the four that currently have a norm.
  *
- * Purpose: prove the Vercel pipeline before anything depends on it — that the repo imports with
- * `web/` as the root directory, that a merge to `main` triggers a deploy, and that environment
- * variables actually reach the running app. Twice already a deploy path looked wired and was not
- * (the Supabase "Deploy to production" toggle was off; the function's service key was not what we
- * assumed), so the pipeline gets verified on its own before a grid is built on top of it.
+ * Server component. It reads the database on the server and ships HTML; the browser never talks to
+ * Postgres and never sees a key. See lib/grid.ts for why.
  *
- * Reads NO data. The tables are RLS deny-by-default with no policies, so a browser can read
- * nothing yet by design — the auth model and read policies are a deliberate decision still to be
- * made, not an oversight to route around.
- *
- * SECRETS: this prints whether a variable is SET, never its value. `NEXT_PUBLIC_*` variables are
- * compiled into the browser bundle by Next, so only the anon key may ever carry that prefix. The
- * service_role key must never appear in this directory in any form (CLAUDE.md, "This repo is
- * PUBLIC").
- *
- * Rendered per request, not at build time, so setting an env var in Vercel shows up on a refresh
- * instead of needing a rebuild — which is the thing we are trying to observe.
+ * WHAT THIS PAGE MUST NOT DO, and the reason it is stated here rather than assumed:
+ *   - It must not hide staleness. v1 runs one scheduled ingest a day, has no retry, and has no
+ *     refresh button for anyone. So the realistic failure is ten people reading numbers that look
+ *     current and are not. The freshness line is always rendered and the banner is not dismissible.
+ *   - It must not colour a value that has no norm. A grey number means "we have no opinion",
+ *     which is a different statement from "inside the norm", and the two must not look alike.
+ *   - It must not colour a value still inside its warm-up window, even though the number exists.
+ *     `suppressed_warmup` marks those; hard constraint 8.
  */
-export const dynamic = "force-dynamic";
+import {
+  COLUMNS,
+  fetchGrid,
+  formatNorm,
+  formatValue,
+  REVALIDATE_SECONDS,
+  THEME_LABELS,
+  type Cell,
+  type Norm,
+} from "../lib/grid";
 
-/** Presence only. Returning the value here would leak it into the page. */
-function isSet(name: string): boolean {
-  const v = process.env[name];
-  return typeof v === "string" && v.length > 0;
+// One upstream read serves every viewer for this long. The data changes once a day, so this is
+// about bounding staleness, not about load - ten readers would not trouble the database anyway.
+//
+// This MUST be a literal. Next statically analyses segment config exports and rejects an imported
+// constant ("Invalid segment configuration export"), so the number appears here and in lib/grid.ts.
+// The line below is the guard against those two drifting: it is a type assertion, compiles to
+// nothing, and fails the build if they ever disagree.
+export const revalidate = 900;
+const _revalidateIsInSync: typeof revalidate = REVALIDATE_SECONDS;
+void _revalidateIsInSync;
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="panel">
+      <h2>{title}</h2>
+      {children}
+    </div>
+  );
 }
 
-function Flag({ on }: { on: boolean }) {
-  return <span className={on ? "yes" : "no"}>{on ? "set" : "not set"}</span>;
-}
+export default async function Grid() {
+  const { status, tickers, cells, norms, error } = await fetchGrid();
 
-export default function DeploymentCheck() {
-  // Vercel injects these at build; they are absent on a local `next dev`, which is itself
-  // a useful signal that you are looking at localhost and not the deployment.
-  const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? null;
-  const branch = process.env.VERCEL_GIT_COMMIT_REF ?? null;
-  const env = process.env.VERCEL_ENV ?? "local";
+  if (error) {
+    return (
+      <main>
+        <h1>Swing Tracker</h1>
+        <Panel title="The grid could not be loaded">
+          <p className="err">{error}</p>
+          <p className="muted">
+            Nothing is cached from a previous good load, deliberately — a stale grid shown without
+            saying so is the failure this page exists to avoid. <a href="/status">Deployment check</a>
+          </p>
+        </Panel>
+      </main>
+    );
+  }
+
+  // Pivot: one lookup per (symbol, param). Doing this here rather than in SQL keeps the view long
+  // and generic - adding a parameter is one line in COLUMNS and one in the view's unpivot.
+  const by = new Map<string, Cell>();
+  for (const c of cells) by.set(`${c.symbol}|${c.param}`, c);
+  const normByParam = new Map<string, Norm>(norms.map((n) => [n.param, n]));
+
+  let lastTheme: string | null = null;
+  const perTheme = new Map<string, number>();
+  for (const t of tickers) perTheme.set(t.theme, (perTheme.get(t.theme) ?? 0) + 1);
+
+  const judged = COLUMNS.filter((c) => normByParam.has(c.param)).length;
 
   return (
-    <main>
-      <h1>Swing Tracker</h1>
-      <p className="sub">
-        Deployment check — the dashboard does not exist yet. See <code>docs/FEATURES.md</code> for
-        what is actually built.
+    <main className="wide">
+      <header className="head">
+        <div>
+          <h1>Swing Tracker</h1>
+          <p className="sub">
+            The same parameters on every name we hold a thesis on. Colour marks a value outside a
+            norm we set — there is no score and no ranking here.
+          </p>
+        </div>
+        <div className="status">
+          <div className="stat">
+            <span className="stat-k">Data through</span>
+            <span className="stat-v">{status?.data_through ?? "—"}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-k">Names</span>
+            <span className="stat-v">{tickers.length}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-k">Age</span>
+            <span className="stat-v">
+              {status?.days_behind ?? "—"}d
+              {status?.is_stale ? "" : " · current"}
+            </span>
+          </div>
+        </div>
+      </header>
+
+      {status?.is_stale ? (
+        <div className="banner stale">
+          <b>This data is {status.days_behind} days old.</b> The scheduled run is the only way data
+          moves — there is no refresh button — so a gap here means a run did not complete. The
+          numbers below are real, they are just not today&apos;s.
+        </div>
+      ) : null}
+
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th className="sym">Symbol</th>
+              {COLUMNS.map((c) => {
+                const n = normByParam.get(c.param);
+                return (
+                  <th key={c.param}>
+                    {c.label}
+                    {n ? <span className="norm">{formatNorm(n)}</span> : null}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {tickers.map((t) => {
+              const band =
+                t.theme !== lastTheme ? ((lastTheme = t.theme), t.theme) : null;
+              return (
+                <>
+                  {band ? (
+                    <tr className="band" key={`band-${band}`}>
+                      <td colSpan={COLUMNS.length + 1}>
+                        {THEME_LABELS[band] ?? band}
+                        <span className="n">{perTheme.get(band)} names</span>
+                      </td>
+                    </tr>
+                  ) : null}
+                  <tr key={t.symbol}>
+                    <td className="sym">
+                      {t.symbol}
+                      {t.bellwether ? (
+                        <span className="bell" title="Bellwether">
+                          ◆
+                        </span>
+                      ) : null}
+                      <span className="co">{t.name}</span>
+                    </td>
+                    {COLUMNS.map((c) => {
+                      const cell = by.get(`${t.symbol}|${c.param}`);
+                      const v = cell?.verdict ?? null;
+                      const cls =
+                        v === "below" || v === "above" ? `mark ${v}` : "unjudged";
+                      return (
+                        <td key={c.param} className={cls}>
+                          {formatValue(cell?.value ?? null, c.digits, c.signed)}
+                          {cell?.suppressed_warmup ? <span className="warm" title="Inside its warm-up window — shown, never judged">*</span> : null}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="foot">
+        <div>
+          <h2>Reading a cell</h2>
+          <div className="key">
+            <span className="chip b">−32.3</span> below the norm — possibly cheap
+          </div>
+          <div className="key">
+            <span className="chip a">+116.7</span> above it — possibly stretched
+          </div>
+          <div className="key">
+            <span className="chip n">48.9</span> inside the norm, or not yet judged
+          </div>
+          <p>
+            Not red and green on purpose. Both ends are equally worth a look; the tool takes no view
+            on which is good. A <span className="warm">*</span> marks a value still inside its
+            warm-up window: shown, never judged.
+          </p>
+        </div>
+        <div>
+          <h2>Norms in force</h2>
+          <dl>
+            {norms
+              .filter((n) => COLUMNS.some((c) => c.param === n.param))
+              .map((n) => (
+                <div key={n.param}>
+                  <dt>{COLUMNS.find((c) => c.param === n.param)?.label ?? n.param}</dt>
+                  <dd>{formatNorm(n)}</dd>
+                </div>
+              ))}
+          </dl>
+          <p>
+            Edited in <code>config/norms.yml</code>, compared in the database so the grid, the
+            digest and the rule engine cannot drift apart.
+          </p>
+        </div>
+        <div>
+          <h2>{norms.length - judged} norms with no column yet</h2>
+          <p>
+            {norms
+              .filter((n) => !COLUMNS.some((c) => c.param === n.param))
+              .map((n) => n.param)
+              .join(", ") || "None — every norm has a parameter."}
+          </p>
+          <p className="muted">
+            Weekly, market-context and fundamental parameters land in later passes. This list
+            shrinks as they do.
+          </p>
+        </div>
+      </div>
+
+      <p className="note">
+        “Off high” is measured against the highest price we <em>hold</em>, not an all-time high —
+        the data plan carries five years, and several names on this list peaked in 2000.
+        {status?.last_run_at ? (
+          <>
+            {" "}Last ingest {new Date(status.last_run_at).toISOString().slice(0, 16).replace("T", " ")}
+            {" UTC"}
+            {status.last_run_by ? ` (${status.last_run_by})` : ""}
+            {status.last_run_ok === false ? " — reported a problem" : ""}.
+          </>
+        ) : null}
       </p>
-
-      <div className="panel">
-        <h2>Build</h2>
-        <table>
-          <tbody>
-            <tr>
-              <td>Environment</td>
-              <td><code>{env}</code></td>
-            </tr>
-            <tr>
-              <td>Branch</td>
-              <td><code>{branch ?? "—"}</code></td>
-            </tr>
-            <tr>
-              <td>Commit</td>
-              <td><code>{sha ? sha.slice(0, 7) : "—"}</code></td>
-            </tr>
-            <tr>
-              <td>Rendered at</td>
-              <td><code>{new Date().toISOString()}</code></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="panel">
-        <h2>Environment variables</h2>
-        <table>
-          <tbody>
-            <tr>
-              <td>
-                <code>NEXT_PUBLIC_SUPABASE_URL</code>
-              </td>
-              <td><Flag on={isSet("NEXT_PUBLIC_SUPABASE_URL")} /></td>
-            </tr>
-            <tr>
-              <td>
-                <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code>
-              </td>
-              <td><Flag on={isSet("NEXT_PUBLIC_SUPABASE_ANON_KEY")} /></td>
-            </tr>
-          </tbody>
-        </table>
-        <p className="sub" style={{ margin: "14px 0 0", fontSize: 13 }}>
-          Presence only, never values. The anon key is safe in a browser bundle behind RLS; the
-          service_role key belongs nowhere near this directory.
-        </p>
-      </div>
-
-      <footer>
-        If the commit above matches the latest merge to <code>main</code>, deploy-on-merge works.
-      </footer>
     </main>
   );
 }

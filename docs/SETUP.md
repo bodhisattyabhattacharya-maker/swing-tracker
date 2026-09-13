@@ -41,6 +41,15 @@ wired. Owner steps happen once; contributor steps happen per person.
 
 ## Owner — data providers, once (decision 0019)
 
+- [ ] **Vercel environment variables** for the dashboard, in Project Settings → Environment
+      Variables. `SUPABASE_URL` (your project URL — not a secret) and
+      `SUPABASE_SERVICE_ROLE_KEY`. **Neither may use the `NEXT_PUBLIC_` prefix**, and the key
+      especially: Next inlines every `NEXT_PUBLIC_*` variable into the browser bundle at build
+      time, this repo is public, and a leaked service_role key cannot be un-leaked. The page reads
+      on the server and returns HTML, so the browser never needs either value. If they are missing
+      the dashboard renders a panel saying so rather than failing — check `/status`, which needs no
+      database at all.
+
 - [ ] **Polygon** (the site is now massive.com; the API host is still `api.polygon.io`). Sign up
       free, copy the API key, then subscribe to **Stocks Starter ($29/mo)** — unlimited calls,
       5 years of history, flat-file access, licensed for "individual use". The free tier

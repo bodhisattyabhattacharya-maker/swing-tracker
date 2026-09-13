@@ -398,3 +398,35 @@ should not propose it again.
 **Consequence:** ONBOARDING now sends readers to the revision table first, and adds two
 comprehension questions covering the two assumptions most likely to be imported from the old
 version — that a viewer can refresh, and that a green scheduler run means data arrived.
+
+## 0025 — 2026-09-13 — The dashboard renders on the server; the browser never touches Postgres
+**Decided:** `web/app/page.tsx` is a server component that reads through **PostgREST over HTTP**
+with the `service_role` key and ships HTML. There is no client-side data fetching, no Supabase
+client in the browser, and no `NEXT_PUBLIC_` variable carrying anything but a URL. Responses are
+cached for 15 minutes.
+**Why the server and not the browser:** the page is open with no login (v1 scope), so a browser
+that queried Postgres directly would need RLS policies granting `anon` read on a schema that is
+public in this repo. Getting one of those policies subtly wrong is a permanent, silent exposure.
+Rendering on the server means **RLS stays deny-by-default with no read policy at all** - there is
+nothing to get wrong. That is less work than the authenticated design, not more.
+**Why PostgREST over HTTP and not a Postgres connection:** ten readers on multiple devices hitting
+serverless functions that each open a connection is how a free-tier pool is exhausted. HTTP has no
+such limit and the response is cacheable, so all ten are served from one upstream read.
+**Why 15 minutes:** the data changes once a day. This bounds staleness rather than managing load -
+ten readers would not trouble the database. Next requires the value to be a literal it can
+statically analyse, so it appears twice; a type assertion fails the build if the two drift.
+**Why nothing in the data layer throws:** CI builds this with no environment at all and must not
+fail, and a thrown error in a server component is a 500 for every viewer - strictly worse than a
+page that says what is wrong. A missing variable or an unreachable host renders a panel naming the
+failing request and host. It deliberately does **not** fall back to a cached copy: a stale grid
+shown without saying so is the exact failure the freshness work exists to prevent.
+**Rejected:** a client-side Supabase client with `anon` + RLS read policies (the idiomatic Supabase
+shape, and the one that puts a permanent exposure one bad policy away); a direct Postgres
+connection from the server (connection-pool exhaustion at ten readers); static generation without
+revalidation (the page would silently show build-time data forever).
+**The hazard this decision is arranged around, stated plainly:** Next inlines every
+`NEXT_PUBLIC_*` variable into the browser bundle at build time. The service_role key is a
+full-access credential and this repo is public, so a single wrong prefix would be an irreversible
+leak. The variable is therefore named `SUPABASE_SERVICE_ROLE_KEY` with no prefix, `lib/grid.ts`
+says so at the top, and the PR verified it by building with a sentinel value and grepping the
+client bundle for it.
