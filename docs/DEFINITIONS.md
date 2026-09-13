@@ -249,7 +249,15 @@ Two things this establishes beyond "the numbers still work":
 
 ### Standing checks
 
-- **Golden values.** Now **scripted but not gated.** `scripts/verify_parameters.sql` asserts all
+- **What CI gates, and what it cannot.** Since 2026-09-13 a CI job applies every migration to a
+  fresh PostgreSQL, loads a synthetic series, and asserts our SQL matches an independent
+  implementation of these definitions to 1e-9 — RSI, EMA and SMA currently agree at exactly zero.
+  That gates the **formulas**. It cannot gate the **golden values below**, because reproducing them
+  needs a real price series and the data plan is licensed for individual use, so one cannot be
+  committed to a public repo. The goldens therefore remain a manual check against production, and
+  the split is structural rather than temporary: CI proves we compute what we said; the goldens
+  prove the vendor's data and adjustment basis still match TradingView. Decision 0029.
+- **Golden values.** **Scripted, and gated only in part — see above.** `scripts/verify_parameters.sql` asserts all
   four figures above, plus MU's peak intraday high as of the same date, at 1e-3 absolute
   tolerance — chosen because observed cross-provider agreement is 2.4×10⁻⁵ to 1.5×10⁻⁴ while the
   error it exists to catch (a plain rolling mean instead of Wilder's) is 9.4 RSI *points* wide.

@@ -519,3 +519,36 @@ anything could reach anyone. That sequencing is the control, not ceremony.
 **Kill switch, written where someone panicking will find it:**
 `select cron.unschedule(jobid) from cron.job where jobname = 'swing-digest';` - immediate, loses
 nothing.
+
+## 0029 — 2026-09-13 — The golden values are gated in CI, but not the ones you would expect
+**Decided:** a `parameters` CI job stands up PostgreSQL 16, applies every migration in order to an
+empty database, loads a **synthetic** fixture, and compares `daily_features` against values an
+independent implementation computed from the same series. The build fails if any check does not
+PASS. The **MU golden values remain a manual check against production.**
+**Why the goldens cannot be gated:** reproducing them in CI means committing MU's price history.
+The data plan is licensed for individual use, so 1,235 OHLC rows in a public repo is
+redistribution. Four derived indicator values in `DEFINITIONS.md` are fine; a price series is not.
+This is a licensing constraint, not a technical one, and no amount of engineering removes it.
+**What is gated instead, and why it is the right thing anyway:** the FORMULAS. Whether our SQL
+computes Wilder's smoothing, the EMA seeding, the window frames and the annualisation the way an
+implementation written independently from DEFINITIONS.md does. That is the regression that gets
+easy to introduce as the parameter count grows, and it is exactly what the MU goldens do *not*
+test - they test the vendor's data and the adjustment basis. `DEFINITIONS.md` §6 already said
+neither substitutes for the other; this makes that split structural.
+**Tolerance 1e-9 relative**, against 1e-3 for the hand-read TradingView goldens. Both sides here
+are float64 doing the same arithmetic in a different order, so anything past accumulation noise is
+real. Measured on first run: RSI, EMA and SMA agree at **exactly 0.000e+00**; realised volatility
+at 1.6e-16.
+**Also gated, because a stub can prove it:** that the scheduling migrations register exactly three
+jobs and that no scheduled command embeds a secret value rather than a Vault lookup.
+**The one concession, stated so nobody discovers it later:** `create extension` lines are filtered
+out, because pg_net and pg_cron do not exist outside Supabase and the first migration would fail
+before anything could be verified. Those two lines are the only statements in the repo this gate
+does not cover. Everything else is applied verbatim, in order.
+**Rejected:** committing a real price series (licence); pointing CI at production (couples every PR
+to live data and needs a full-access key in Actions); gating only invariants and skipping formulas
+(the cheap half - invariants catch impossible values, not a wrong but plausible RSI).
+**Two things this exercise caught in its own design:** an idempotency loop that "proved" every
+migration could be re-applied - false, and correctly failing, because migrations here are
+forward-only and Supabase never re-runs them; and a counter that treated the SUMMARY row as a
+check, double-counting every failure and reporting a clean run as failing.
