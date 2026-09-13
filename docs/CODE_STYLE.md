@@ -48,6 +48,12 @@ Before opening the PR, check the migration against this list: purpose header, gr
 new table, RLS enabled, and — if the table is read by the dashboard — a policy, or an explicit
 note saying reads come later.
 
+**And after it merges, verify the STATE, not the operation.** A migration that applies cleanly
+can still achieve nothing: `revoke execute ... from anon` succeeded while leaving the function
+world-executable, because the real grant was to PUBLIC (INCIDENTS.md 2026-09-13). Query the
+catalog — `pg_class.relacl`, `pg_proc.proacl`, `pg_default_acl` — and confirm the thing you
+intended is true. "The migration applied" is not evidence.
+
 **Every edge function** opens with inputs, outputs, failure modes and rate discipline.
 
 ```ts
