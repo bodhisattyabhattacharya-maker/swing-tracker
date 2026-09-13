@@ -3,8 +3,20 @@
 # belong on a developer's machine, not in the public repo.
 project_id = "qxngsbehqbcxnyyllalh"
 
+# EVERY FUNCTION NEEDS A BLOCK HERE. On 2026-09-13 the `digest` function was merged with its
+# directory, its tests and its migration, the integration ran and applied the migration, `ingest`
+# redeployed to version 23 - and `digest` was never created, returning 404. The only difference
+# between them was this file. Adding a function directory is not enough; declare it here too, or
+# the deploy succeeds while silently doing nothing for the new function.
+
 [functions.ingest]
 # The gateway verifies the bearer JWT's signature before the function runs. The function then
 # reads the verified token's `role` claim and requires service_role (decision 0017, auth.ts).
 # That second check TRUSTS this first one - never set this to false for ingest.
+verify_jwt = true
+
+[functions.digest]
+# Same two-lock model as ingest, and the same warning: auth.ts trusts the gateway to have verified
+# the signature. This function sends email to real people, so an unauthenticated caller could not
+# read data but could make it send - which is worse, not better, than a data leak.
 verify_jwt = true
