@@ -457,3 +457,40 @@ for a day and still breaks on a Thursday-Friday holiday pair.
 **Verified against seven scenarios** rather than reasoned about, including the two that matter:
 a Monday holiday with a healthy cron reads **fresh**, and a config-only sync an hour ago does not
 stop a 40-hour-old price pipeline reading **stale**.
+
+## 0027 — 2026-09-13 — The digest reports crossings, and says nothing when nothing crossed
+**Decided:** a `digest` edge function sends one plain-text email per weekday, built from two views.
+`digest_changes` lists cells whose norm verdict differs from **that symbol's own previous stored
+date**; `digest_standing` lists everything currently outside a norm. Recipients live in a Supabase
+secret, not in config. The function is **not scheduled by this decision** - see below.
+**Why a query rather than a change log:** `grid_cells` holds every date (decision 0002), so "what
+changed today" is answerable without recording anything at the moment of change. Nothing can be
+missed by a job that did not run, and the same query answers "what changed on any past day" by
+moving one filter. A log written by the ingest would be a second source of truth able to disagree
+with the parameters it describes.
+**Why compare to the symbol's own previous date** and not to a fixed yesterday: a symbol that did
+not trade has no row. Partitioning by (symbol, param) makes holidays, halts and late listings need
+no special case at all.
+**Why both verdicts must be non-null:** a value crossing its *warm-up floor* is not news about the
+market, and would otherwise announce itself once per ticker per indicator forever. The cost is
+stated rather than discovered: the first time a young name's RSI becomes judgeable while already
+below 30, the digest stays quiet.
+**Why it reports recoveries too:** this tracker exists as much for trimming as for entering
+(PROPOSAL §1). A position coming back inside its norm is exactly what otherwise goes unnoticed.
+**Why a quiet day still sends an email saying so:** an email that only arrives on interesting days
+cannot be distinguished from a broken pipeline. "Nothing crossed a norm today" is the product
+working.
+**Why a stale pipeline suppresses the digest entirely:** a cheerful "nothing crossed a norm today"
+computed from three-day-old data is a lie, and the most believable kind. Stale means the email
+leads with that and carries no market content at all - asserted by a test.
+**Why recipients are a secret and not config:** the repo is public. The watchlist and the norms are
+ours to publish; other people's inboxes are not.
+**Why no retry:** retrying an email risks sending two, which is worse than sending none. One send
+per run, failures recorded, next run tomorrow.
+**Why this PR does not schedule it:** sending is irreversible and is a hard stop. The function ships
+callable with `?send=0`, which renders the email and returns it without sending. The schedule is a
+separate change made only after a dry run has been read.
+**Also decided:** `auth.ts` moves to `supabase/functions/_shared/`, because an auth check is the
+last thing that should exist in two copies that can drift. And `renderDigest` lives in its own
+module rather than in `index.ts`, because `index.ts` calls `Deno.serve` at top level and importing
+it from a test starts a real listener - the same trap already hit with the ingest function.

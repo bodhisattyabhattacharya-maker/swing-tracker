@@ -55,7 +55,7 @@
  */
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { bearerToken, callerAllowed } from "./auth.ts";
+import { bearerToken, callerAllowed } from "../_shared/auth.ts";
 import { type BarProvider, planLimit, type Range, RateLimitError } from "./provider.ts";
 import { polygon } from "./polygon.ts";
 import { fred } from "./fred.ts";

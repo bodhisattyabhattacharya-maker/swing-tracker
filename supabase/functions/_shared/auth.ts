@@ -1,4 +1,9 @@
 /**
+ * Lives in `_shared/` because BOTH the ingest and the digest functions need it, and an auth
+ * check is the last thing that should exist in two copies that can drift apart. Directories
+ * prefixed with an underscore are not deployed as functions by Supabase - that is the
+ * documented way to share code between them.
+ *
  * auth.ts — who may trigger an ingest.
  *
  * The rule (decision 0017): only the project's service role. Two ways to prove it, either is

@@ -376,3 +376,27 @@ recreates. Worth knowing because the error is clear but only appears at apply ti
 test script of mine printed "OK" after the failed step, which is exactly the kind of false green
 this project keeps finding.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — The email digest, built but not yet sending
+**What:** a `digest` edge function plus two views. `digest_changes` reports cells whose norm verdict
+changed since that symbol's previous stored date; `digest_standing` reports everything currently
+outside a norm, so a long-standing condition does not vanish after the day it began. `auth.ts`
+moved to `supabase/functions/_shared/` and is now shared by both functions.
+**How:** decision 0027. The email is plain text, names parameters the way the dashboard does, counts
+crossings and recoveries separately, and always states the close date in the subject.
+**Deliberately NOT scheduled.** Sending is irreversible and a hard stop, so the function ships with
+`?send=0` - which renders the email and returns it without sending - and the cron entry is a
+separate change made only after a dry run has been read. Nothing about merging this PR sends mail.
+**Architecture impact:** the phone surface from PROPOSAL §4 now has an implementation path. It also
+introduces the first thing in this system that reaches outside on a schedule and cannot be undone,
+which is why the stale-suppression rule is a tested behaviour rather than a convention.
+**Verified by:** 8 new tests on the pure renderer, 50 across both functions, `deno check` clean on
+all three directories. The tests cover the failure modes that are invisible until after delivery:
+a stale pipeline must carry **no** market content (asserted by absence, not just by the banner
+being present), a quiet day must say so explicitly rather than arrive looking truncated, the count
+in a section heading must match the number of lines beneath it, a null renders as a dash rather
+than NaN, and an unmapped parameter falls back to its raw name rather than leaving a gap.
+**Dry-run against production data, read-only:** the change query would have reported 6 crossings on
+2026-09-11 - SNDK and STX moving outside, CAT, MRVL, QCOM and STX coming back in. A plausible daily
+volume, and a mix that shows the bidirectional design working rather than only flagging weakness.
+**By:** Bodhi + Claude
