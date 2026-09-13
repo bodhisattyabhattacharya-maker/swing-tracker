@@ -36,6 +36,18 @@ migration without at least three comment lines at the top.
 -- Reversing: drop the view; no data loss, it is derived.
 ```
 
+**A migration that creates a table must also grant on it.** Nothing is granted automatically —
+see `CONSTRAINTS.md` 2026-09-13 and decision 0018. The ingest identity gets exactly what it
+uses, and never `delete`:
+
+```sql
+grant select, insert, update on table weekly_features to service_role;
+```
+
+Before opening the PR, check the migration against this list: purpose header, grants for every
+new table, RLS enabled, and — if the table is read by the dashboard — a policy, or an explicit
+note saying reads come later.
+
 **Every edge function** opens with inputs, outputs, failure modes and rate discipline.
 
 ```ts

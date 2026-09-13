@@ -150,3 +150,21 @@ one provider); deleting stale tickers (data loss for a config edit).
 **Also decided:** edge functions use `npm:` and `node:` import specifiers, not `jsr:`, because
 jsr.io is blocked from the coding sandbox and the npm registry is not — tests must run where the
 code is written (CONSTRAINTS.md 2026-09-12).
+
+## 0018 — 2026-09-13 — Every migration grants explicitly; the ingest role cannot delete
+**Decided:** a migration that creates a table also writes its own `grant` line for whichever
+role needs it. No `alter default privileges ... grant` anywhere. The ingest identity
+(`service_role`) gets `select, insert, update` and **not** `delete`. **Why:** Supabase's
+permissive defaults belong to the `supabase_admin` role, and a migration runs as `postgres`, so
+nothing is granted automatically on a table we create — we found this the hard way
+(INCIDENTS.md 2026-09-13). Given that we must grant somewhere, granting per table keeps the
+reader's question "who can touch this?" answerable from the migration that created it, which is
+the same reason anon was revoked in the first place. Withholding `delete` turns decision 0017's
+"deactivate, never delete" from a code-review promise into something Postgres enforces — bars
+cascade on a ticker delete, so the blast radius of a bug there is years of history.
+**Rejected:** default privileges for `service_role` (restores the silent-exposure pattern we
+removed for anon, just aimed at a different role); defaults *plus* redundant explicit grants
+(two sources of truth that drift, and the explicit line stops carrying information).
+**Consequence:** forgetting a grant breaks the next ingest at runtime and CI cannot catch it.
+Accepted knowingly: the check lives in `docs/CODE_STYLE.md`'s migration checklist, and
+`ingest_runs` makes the failure loud.
