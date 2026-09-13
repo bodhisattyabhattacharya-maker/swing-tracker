@@ -88,6 +88,21 @@ jobs:
             deno check "$f"
           done
 
+  web:
+    name: Web build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
+      # `npm ci` not `npm install`: it fails if package-lock.json disagrees with package.json,
+      # which is exactly the drift we want a build to catch rather than silently resolve.
+      - run: npm ci
+        working-directory: web
+      # `next build` type-checks as part of the build, so this is the type gate too.
+      - run: npm run build
+        working-directory: web
+
   hygiene:
     name: Change hygiene (docs/HYGIENE.md)
     runs-on: ubuntu-latest

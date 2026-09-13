@@ -117,3 +117,19 @@ First successful run 2026-09-13 00:33: `ok: true`, 41 tickers synced (24 rankabl
 epoch bounds. Yahoo then rate-limited the egress IP for minutes (INCIDENTS.md), so the request
 rate dropped to ~2/s and a 429 now aborts the run.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Web scaffold and deployment check page
+**What:** `web/` — a minimal Next.js 16 app (App Router, TypeScript, no UI library) whose only
+page is a deployment check. It reads no data and is not the dashboard.
+**How:** `web/app/page.tsx` renders the Vercel environment, branch and commit SHA, plus whether
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are **set** — presence only, never
+values, because `NEXT_PUBLIC_*` is compiled into the browser bundle. `force-dynamic` so an env var
+added in Vercel appears on refresh rather than needing a rebuild, which is the thing being
+observed. New CI job `Web build` runs `npm ci` + `next build`, which is also the type gate.
+**Architecture impact:** establishes `web/` as the Vercel root directory and that the frontend is
+built and type-checked in CI like everything else. No data path yet: the tables are RLS
+deny-by-default with no policies, so the auth model and read policies are the next decision
+before a real page can read anything.
+**Verified by:** `next build` clean locally (2 routes, TypeScript pass). The deploy itself is
+verified by the commit SHA on the deployed page matching the merge — recorded here once it does.
+**By:** Bodhi + Claude
