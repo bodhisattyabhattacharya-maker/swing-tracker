@@ -272,3 +272,30 @@ closes. 32 of 36 reach 2021-10-11 — the other four listed later (SNDK 2025-02-
 ARM 2023-09-14, CRDO 2022-01-27). **33 of 36 now have 200+ weekly bars, up from zero**, so the
 200-week SMA is unblocked. All 24 verification checks pass, including all five goldens.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Norms in the database, and the view the dashboard will read
+**What:** `norms` and `flags` tables synced from `config/norms.yml`, plus two views —
+`grid_cells` (one row per symbol/date/parameter with its verdict) and `grid_status` (one row: how
+current the data is and whether the page should say so).
+**How:** the same shape as the watchlist sync — yml in git is the source of truth, the table is a
+cache, `norms.ts` parses it. The verdict is one CASE expression over a long-format unpivot, so
+adding a parameter later is one line. Decision 0023.
+**Architecture impact:** this is the seam between data and dashboard. Everything the grid needs is
+now one query, and the same query with a date filter answers "what did the grid look like then".
+`grid_status` makes staleness a database fact rather than a frontend guess, which matters because
+v1 has one run a day, no retry and no refresh button.
+**Scope reality:** **4 of 16 norms** colour anything today — `rsi_daily`, `pct_off_high_stored`,
+`pct_off_52w_high`, `close_vs_sma200d`. The other 12 wait on the weekly layer (3), market context
+and relative strength (3), and fundamentals (5). The grid will have 11 columns of data and 4 that
+are judged. That is a deliberate choice to ship a thin page and widen it.
+**Verified by:** applied to a local PostgreSQL 16 fixture. Verdicts fire exactly at the norm
+boundaries (min 'normal' 45.0, max 44.9 'below', min 55.5 'above' on a 45/55 band). Warm-up
+behaves in three distinct states: value null before bar 15, value present but unjudged with
+`suppressed_warmup` true from bar 15 to 124, and a verdict appearing at exactly bar 125 — the seed
+floor. Index symbols are excluded from the grid. `grid_status` correctly reported `is_stale` true
+while `last_run_ok` was also true, which is the distinction it exists to draw. 42 function tests
+pass, `deno check` clean, and the real `norms.yml` parses to 16 norms and 3 flags with one-sided
+bounds preserved as one-sided.
+**Renamed:** `pct_off_ath` → `pct_off_high_stored` in norms.yml. Norms match parameters by name, so
+the old key matched nothing and would have coloured nothing, silently.
+**By:** Bodhi + Claude
