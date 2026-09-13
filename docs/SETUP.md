@@ -41,6 +41,19 @@ wired. Owner steps happen once; contributor steps happen per person.
 
 ## Owner — data providers, once (decision 0019)
 
+- [ ] **Resend**, for the weekday digest. Sign up at resend.com — the free tier covers 100
+      emails a day, far past one digest to a handful of people, and their `onboarding@resend.dev`
+      sender works immediately without owning a domain. Then add these as **Supabase Edge Function
+      secrets**, not repo config:
+      - `RESEND_API_KEY`
+      - `DIGEST_TO` — comma-separated recipients. **Deliberately not in `config/norms.yml`**: this
+        repo is public, and other people's email addresses are not ours to publish.
+      - `DIGEST_FROM` — e.g. `Swing Tracker <onboarding@resend.dev>`
+      - `GRID_URL` — the dashboard link, e.g. `https://swing-tracker-nu.vercel.app/`
+
+      Before scheduling anything, call the function with `?send=0`. That renders the email and
+      returns it **without sending**. Read it first — a digest cannot be unsent.
+
 - [ ] **Vercel environment variables** for the dashboard, in Project Settings → Environment
       Variables. `SUPABASE_URL` (your project URL — not a secret) and
       `SUPABASE_SERVICE_ROLE_KEY`. **Neither may use the `NEXT_PUBLIC_` prefix**, and the key

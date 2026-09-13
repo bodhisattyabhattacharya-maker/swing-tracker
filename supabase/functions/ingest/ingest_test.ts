@@ -29,7 +29,7 @@ import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./pol
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import { parseWatchlist } from "./watchlist.ts";
 import { parseNorms } from "./norms.ts";
-import { callerAllowed, jwtRole } from "./auth.ts";
+import { callerAllowed, jwtRole } from "../_shared/auth.ts";
 
 const FIXED_NOW = new Date("2026-09-13T00:00:00Z");
 
