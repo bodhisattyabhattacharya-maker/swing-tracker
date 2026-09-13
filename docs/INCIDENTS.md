@@ -143,3 +143,30 @@ tonight: **one symbol's problem must never cost another symbol's work.** The dou
 budget, the count that killed a run, and this ordering stall are all the same mistake wearing
 different clothes. When reviewing this loop, ask of every failure "what else does this take
 down?" — not merely "is it handled?".
+
+## 2026-09-13 — a revoke that revoked nothing, and reported success
+**Symptom:** migration `20260913061500` ran `revoke execute on function public.rls_auto_enable()
+from anon, authenticated` and applied cleanly. Supabase's security advisor, re-run afterwards,
+still reported the function as executable by `anon`. Nothing had changed.
+**Root cause:** PostgreSQL grants `EXECUTE` to **PUBLIC** automatically when a function is
+created, and `anon` / `authenticated` inherit from PUBLIC rather than holding grants of their
+own. The ACL showed it plainly once read:
+
+```
+proacl = {=X/postgres, postgres=X/postgres}
+```
+
+The entry with an **empty grantee** — `=X/postgres` — is the grant to PUBLIC. Revoking from the
+two named roles removed privileges they never had. The correct statement is
+`revoke execute ... from public`.
+**Fix:** `20260913062000`, revoking from PUBLIC. The failed migration is kept unedited —
+migrations are forward-only (decision 0016) — and its mistake is documented in the new one's
+header so the next reader sees both.
+**Earlier detection:** the migration status was never the evidence. What caught it was reading
+`pg_proc.proacl` and re-running the advisor after applying. Generalising: **a successful
+migration is not a verified outcome.** This is the second time today the same shape has bitten —
+Supabase's "Deploy to production" toggle also reported saved while changing nothing, and PR #1
+merged without applying its migration. Verify the state, not the operation.
+**Rule of thumb worth keeping:** when revoking on a function, check `proacl` for a leading `=`
+before naming roles. A revoke listing roles individually is almost always the wrong shape for a
+default grant.
