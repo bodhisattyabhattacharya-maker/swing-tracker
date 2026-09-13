@@ -106,4 +106,8 @@ undeclared theme rejected); `deno check` clean against supabase-js 2.116; real `
 parses to 36 tickers + 5 indices, 24 rankable, 7 themes — matching `make context`. Live
 behaviour (Yahoo from Supabase egress, wall-clock per call) is verified after deploy and logged
 here in a follow-up line.
+**Live (2026-09-13):** deploy-on-merge for functions confirmed (CONSTRAINTS.md). First real call
+401'd — see INCIDENTS.md 2026-09-13; auth moved to `auth.ts` (role claim of the gateway-verified
+JWT, or byte match). Yahoo-from-this-project and wall-clock per call: recorded below once the
+first successful run lands.
 **By:** Bodhi + Claude
