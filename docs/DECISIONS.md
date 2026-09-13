@@ -494,3 +494,28 @@ separate change made only after a dry run has been read.
 last thing that should exist in two copies that can drift. And `renderDigest` lives in its own
 module rather than in `index.ts`, because `index.ts` calls `Deno.serve` at top level and importing
 it from a test starts a real listener - the same trap already hit with the ingest function.
+
+## 0028 — 2026-09-13 — The digest goes live: 23:00 UTC weekdays, two decimals
+**Decided:** schedule `swing-digest` at `0 23 * * 1-5`, thirty minutes after the ingest and fifteen
+after the parameter rebuild. And the digest reports values to **two** decimal places where the grid
+shows one.
+**Why the ordering is not arbitrary:** the digest reads `digest_changes` → `grid_cells` →
+`daily_features`. Run before the refresh, it would compare today's bars against yesterday's
+parameters and report changes that did not happen. 22:30 fetch, 22:45 rebuild, 23:00 send.
+**Why two decimals, when the grid shows one:** the dry run exposed it. On 2026-09-11 QCOM moved to
+**-29.99** against a norm of -30 and CAT left a -25 norm from **-25.0088**. At one decimal those
+render as "-30.0 → back inside" and "-25.0 → was outside" - both verdicts correct, both lines
+reading as self-contradictory. The grid *displays* a value; the digest *asserts that a value
+crossed something*, so the digit the claim rests on has to be visible. A reader who doubts one line
+doubts the whole email. The grid stays at one decimal because it is a scan of 360 cells where the
+extra digit is noise rather than evidence.
+**Why the digest still sends when the ingest failed:** it reads `grid_status`, sees the pipeline is
+stale, and sends a short notice instead of a market summary. An email that simply stops arriving is
+indistinguishable from a quiet market - the exact ambiguity the digest exists to remove. Suppressing
+the send on failure would recreate it.
+**Why the schedule is a separate migration from the function:** sending is irreversible. The
+function shipped first, callable only by hand with `?send=0`, so a human read the real email before
+anything could reach anyone. That sequencing is the control, not ceremony.
+**Kill switch, written where someone panicking will find it:**
+`select cron.unschedule(jobid) from cron.job where jobname = 'swing-digest';` - immediate, loses
+nothing.

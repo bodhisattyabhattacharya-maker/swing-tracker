@@ -102,8 +102,8 @@ Deno.test("crossings and recoveries are counted and listed separately", () => {
   assert.match(text, /BACK INSIDE \(1\)/);
   // Both directions matter: this tracker is as much about trimming as buying, so a recovery must
   // not be silently dropped for being good news.
-  assert.match(text, /QCOM.*-31\.9 → -30\.0/);
-  assert.match(text, /SNDK.*-28\.1 → -30\.6.*crossed below/);
+  assert.match(text, /QCOM.*-31\.90 → -30\.00/);
+  assert.match(text, /SNDK.*-28\.10 → -30\.60.*crossed below/);
   // The count in the heading must match the number of lines under it - a mismatch is the kind of
   // thing a reader notices and then stops trusting the whole email over.
   const out = text.split("MOVED OUTSIDE A NORM (2)")[1].split("BACK INSIDE")[0];
