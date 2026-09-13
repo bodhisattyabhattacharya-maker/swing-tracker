@@ -253,3 +253,46 @@ figure, and float64 already agrees with it to 1e-5).
 the same view with a date filter. Every parameter that needs weekly bars, an index, or a
 cross-sectional rank is *not* in this view yet and gets its own PR. And the refresh is a hand
 operation until the pg_cron work lands — the freshness check is the guard rail in the meantime.
+
+## 0021 — 2026-09-13 — Paid the $29 Polygon tier; the per-run cap now comes from the wall clock
+**Decided:** subscribe to Massive (Polygon) **Stocks Starter, $29/month** — unlimited calls, 5
+years of history, flat files included. `FULL_DAYS` goes 720 → 1800, `MIN_INTERVAL_MS` goes
+12,500 → 200, and the per-run symbol cap splits into two defaults chosen by the cost of the work:
+45 for an incremental top-up, 15 for a full backfill.
+**Why now:** the 200-week SMA is one of the 26 parameters and **cannot be computed at all** on two
+years of history — zero of 36 names had 200 weekly bars, with 103 the ceiling. Five years is ~260
+weeks, so this purchase fixes a measured gap rather than buying speculative headroom. It also
+lifts the weekly golden-value agreement from ~4×10⁻⁴ toward the daily layer's ~1×10⁻⁵, because the
+recursive seeds get 2.5× more room to decay. Separately, the free tier was arithmetically finished
+at the ~200-ticker scale we are heading for: 5 requests/minute is a 40-minute sweep against a
+150-second function lifetime.
+**Why the pacing is 200 ms and not 0:** "unlimited" is a billing statement, not a promise about
+burst behaviour. 90 requests in 6.9 seconds is what got Supabase's egress IP blocked by Yahoo for
+longer than 4.5 hours (INCIDENTS.md, decision 0019). 200 ms is 5 requests/second, keeps a
+39-symbol sweep at 8 seconds and a 200-symbol sweep at 40, and there is nothing to gain from going
+faster and a whole provider to lose.
+**Why two default limits instead of one:** a full fetch is roughly 50× the payload of a top-up. One
+shared default either throttles every routine refresh or gets a backfill killed halfway, and a run
+killed by the wall clock loses every per-symbol error it had collected — which is how the first
+live attempt became an unexplainable "504". Making the default follow `full=1` means nobody has to
+remember. `planLimit()` is pure and tested, so collapsing them back into one constant fails a test.
+**Why `offset` is manual, and what was rejected:** when the history depth increases, every symbol
+already has bars, so `full=1` marks all of them "full" on every run — a sliced run would redo the
+same first N forever, because the plan order is stable and nothing distinguishes "already
+deepened" from "not yet". The rejected alternative was automatic depth detection, re-fetching any
+symbol whose earliest bar is later than the window allows. It cannot work without recording state:
+a symbol that simply **listed** later (SNDK, 2025-02-13) is indistinguishable from one not yet
+deepened, and would be re-fetched on every run forever. Recording that state means a schema column
+for a one-time operation. `offset` is three lines and the operator can see what it did.
+**Also rejected:** Polygon Developer at $79 (10 years — we have no parameter that reaches past 5);
+Indices Starter at $49 (VIX on FRED is free and carries 1990 onward against the Indices plan's ~1
+year); EODHD at $29.99, which genuinely beats this on history-per-dollar (30 years EOD, 20 years of
+1-minute) but appears to put indices in its $99.99 package and would cost a rewrite of the ingest
+layer to buy history no parameter uses yet; Alpaca free, which is **IEX-only** so every volume
+ratio would measure a few percent of true volume.
+**Consequences:** flat files are now available and **not used** — at 39 symbols the per-symbol loop
+is fine; it becomes the right answer near 200, where the loop is what breaks. A re-backfill is
+required before any of this shows up in the data, and the depth must be verified from the earliest
+stored bar rather than the billing page, because an over-wide date range may be silently truncated.
+`% off all-time high` stays bounded and stays named `pct_off_high_stored`: INTC, QCOM and GE peaked
+in 2000, outside every tier we would plausibly buy.

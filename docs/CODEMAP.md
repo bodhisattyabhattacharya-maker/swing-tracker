@@ -11,7 +11,7 @@ next agent to the wrong file confidently.
 ## Data flow
 
 ```
-                 ┌─ Polygon aggregates ┐       (keyed; 5 req/min, 2y on free)
+                 ┌─ Polygon aggregates ┐       (keyed; unlimited calls, 5y on Starter)
                  │  daily OHLCV        │
                  └────────┬────────────┘
    ┌─ FRED ───────────────┤                    (keyed; VIX, VIX3M, SP500 - closes only)
@@ -48,7 +48,7 @@ next agent to the wrong file confidently.
 |---|---|---|
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
-| `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
+| `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces, `planLimit()` caps one run) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js 16 App Router, TypeScript, desktop-first. Only `app/page.tsx` exists: a deployment check that reads no data. The grid is _(planned)_ and blocked on parameter views + read policies. | `app/page.tsx`; Vercel root directory is `web/` |
 | `scripts/` | SQL you paste into the Supabase editor, not code that runs on a schedule. `verify_parameters.sql` — golden values plus invariants, one row per check, `PASS`/`FAIL`/`MISSING`. | Run it after any change to an indicator, and after any ingest |
 | `docs/` | Context files. Start at `ONBOARDING.md` | — |

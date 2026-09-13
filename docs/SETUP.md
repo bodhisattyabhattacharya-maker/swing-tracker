@@ -42,8 +42,13 @@ wired. Owner steps happen once; contributor steps happen per person.
 ## Owner — data providers, once (decision 0019)
 
 - [ ] **Polygon** (the site is now massive.com; the API host is still `api.polygon.io`). Sign up
-      free, copy the API key. Free tier is 5 requests/minute and 2 years of history, and is
-      licensed for "individual use".
+      free, copy the API key, then subscribe to **Stocks Starter ($29/mo)** — unlimited calls,
+      5 years of history, flat-file access, licensed for "individual use". The free tier
+      (5 requests/minute, 2 years) works for a single-ticker smoke test but not for a real
+      watchlist: at 5/min a 39-symbol sweep takes 40 minutes and an edge function lives 150
+      seconds. Upgrading does **not** appear to rotate the key, but re-paste
+      `POLYGON_API_KEY` into Supabase anyway — a stale key fails as a 401 that reads like a
+      code bug.
 - [ ] **FRED** — `fredaccount.stlouisfed.org/apikeys`, free, instant. This is the St. Louis Fed.
 - [ ] Supabase → **Edge Functions → Secrets** (not Vault — Vault holds the key pg_cron uses to
       *call* the function; these are read *by* the function): add `POLYGON_API_KEY` and

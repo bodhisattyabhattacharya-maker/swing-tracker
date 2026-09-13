@@ -76,7 +76,7 @@ Applied identically on hourly, daily and weekly bars. The only difference betwee
 | **Daily SMA 50 / 200** | `sma(close, 50)`, `sma(close, 200)` on daily bars | Position reported as `100 × (close / sma − 1)`. |
 | **Weekly 21 EMA** | `ema(close, 21)` on weekly bars | |
 | **Weekly 30W / 200W SMA** | `sma(close, 30)`, `sma(close, 200)` on weekly bars | |
-| **% off all-time high** | `100 × (close / max(high over stored history) − 1)` | **Intraday highs, not closes.** Split-adjusted, NOT dividend-adjusted — see §Basis. **Bounded by what we store:** the provider's free plan carries 2 years, so for a name whose peak predates that (INTC, QCOM and GE all peaked in 2000) this understates the true all-time figure. The column is labelled with the window it actually covers rather than claiming "all time". Decision 0019; a one-time deep backfill is the fix and is not built yet. |
+| **% off all-time high** | `100 × (close / max(high over stored history) − 1)` | **Intraday highs, not closes.** Split-adjusted, NOT dividend-adjusted — see §Basis. **Bounded by what we store:** the provider's plan carries 5 years (2 years before 2026-09-13), so for a name whose peak predates that (INTC, QCOM and GE all peaked in 2000) this understates the true all-time figure. The paid upgrade moved the bound; it did not remove it. The column is labelled with the window it actually covers rather than claiming "all time". Decision 0019; a one-time deep backfill is the fix and is not built yet. |
 | **% above all-time low** | `100 × (close / min(low over stored history) − 1)` | Intraday lows. Same stored-window bound as the high above. |
 | **% off 52-week high** | `100 × (close / max(high over last 252 trading bars) − 1)` | **252 trading bars, not 52 calendar weeks.** Intraday highs. |
 | **Realized volatility** | `stdev_sample(r, 20) × √252 × 100` where `r[t] = ln(close[t] / close[t−1])` | **Our definition — TradingView has no canonical equivalent.** Log returns; sample standard deviation (n−1 denominator); 252-day annualisation; 20-bar window. |
@@ -123,7 +123,11 @@ A recursive indicator's seed decays as `(1−α)^bars`. Below the bar counts her
 
 SMAs have no seed and are simply null until the window fills.
 
-**Live consequence on the current watchlist:** every name clears the daily thresholds, but on weekly bars **SNDK has 82 weekly bars against the 97 needed for a weekly 21 EMA**. Its weekly EMA is seed-sensitive today and should be flagged as such until roughly March 2027. ALAB (129) and ARM (156) clear it.
+**Live consequence on the current watchlist:** every name clears the daily thresholds. On weekly bars, measured 2026-09-13 against what is actually stored: **SNDK has 81 weekly bars against the 97 needed for a weekly 21 EMA**, and is the only name that fails. 35 of 36 clear it — but only just, because the two-year window caps weekly history at **103 bars** for every name.
+
+An earlier version of this line quoted ALAB at 129 weekly bars and ARM at 156. Those figures came from the deep Yahoo prototype and were **wrong for the current dataset** — 103 was the ceiling. Corrected rather than deleted, because a confidently wrong number is the kind of thing a later session builds on.
+
+**Two consequences of the 103-bar ceiling**, both real today: the **200-week SMA cannot be computed at all** (zero of 36 names have 200 weekly bars), and the weekly recursive indicators reproduce the §6 golden values only to ~4×10⁻⁴ rather than the ~1×10⁻⁵ the daily ones manage — residual seed weight after 102 bars is 4.4×10⁻⁴ for EMA(21) and 1.6×10⁻³ for RMA(14). The 2026-09-13 upgrade to a 5-year plan lifts the ceiling to ~260 weeks once a re-backfill runs, which resolves both.
 
 ---
 

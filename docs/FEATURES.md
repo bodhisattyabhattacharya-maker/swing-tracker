@@ -210,4 +210,38 @@ own `PASS` / `FAIL` / `MISSING` paths were each exercised deliberately, which is
 format error that only fires on a failing check was found before it could fire on a real one.
 **Not yet verified against production data** — the migration has not merged, so the five golden
 checks currently report `MISSING`, which is the correct answer and not a pass.
+**Update, later the same day:** merged and verified. **All 26 checks PASS** against production —
+25,729 feature rows against 25,729 bars, 39 of 39 symbols, all five goldens inside tolerance
+(MU RSI 60.146703 vs 60.146789; EMA(21) 943.557960 vs 943.558105; SMA(50) 938.279500 vs
+938.279600; SMA(200) 606.479525 vs 606.479549; peak high 1255.00 exact). Grants confirmed from the
+catalog rather than from the migration succeeding: `service_role=rDxtm` on the matview and no
+PUBLIC entry on the function. Appended rather than edited into the paragraph above, because a
+dated log that gets rewritten stops being evidence.
+**By:** Bodhi + Claude
+
+## 2026-09-13 — Paid data plan: 5 years of history, unlimited calls
+**What:** moved to Massive (Polygon) Stocks Starter, $29/month. `FULL_DAYS` 720 → 1800,
+`MIN_INTERVAL_MS` 12,500 → 200, and the per-run cap split into two defaults chosen by the cost of
+the work — 45 symbols for an incremental top-up, 15 for a full backfill — plus an `offset`
+parameter for walking a one-time deepening.
+**How:** exactly two constants and two tests changed, which is what the old `polygon.ts` header
+predicted would happen and the reason the plan's limits were named constants instead of inline
+numbers. `planLimit()` moved to `provider.ts` — not `index.ts`, because that file calls
+`Deno.serve` at module top level and importing it from a test starts a real listener.
+**Architecture impact:** the binding constraint changes identity. It was a published rate limit; it
+is now the edge function's 150-second wall clock and the payload size. Flat-file / S3 bulk access
+arrives with this plan and is deliberately **unused** — the per-symbol loop is fine at 39 symbols
+and becomes the wrong shape near 200. Decision 0021 has the reasoning and the rejected
+alternatives.
+**Note on the entries above:** earlier entries in this file describe the free tier's 5 requests per
+minute and two-year window as current. They were, on the day they were written, and are left
+intact — a dated log that gets rewritten stops being evidence.
+**Verified by:** 36 tests pass and `deno check` is clean. The full-range URL assertion is pinned to
+the literal window `/2021-10-09/2026-09-14` rather than recomputed, since a test that recalculates
+the expected value cannot catch the window silently changing. The pacing test was rewritten: it
+previously asserted `fred.minIntervalMs < polygon.minIntervalMs`, which held only because the free
+tier was the slowest thing in the system — on Starter that ordering inverts, so each provider is
+now checked against its own published limit. **Not yet verified against live data** — the
+re-backfill has not run, so no symbol has more than two years of history yet, and the 200-week SMA
+is still null everywhere.
 **By:** Bodhi + Claude
