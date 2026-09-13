@@ -211,3 +211,45 @@ waiting for Yahoo to relent (four and a half hours of evidence says it will not)
 provider (FRED claims `^` symbols, Polygon claims the rest, and a symbol nobody claims fails the
 ticker sync loudly), and pacing is a property of the provider's published plan rather than a
 constant in the ingest loop that someone tunes by feel.
+
+## 0020 — 2026-09-13 — The parameter layer is SQL: a materialised view, recursion in PL/pgSQL
+**Decided:** parameters are computed in SQL, next to the data, as a materialised view refreshed
+after each ingest. The recursive indicators (Wilder's RMA, and therefore RSI, plus EMA) live in a
+PL/pgSQL set-returning function invoked once per symbol; everything non-recursive is a window
+function. A value below its **window** is null; a value below its **seed-decay floor** is
+published alongside a boolean flag rather than nulled.
+**Why SQL rather than TypeScript in the ingest:** the formulas would then live in the fetcher,
+one layer away from `DEFINITIONS.md` and in a language where nothing forces them to be re-derived
+per date. Decision 0002 requires parameters to be a pure function of (ticker, date) so that a
+backtest is a `WHERE` clause; a fetcher naturally computes only the latest value, and the second
+implementation for history is exactly the drift we are avoiding.
+**Why materialised rather than a plain view:** the recursion is O(n) per symbol and a plain view
+would redo it on every grid read. The cost is honest and immediate — a matview is a cache, so
+`refresh materialized view public.daily_features` is now a required step that **nothing performs
+automatically yet**. `scripts/verify_parameters.sql` has a freshness check whose only job is to
+catch that, because "stale cache" is the same failure family as the deploy toggle and the no-op
+revoke (INCIDENTS.md): an operation that succeeded and changed nothing.
+**Why PL/pgSQL rather than a recursive CTE or a closed-form window function:** the closed form for
+an EMA divides by `(1−α)^i`, which over 494 bars at α = 1/14 reaches 7.7×10¹⁵ — it would bleed
+precisely the precision the golden values are asserted to (1e-3 absolute, against observed
+agreement of 2.4×10⁻⁵). A loop is exact, and it puts Wilder's smoothing in one commented place a
+reader can check line by line against `DEFINITIONS.md` §1. The function is called once per
+**symbol**, not once per row: in the join condition it would have run 19,000 full-history scans
+instead of 39.
+**Why publish-below-the-seed-floor with a flag rather than suppress:** hard constraint 8 says
+suppress a seed-influenced value, and this layer does not — it sets `rsi_daily_seed_ok` /
+`ema21_seed_ok` to false and leaves the number. Suppression is a display judgment (a backtest may
+legitimately want the converged-ish value, and a null cannot be un-nulled), but the *floor* must
+not be a display judgment, or it ends up re-derived in the grid, the digest and the rule engine
+and drifts between them. The floors are written in the migration and asserted against
+`DEFINITIONS.md` §4 by the verify script.
+**Rejected:** computing in the ingest function (above); a plain view (recomputes the recursion on
+every read); a recursive CTE (correct but the state threading is unreadable next to a loop, and it
+still needed the same seeding logic); nulling below the seed floors in the view (loses data
+irreversibly and hides the floor inside SQL nobody reads); a `numeric` rather than `double
+precision` accumulator (exactness we cannot use — the external anchor is a hand-read TradingView
+figure, and float64 already agrees with it to 1e-5).
+**Consequences:** the grid, the digest and the rule engine all read one view, and a backtest reads
+the same view with a date filter. Every parameter that needs weekly bars, an index, or a
+cross-sectional rank is *not* in this view yet and gets its own PR. And the refresh is a hand
+operation until the pg_cron work lands — the freshness check is the guard rail in the meantime.
