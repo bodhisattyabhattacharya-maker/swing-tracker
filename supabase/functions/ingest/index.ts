@@ -16,10 +16,11 @@
  * Rate:    4 symbols concurrently, 250 ms between chunks. Verified polite on the prototype.
  *
  * AUTH:    the function URL is derivable from the public repo, so it must not be callable by
- *          strangers - each call is ~80 requests to Yahoo on our egress. The bearer must equal
- *          the project's service_role key, which the runtime injects as an env var. pg_cron
- *          supplies it from Vault (scheduling migration); a human supplies it from the dashboard.
- *          The gateway's own JWT check (verify_jwt) still runs first; this is the second lock.
+ *          strangers - each call is ~80 requests to Yahoo on our egress. The bearer must be the
+ *          project's service_role key: either its JWT payload says `role: service_role` (the
+ *          gateway has already verified the signature - verify_jwt is on) or it byte-matches the
+ *          runtime env var. See auth.ts for why both. pg_cron supplies the key from Vault
+ *          (scheduling migration); a human supplies it from the SQL editor the same way.
  *
  * CATCH-UP: a symbol with no bars yet gets the full range automatically, so "add a line to the
  *          yml, commit" is enough - the next scheduled run backfills it. Full fetches are capped
@@ -34,7 +35,7 @@
  */
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import { timingSafeEqual } from "node:crypto";
+import { bearerToken, callerAllowed } from "./auth.ts";
 import type { BarProvider, Range } from "./provider.ts";
 import { yahoo } from "./yahoo.ts";
 import { fetchWatchlist } from "./watchlist.ts";
@@ -58,20 +59,11 @@ interface SymbolResult {
 }
 
 // ---------------------------------------------------------------------------
-// Auth
+// Auth - see auth.ts
 // ---------------------------------------------------------------------------
 
-/** Constant-time compare so the bearer check does not leak prefix matches by timing. */
 function authorized(req: Request): boolean {
-  const expected = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!expected) return false; // misconfigured runtime: fail closed
-  const header = req.headers.get("authorization") ?? "";
-  const token = header.replace(/^Bearer\s+/i, "").trim();
-  if (!token) return false;
-  const a = new TextEncoder().encode(token);
-  const b = new TextEncoder().encode(expected);
-  // node:crypto's timingSafeEqual throws on unequal lengths; a length mismatch is simply "no".
-  return a.length === b.length && timingSafeEqual(a, b);
+  return callerAllowed(bearerToken(req), Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"));
 }
 
 // ---------------------------------------------------------------------------

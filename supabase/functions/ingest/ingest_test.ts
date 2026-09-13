@@ -10,7 +10,7 @@
  * These tests encode intent (CODE_STYLE): each one fails if a business rule changes, not if a
  * line of code moves. In particular: null adj_close is NOT substituted with close; a null close
  * drops the bar; an undeclared theme is an error, not a default; a duplicate date keeps the
- * later bar.
+ * later bar; an anon JWT is refused and a service_role JWT accepted regardless of the env var.
  */
 
 import assert from "node:assert/strict";
@@ -19,6 +19,7 @@ const assertThrows = (fn: () => unknown, _e: unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
 import { mapChart, toTradingDate, yahoo, YAHOO_SOURCE } from "./yahoo.ts";
 import { parseWatchlist } from "./watchlist.ts";
+import { callerAllowed, jwtRole } from "./auth.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures - trimmed real shapes
@@ -168,4 +169,45 @@ Deno.test("parseWatchlist rejects an undeclared theme instead of defaulting", ()
 Deno.test("parseWatchlist rejects a duplicate symbol", () => {
   const bad = WATCHLIST_YML + `  - { symbol: MU, name: dup }\n`;
   assertThrows(() => parseWatchlist(bad), Error, "duplicate symbol");
+});
+
+// ---------------------------------------------------------------------------
+// auth - unsigned test JWTs; the gateway is what verifies signatures in production
+// ---------------------------------------------------------------------------
+
+/** header.payload.signature with a throwaway signature - signature is never checked here. */
+function fakeJwt(payload: Record<string, unknown>): string {
+  const b64url = (o: unknown) =>
+    btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url(payload)}.sig`;
+}
+const SERVICE = fakeJwt({ iss: "supabase", role: "service_role", exp: 2000000000 });
+const ANON = fakeJwt({ iss: "supabase", role: "anon", exp: 2000000000 });
+
+Deno.test("jwtRole reads the role claim and returns null for non-JWTs", () => {
+  assertEquals(jwtRole(SERVICE), "service_role");
+  assertEquals(jwtRole(ANON), "anon");
+  assertEquals(jwtRole("sb_secret_notajwt"), null);
+  assertEquals(jwtRole("a.b"), null);
+  assertEquals(jwtRole("a.!!!.c"), null);
+});
+
+Deno.test("callerAllowed: service_role JWT passes even when it differs from the env var (INCIDENTS 2026-09-13)", () => {
+  assertEquals(callerAllowed(SERVICE, "some-other-runtime-value"), true);
+  assertEquals(callerAllowed(SERVICE, undefined), true, "missing env must not lock out the service role");
+});
+
+Deno.test("callerAllowed: anon JWT is refused, with or without an env var", () => {
+  assertEquals(callerAllowed(ANON, "some-other-runtime-value"), false);
+  assertEquals(callerAllowed(ANON, undefined), false);
+});
+
+Deno.test("callerAllowed: exact byte match with the env var passes (non-JWT key formats)", () => {
+  assertEquals(callerAllowed("sb_secret_abc", "sb_secret_abc"), true);
+  assertEquals(callerAllowed("sb_secret_abc", "sb_secret_abd"), false);
+  assertEquals(callerAllowed("sb_secret_ab", "sb_secret_abc"), false, "length mismatch is a plain no, not a throw");
+});
+
+Deno.test("callerAllowed: no token is refused", () => {
+  assertEquals(callerAllowed(null, "anything"), false);
 });

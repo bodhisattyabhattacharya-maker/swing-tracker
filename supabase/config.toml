@@ -4,6 +4,7 @@
 project_id = "qxngsbehqbcxnyyllalh"
 
 [functions.ingest]
-# The gateway checks for a valid Supabase JWT before the function runs. The function then
-# requires that JWT to be the service_role key specifically (decision 0017). Two locks.
+# The gateway verifies the bearer JWT's signature before the function runs. The function then
+# reads the verified token's `role` claim and requires service_role (decision 0017, auth.ts).
+# That second check TRUSTS this first one - never set this to false for ingest.
 verify_jwt = true
