@@ -11,17 +11,22 @@ comprehension check, and the five mistakes new sessions keep making here.
 
 Evidence and dates in `docs/CONSTRAINTS.md`; formulas in `docs/DEFINITIONS.md`.
 
-1. **No market-data egress from this sandbox.** Yahoo, Stooq, Polygon, Tiingo, FMP, Nasdaq all
-   fail at the proxy. Never write a local fetch script. All fetching runs **inside Supabase**.
-2. **Yahoo `quoteSummary` and `v7/quote` return 401.** No keyless forward P/E, PEG, consensus or
-   analyst targets. Those are Claude-search columns: rule *filters*, never triggers, not backtestable.
-3. **Yahoo `v8/finance/chart` works keyless** — hourly (2 years), daily, and full listing history
-   via `range=max`.
+1. **No market-data egress from this sandbox.** Every provider fails at the proxy, and Yahoo is
+   robots-disallowed even for the sanctioned fetch tool. Never write a local fetch script, and
+   never route around this. All fetching runs **inside Supabase**; experiments run from the SQL
+   editor via `net.http_get` and a human presses the button.
+2. **Yahoo is dead to us, permanently.** One 90-request burst got Supabase's egress IP blocked;
+   still `429` after 4.5 hours of silence and on a second host. Keyless Yahoo is not an option
+   from a shared cloud IP — decision 0019, INCIDENTS.md 2026-09-13.
+3. **Prices come from Polygon (now massive.com), indices from FRED.** Both keyed, both with
+   published limits. Polygon free: 5 requests/minute and 2 years of history, so a backfill runs
+   in batches and "% off all-time high" is bounded by what we store.
 4. **SEC XBRL works keyless**, stamped with filing dates, so genuinely point-in-time. Needs a
    User-Agent with a contact email.
 5. **Weekly features join to the last COMPLETED week.** Never the current partial week — that
    leaks future days into a backtest.
-6. **Extremes use intraday highs and lows, never closes.**
+6. **Extremes use intraday highs and lows, never closes** — for equities. FRED index series are
+   closes only and have no high to misuse.
 7. **RSI uses Wilder smoothing** (alpha = 1/n). A plain rolling average of gains and losses is a
    different indicator that shares the name — the gap runs to tens of RSI points.
 8. **Respect warm-up floors.** Below them a recursive indicator still reflects its seed; suppress
@@ -80,7 +85,9 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 ## Current state
 
 Phase 1 (tracker) in progress. Foundation schema applied (`tickers`, `daily_bars`,
-`hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand — the
-pg_cron schedule, parameter views, golden-value harness and the web grid do not exist yet.
+`hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand, now over
+Polygon + FRED (decision 0019). `web/` holds a deployment-check page, not the dashboard. The
+pg_cron schedule, session-aligned hourly bars, parameter views, golden-value harness and the
+grid itself do not exist yet.
 `docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is
 specified, not started.

@@ -84,9 +84,14 @@ tickers:
   - { symbol: UNH,   name: UnitedHealth,           theme: diversified,        tag: healthcare }
 
 # Context only - never traded, excluded from the watchlist grid.
+#
+# Every symbol here needs a FRED series in supabase/functions/ingest/fred.ts, and the ingest
+# refuses to sync if one is missing - an index with no source would leave a column quietly
+# empty rather than loudly broken.
+#
+# ^SOX and ^NDX were dropped in decision 0019: no free source carries the PHLX Semiconductor
+# Index, and once rs_vs_sox went with it, nothing among the 26 parameters consumed ^NDX either.
 indices:
-  - { symbol: "^VIX",   name: CBOE Volatility Index }
-  - { symbol: "^VIX3M", name: CBOE 3-Month Volatility Index }
-  - { symbol: "^GSPC",  name: S&P 500 }
-  - { symbol: "^NDX",   name: Nasdaq 100 }
-  - { symbol: "^SOX",   name: PHLX Semiconductor Index }
+  - { symbol: "^VIX",   name: CBOE Volatility Index }          # VIXCLS
+  - { symbol: "^VIX3M", name: CBOE 3-Month Volatility Index }  # VXVCLS - term structure
+  - { symbol: "^GSPC",  name: S&P 500 }                        # SP500 - relative strength base

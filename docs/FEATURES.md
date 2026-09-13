@@ -133,3 +133,27 @@ before a real page can read anything.
 **Verified by:** `next build` clean locally (2 routes, TypeScript pass). The deploy itself is
 verified by the commit SHA on the deployed page matching the merge — recorded here once it does.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Data provider replaced: Polygon for prices, FRED for indices
+**What:** Yahoo is gone. `supabase/functions/ingest/polygon.ts` serves the 36 equities and
+`fred.ts` serves `^VIX`, `^VIX3M` and `^GSPC`; `yahoo.ts` is deleted. `^SOX`, `^NDX` and the
+`rs_vs_sox_6m` norm are removed (decision 0019). 32 fixture tests, up from 22.
+**How:** `BarProvider` gained `supports()` and `minIntervalMs`, so **routing and pacing belong to
+the provider**: FRED claims `^`-prefixed symbols, Polygon claims the rest, and `syncTickers`
+now refuses outright if the watchlist contains a symbol no provider serves — an index without a
+source fails loudly at sync instead of leaving a column mysteriously blank. The ingest loop is
+strictly sequential and waits each provider's own interval, tracked per provider so three FRED
+series do not queue behind Polygon's 12.5-second gap.
+**Architecture impact:** the provider seam from decision 0003 did exactly the job it was built
+for — the entire data source changed and `index.ts` never learned the difference beyond routing.
+Three consequences are now permanent facts of the system rather than temporary annoyances:
+a backfill spans several runs (5 req/min against a wall clock), "% off all-time high" is bounded
+by two years of stored history, and hourly bars are absent until session-aligned rolling lands.
+All three are written where they bite rather than only here.
+**Verified by:** 32 tests pass — URL construction pinned so a wrong window cannot silently
+return the wrong granularity again, both DST offsets for the trading-date conversion, `"."`
+observations dropped rather than zeroed, `adj_close` never filled from `close`, routing proven
+exhaustive and disjoint, 429 distinguished from a rejected key. `deno check` clean. Config
+validates at 36 tickers, 3 indices, 16 norms. **Not yet verified live** — no successful fetch
+through either provider has happened at the time of writing.
+**By:** Bodhi + Claude

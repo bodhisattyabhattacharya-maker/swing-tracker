@@ -168,3 +168,46 @@ removed for anon, just aimed at a different role); defaults *plus* redundant exp
 **Consequence:** forgetting a grant breaks the next ingest at runtime and CI cannot catch it.
 Accepted knowingly: the check lives in `docs/CODE_STYLE.md`'s migration checklist, and
 `ingest_runs` makes the failure loud.
+
+## 0019 — 2026-09-13 — Prices from Polygon, indices from FRED; Yahoo abandoned
+**Decided:** replace keyless Yahoo with two keyed sources — **Polygon** (rebranded to
+massive.com) for the 36 equities, **FRED** for `^VIX`, `^VIX3M` and `^GSPC`. Both free tiers.
+`^SOX` and `^NDX` leave the watchlist, and the `rs_vs_sox_6m` norm with them.
+**Why:** a single 90-request burst earned Supabase's egress IP a `429` from Yahoo that was still
+in force 4.5 hours later and on a second host (INCIDENTS.md 2026-09-13). A keyless endpoint on a
+shared cloud IP is not a foundation — the key identifies us instead of the IP, and the limit is
+published rather than discovered by being punished.
+**Why these two:** the criterion was that the *paid* tier should be the natural next stage as the
+watchlist grows and updates get more frequent. Polygon Starter at $29/month makes API calls
+**unlimited**, so more names and more frequency cost nothing extra; Twelve Data ($79) and FMP
+($59 for intraday) both meter per-minute credits, so growth costs more on exactly the axis we
+expect to grow. FRED is the Federal Reserve: free, official, documented, and the only free
+source found that carries the 3-month VIX, without which there is no term structure and no
+"the market is peaking" signal.
+**Rejected:** Twelve Data (usable free tier, but $79 next step and credit-metered);
+FMP (free tier is end-of-day only, intraday starts at $59); Tiingo (no index feed at all, so no
+VIX); EODHD (excellent $19.99–$29.99 ladder and 100k calls/day, but its free tier is 20 calls a
+day and one year of history, so we could not start free); moving fetching to GitHub Actions
+(dodges the IP problem but splits the architecture and keeps us on an unofficial endpoint);
+waiting for Yahoo to relent (four and a half hours of evidence says it will not).
+**Consequences, all of which are recorded where they bite:**
+- Polygon free gives **2 years** of history, so "% off all-time high" is bounded by what we
+  store. INTC, QCOM and GE peaked in 2000 and their true highs are outside every tier we would
+  plausibly buy. DEFINITIONS.md §Price behaviour says so rather than mislabelling the column.
+- Polygon is **split-adjusted, not dividend-adjusted** — the same basis as Yahoo's `close`, so
+  the golden values survive the switch. Now written down as DEFINITIONS.md §4a instead of being
+  an accident we relied on.
+- **5 requests/minute** means a backfill cannot finish inside one edge-function lifetime, so
+  runs are batched and `deferred` carries the remainder. Polygon's grouped-daily endpoint would
+  make the incremental path one call instead of 36; noted, not built.
+- Hourly bars are **not** implemented on the new provider. Polygon's hour aggregates align to
+  clock hours and include extended trading; TradingView aligns to the 09:30 session. Rolling
+  minute aggregates into session-aligned hours is the right fix and gets its own PR, because
+  hourly RSI is read against a 30/70 threshold and bar alignment moves it.
+- `^SOX` was dropped rather than proxied with SOXX. A proxy would have meant computing one thing
+  and labelling it another, which is the failure mode this project spends most of its effort
+  avoiding. `^NDX` followed because once `rs_vs_sox` was gone, no parameter consumed it.
+**Also decided:** `BarProvider` grows `supports()` and `minIntervalMs`. Routing belongs to the
+provider (FRED claims `^` symbols, Polygon claims the rest, and a symbol nobody claims fails the
+ticker sync loudly), and pacing is a property of the provider's published plan rather than a
+constant in the ingest loop that someone tunes by feel.

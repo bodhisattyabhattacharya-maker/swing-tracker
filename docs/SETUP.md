@@ -39,6 +39,18 @@ wired. Owner steps happen once; contributor steps happen per person.
 - [x] "Enable automatic RLS" was ticked at creation. "Automatically expose new tables" was
       left on and is **revoked in the first migration** instead, so it is explicit and reviewable.
 
+## Owner — data providers, once (decision 0019)
+
+- [ ] **Polygon** (the site is now massive.com; the API host is still `api.polygon.io`). Sign up
+      free, copy the API key. Free tier is 5 requests/minute and 2 years of history, and is
+      licensed for "individual use".
+- [ ] **FRED** — `fredaccount.stlouisfed.org/apikeys`, free, instant. This is the St. Louis Fed.
+- [ ] Supabase → **Edge Functions → Secrets** (not Vault — Vault holds the key pg_cron uses to
+      *call* the function; these are read *by* the function): add `POLYGON_API_KEY` and
+      `FRED_API_KEY`, then press Save. The form keeps unsaved values looking correct, so check
+      both appear under "Custom secrets" afterwards.
+- [ ] Neither key goes in the repo, in `.env.example`, or into a chat. The repo is public.
+
 ## Owner — Vercel, once
 
 - [ ] Import the GitHub repo. **Set Root Directory to `web/`** — the repo root holds `supabase/`
