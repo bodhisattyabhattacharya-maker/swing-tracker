@@ -329,3 +329,39 @@ rather than nice-to-haves.
 **Secrets:** `cron.job.command` stores a Vault *lookup*, not a key. Verified against a stub that the
 stored command contains no secret value. This matters because the repo is public and `cron.job` is
 readable by anyone who can read the database.
+
+## 0023 — 2026-09-13 — Norms are compared in SQL, and the grid is long format
+**Decided:** `config/norms.yml` syncs into `norms` and `flags` tables exactly as `watchlist.yml`
+syncs into `tickers`, and the comparison that turns a number into a verdict happens in the
+`grid_cells` view. The view returns one row per (symbol, date, parameter) rather than a column per
+parameter.
+**Why SQL and not the website:** a norm is the only opinion this product expresses, and three
+things will need it — the grid, the email digest, and the Phase 2 rule engine. Written in the
+website it gets written three times and drifts. Written once in SQL, "was this cell red on
+2024-03-12" is a WHERE clause over history, which is decision 0002's argument applied to verdicts
+instead of parameters. **The cost, accepted:** editing the yml no longer takes effect instantly, it
+takes effect on the next sync. The sync runs daily and can be fired by hand, and the yml stays the
+only thing a human edits.
+**Why long format:** the verdict logic is then one CASE expression instead of twenty-six
+near-identical ones, and adding a parameter is one line in the unpivot rather than a column plus a
+verdict column. The dashboard pivots in JavaScript, which is trivial. Rejected: a wide view, which
+reads better in psql and is worse everywhere else.
+**The distinction the view is built around:** `verdict` is null both when no norm is defined and
+when the value is suppressed for warm-up, and `has_norm` / `suppressed_warmup` tell them apart.
+Collapsing "we have no opinion" into "normal" would be the worst available bug here — it would
+paint twelve un-normed parameters as actively fine. Today only **4 of 16 norms** have a parameter
+that exists; the other 12 wait on the weekly layer, market context or fundamentals.
+**Renamed `pct_off_ath` to `pct_off_high_stored`.** Norms match parameters BY NAME, so the old key
+would have matched nothing and coloured nothing, silently and forever. The parameter keeps the
+honest name because five years is not all time — INTC, QCOM and GE peaked in 2000.
+**Deliberate exception to decision 0018:** `service_role` gets DELETE on `norms` and `flags`, which
+0018 withholds everywhere else. 0018's reasoning was blast radius — `daily_bars` cascades and holds
+years of unre-fetchable history. These are caches of a file in git, and delete is genuinely
+required: a norm removed from the yml must stop colouring its cell, as `rs_vs_sox_6m` was in
+decision 0019. The deactivate-never-delete pattern does not transfer, because a stale ticker merely
+sits inactive while a stale norm keeps painting. The guard is in `norms.ts`: an empty parse throws
+rather than wiping the table.
+**Also decided:** staleness is judged in `grid_status`, not in the frontend. With one scheduled run
+a day, no retry and no refresh button, the realistic failure is ten people reading silently stale
+numbers, so the page must be unable to hide it. `last_run_ok` and `is_stale` are deliberately
+separate columns — a run can succeed and the data still be a day behind.

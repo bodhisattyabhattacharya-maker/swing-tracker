@@ -60,6 +60,7 @@ import { type BarProvider, planLimit, type Range, RateLimitError } from "./provi
 import { polygon } from "./polygon.ts";
 import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
+import { fetchNorms } from "./norms.ts";
 
 /**
  * Providers in routing order. The first one whose `supports()` returns true wins, so order
@@ -137,6 +138,62 @@ function authorized(req: Request): boolean {
 // ---------------------------------------------------------------------------
 // Tickers: yml -> table
 // ---------------------------------------------------------------------------
+
+/**
+ * Sync the norms and flags blocks of config/norms.yml into their cache tables.
+ *
+ * Runs in the same scope as the ticker sync because it is the same kind of thing: a yml in the
+ * public repo is the source of truth and these tables are its cache. The dashboard compares
+ * against the TABLE, so a threshold edited in git reaches the grid on the next run of this.
+ *
+ * Removed norms are DELETED, unlike removed tickers which are deactivated. A stale ticker sits
+ * inactive and harms nothing; a stale norm keeps silently colouring a cell against a rule that no
+ * longer exists in git. `rs_vs_sox_6m` was removed exactly this way (decision 0019). The guard
+ * that makes the delete safe is in norms.ts: an empty parse throws rather than wiping the table.
+ */
+async function syncNorms(sb: SupabaseClient, url?: string) {
+  const { norms, flags } = await fetchNorms(url);
+  const synced_at = new Date().toISOString();
+
+  const { error: nErr } = await sb
+    .from("norms")
+    .upsert(norms.map((n) => ({ ...n, synced_at })), { onConflict: "param" });
+  if (nErr) throw new Error(`norms upsert: ${nErr.message}`);
+
+  const keepNorms = norms.map((n) => n.param);
+  const { data: droppedNorms, error: dnErr } = await sb
+    .from("norms")
+    .delete()
+    .not("param", "in", `(${keepNorms.map((p) => `"${p}"`).join(",")})`)
+    .select("param");
+  if (dnErr) throw new Error(`norms prune: ${dnErr.message}`);
+
+  // Flags are stored as jsonb, so the value is wrapped rather than passed raw - a bare `true`
+  // or `3` would be rejected by PostgREST as a malformed jsonb body.
+  const { error: fErr } = await sb
+    .from("flags")
+    .upsert(flags.map((f) => ({ key: f.key, value: f.value, source: f.source, synced_at })), {
+      onConflict: "key",
+    });
+  if (fErr) throw new Error(`flags upsert: ${fErr.message}`);
+
+  const keepFlags = flags.map((f) => f.key);
+  const { data: droppedFlags, error: dfErr } = keepFlags.length === 0
+    ? { data: [], error: null }
+    : await sb
+      .from("flags")
+      .delete()
+      .not("key", "in", `(${keepFlags.map((k) => `"${k}"`).join(",")})`)
+      .select("key");
+  if (dfErr) throw new Error(`flags prune: ${dfErr.message}`);
+
+  return {
+    norms: norms.length,
+    flags: flags.length,
+    removed_norms: (droppedNorms ?? []).map((r: { param: string }) => r.param),
+    removed_flags: (droppedFlags ?? []).map((r: { key: string }) => r.key),
+  };
+}
 
 async function syncTickers(sb: SupabaseClient, url?: string) {
   const rows = await fetchWatchlist(url);
@@ -380,6 +437,10 @@ Deno.serve(async (req) => {
   try {
     if (scope === "tickers" || scope === "all") {
       out.tickers = await syncTickers(sb, Deno.env.get("WATCHLIST_URL") ?? undefined);
+      // Same scope, same reason: both are yml-in-git synced to a cache table. A norms failure
+      // must not silently leave the grid comparing against yesterday's thresholds, so it throws
+      // and the run is marked not-ok rather than partially succeeding.
+      out.norms = await syncNorms(sb, Deno.env.get("NORMS_URL") ?? undefined);
     }
     if (scope === "daily" || scope === "all") {
       // Indices included: ^VIX, ^VIX3M and ^GSPC are the market block and relative-strength base.

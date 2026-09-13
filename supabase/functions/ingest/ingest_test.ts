@@ -28,6 +28,7 @@ import { planLimit, RateLimitError } from "./provider.ts";
 import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import { parseWatchlist } from "./watchlist.ts";
+import { parseNorms } from "./norms.ts";
 import { callerAllowed, jwtRole } from "./auth.ts";
 
 const FIXED_NOW = new Date("2026-09-13T00:00:00Z");
@@ -385,4 +386,66 @@ Deno.test("planLimit: an explicit limit always wins, and junk falls back", () =>
   assertEquals(planLimit(true, "0"), planLimit(true, null), "zero would fetch nothing forever");
   assertEquals(planLimit(true, "-5"), planLimit(true, null));
   assertEquals(planLimit(true, "abc"), planLimit(true, null));
+});
+
+// ---------------------------------------------------------------------------
+// Norms. These decide what gets coloured, so a parse that silently drops or mangles one is the
+// difference between "no opinion" and "we checked and it is fine" on the dashboard.
+// ---------------------------------------------------------------------------
+
+const NORMS_YML = `
+norms:
+  rsi_daily:           { low: 30, high: 70 }
+  pct_off_high_stored: { low: -30 }
+  net_debt_ebitda:     { high: 4 }
+flags:
+  stale_days_price: 3
+  min_bars_warning: true
+`;
+
+Deno.test("parseNorms keeps one-sided bounds as one-sided", () => {
+  const { norms } = parseNorms(NORMS_YML);
+  const by = Object.fromEntries(norms.map((n) => [n.param, n]));
+  assertEquals(by["rsi_daily"].low, 30);
+  assertEquals(by["rsi_daily"].high, 70);
+  // A low-only norm must NOT acquire a high. "% off the high" has no upper state to be in, and
+  // inventing one would paint every name above -30 as though we had judged the other end too.
+  assertEquals(by["pct_off_high_stored"].low, -30);
+  assertEquals(by["pct_off_high_stored"].high, null);
+  // A veto is high-only for the same reason in reverse.
+  assertEquals(by["net_debt_ebitda"].low, null);
+  assertEquals(by["net_debt_ebitda"].high, 4);
+});
+
+Deno.test("parseNorms keeps flags separate from norms, with their types intact", () => {
+  const { norms, flags } = parseNorms(NORMS_YML);
+  assertEquals(norms.some((n) => n.param === "stale_days_price"), false, "a flag is not a norm");
+  const by = Object.fromEntries(flags.map((f) => [f.key, f.value]));
+  assertEquals(by["stale_days_price"], 3);
+  assertEquals(by["min_bars_warning"], true, "a boolean flag must not become a string");
+});
+
+Deno.test("parseNorms refuses an empty norms block rather than wiping every verdict", () => {
+  // The sync DELETES norms missing from the yml, so an empty parse would blank the whole grid.
+  // A truncated download and a deliberate removal look identical; treat it as the broken file.
+  assert.throws(() => parseNorms("norms:\nflags:\n  stale_days_price: 3\n"));
+  assert.throws(() => parseNorms("flags:\n  stale_days_price: 3\n"));
+});
+
+Deno.test("parseNorms rejects a norm that could never colour anything", () => {
+  assert.throws(() => parseNorms("norms:\n  rsi_daily: { }\n"), /neither low nor high/);
+});
+
+Deno.test("parseNorms rejects an inverted band instead of silently never matching", () => {
+  // low >= high means no value can ever be 'normal'; every cell would read as an extreme.
+  assert.throws(() => parseNorms("norms:\n  rsi_daily: { low: 70, high: 30 }\n"));
+  assert.throws(() => parseNorms("norms:\n  rsi_daily: { low: 50, high: 50 }\n"));
+});
+
+Deno.test("parseNorms skips a commented-out norm without failing the whole file", () => {
+  // A norm commented out in yml parses as null. That is a removal, not a syntax error - and
+  // removing one norm must not take the other fifteen down with it.
+  const { norms } = parseNorms("norms:\n  rsi_daily: { low: 30, high: 70 }\n  rs_vs_sox_6m:\n");
+  assertEquals(norms.length, 1);
+  assertEquals(norms[0].param, "rsi_daily");
 });

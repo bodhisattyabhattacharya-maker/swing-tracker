@@ -14,7 +14,11 @@ norms:
   rsi_weekly:       { low: 45,  high: 65 }
   rsi_hourly:       { low: 30,  high: 70 }
 
-  pct_off_ath:      { low: -30 }            # 30%+ below the all-time high
+  # Renamed from pct_off_ath on 2026-09-13. The parameter is `pct_off_high_stored` because the
+  # data plan holds 5 years, not all time (INTC, QCOM and GE peaked in 2000) - and norms are
+  # matched to parameters BY NAME, so a norm called pct_off_ath would have silently coloured
+  # nothing at all. If the key here does not match a parameter, the cell is simply never judged.
+  pct_off_high_stored: { low: -30 }         # 30%+ below the highest price we hold
   pct_off_52w_high: { low: -25 }
 
   close_vs_sma200d: { low: -5,  high: 40 }  # % distance from the daily 200 SMA

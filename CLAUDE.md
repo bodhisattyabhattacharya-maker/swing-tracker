@@ -81,7 +81,7 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 | What has broken before | `docs/INCIDENTS.md` |
 | Shared vocabulary | `docs/GLOSSARY.md` |
 | Watchlist — edit this, not code | `config/watchlist.yml` |
-| Colour thresholds | `config/norms.yml` |
+| Colour thresholds — edit this, not the table | `config/norms.yml` (synced to `norms`; compared in SQL, decision 0023) |
 | Task procedures | `.claude/skills/` |
 
 ## Current state

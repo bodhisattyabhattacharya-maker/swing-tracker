@@ -181,7 +181,24 @@ counts as (
     -- data" - the exact confusion this project is supposed to avoid.
     (select count(*) from public.tickers t
       where t.active
-        and not exists (select 1 from public.daily_features f where f.symbol = t.symbol))  as tickers_without_features
+        and not exists (select 1 from public.daily_features f where f.symbol = t.symbol))  as tickers_without_features,
+    -- The norms layer. The first two are the bugs that would be invisible on the page: a cell
+    -- reading as judged-and-fine when nothing judged it, and a seed-influenced number being
+    -- coloured anyway. Both would look completely normal to a human reading the grid.
+    (select count(*) from public.grid_cells
+      where verdict is not null and not has_norm)                                          as verdict_without_norm,
+    (select count(*) from public.grid_cells
+      where verdict is not null and suppressed_warmup)                                     as verdict_while_suppressed,
+    (select count(*) from public.grid_cells
+      where verdict is not null and verdict not in ('below','normal','above'))             as bad_verdict_value,
+    -- Indices are market context, never grid rows.
+    (select count(*) from public.grid_cells c
+      join public.tickers t on t.symbol = c.symbol where t.is_index or not t.active)       as index_or_inactive_in_grid,
+    -- Informational: a norm whose parameter does not exist yet. Expected to be 12 today and to
+    -- FALL as the weekly, market and fundamental layers land. It cannot be an error - the
+    -- parameters genuinely are not built - but a number that rises means a typo or a rename.
+    (select count(*) from public.norms n
+      where not exists (select 1 from public.grid_cells c where c.param = n.param))         as norms_without_parameter
 ),
 invariant_rows as (
   select * from (
@@ -272,11 +289,31 @@ invariant_rows as (
            case when ema_seed_flag = 0 then 'PASS' else 'FAIL' end, '0', ema_seed_flag::text,
            'the flag and DEFINITIONS.md section 4 disagree - hard constraint 8 is not being enforced' from counts
     union all
+    select 'norms', 'no verdict without a norm to judge by',
+           case when verdict_without_norm = 0 then 'PASS' else 'FAIL' end, '0', verdict_without_norm::text,
+           'a cell would read as judged-and-fine when nothing judged it - invisible on the page' from counts
+    union all
+    select 'norms', 'no verdict on a seed-suppressed value',
+           case when verdict_while_suppressed = 0 then 'PASS' else 'FAIL' end, '0', verdict_while_suppressed::text,
+           'hard constraint 8 - a value still carrying its seed must not be coloured' from counts
+    union all
+    select 'norms', 'verdict is one of below/normal/above',
+           case when bad_verdict_value = 0 then 'PASS' else 'FAIL' end, '0', bad_verdict_value::text,
+           'an unexpected verdict string would render as an unstyled cell' from counts
+    union all
+    select 'norms', 'no index or inactive ticker in the grid',
+           case when index_or_inactive_in_grid = 0 then 'PASS' else 'FAIL' end, '0', index_or_inactive_in_grid::text,
+           'indices are market context, not rows; inactive tickers left the watchlist' from counts
+    union all
     -- Always PASS by construction. It is here because a count nobody looks at is a count nobody
     -- notices changing, and "why is half the grid blank" is a question this row answers instantly.
     select 'info', 'rows still seed-sensitive (suppress at display)',
            'PASS', '(informational)', rsi_seed_sensitive::text,
            'RSI values published with seed_ok = false; expected to be nonzero on a young series' from counts
+    union all
+    select 'info', 'norms with no parameter built yet',
+           'PASS', '(informational)', norms_without_parameter::text,
+           'expected 12 on 2026-09-13 and should FALL as layers land; a RISE means a typo or rename' from counts
   ) t
 ),
 all_rows as (
