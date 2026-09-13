@@ -1,61 +1,207 @@
 /**
- * Root layout. Desktop-first (decision 0005): this dashboard is a dense grid read at a desk,
- * not on a phone, so there is no mobile breakpoint work here and that is deliberate.
+ * Root layout.
  *
- * Styles are inline in a <style> tag rather than a CSS module because there is exactly one
- * page so far. When a second page arrives, move them out - not before.
+ * Desktop-first (decision 0005, PROPOSAL §4 "Surfaces"): the scan is 26 columns across 36 names,
+ * which is an information-density problem no responsive trick solves. The phone surface is the
+ * email digest, not a squeezed version of this table. The table therefore gets its own horizontal
+ * scroll container and the page body never scrolls sideways.
+ *
+ * Styles stay inline here rather than in a CSS module because there are two pages and one style
+ * sheet. Move them out when a third page needs something different, not before.
+ *
+ * THEMING: light and dark are both defined at token level. The `:root` block holds the complete
+ * light palette; the media query and the `[data-theme]` block only redefine tokens. A colour whose
+ * only definition sits inside one of those blocks silently fails in the other state.
  */
 import type { ReactNode } from "react";
 
 export const metadata = {
   title: "Swing Tracker",
-  description: "Watchlist tracker — 26 parameters, colour-coded against norms we set.",
+  description: "Watchlist tracker — the same parameters on every name, coloured against norms we set.",
 };
 
 const CSS = `
   :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --line: #262b35;
-    --text: #e7e9ee;
-    --muted: #98a1b3;
-    --ok: #3fb950;
-    --warn: #d29922;
+    --paper:      #f6f8f7;
+    --surface:    #ffffff;
+    --ink:        #101719;
+    --ink-soft:   #5d6d71;
+    --ink-faint:  #8b9a9d;
+    --rule:       #dde4e3;
+    --rule-soft:  #eaefee;
+    --accent:     #2a7d6f;
+    /* Semantic, and deliberately not red/green. Below a norm means possibly cheap; above means
+       possibly stretched. Both are equally interesting, so neither may look like a failure. */
+    --below:      #1f6f8b;
+    --below-bg:   #e4eff3;
+    --above:      #a8661c;
+    --above-bg:   #f7ede0;
+    --warn:       #8a5a12;
+    --warn-bg:    #fbf2e2;
+    --err:        #9c3b2e;
+    --shadow:     0 1px 2px rgba(16,23,25,.06), 0 8px 24px -16px rgba(16,23,25,.28);
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0d1416;
+      --surface:   #141d1f;
+      --ink:       #e7eeec;
+      --ink-soft:  #9aabad;
+      --ink-faint: #6b7d80;
+      --rule:      #243134;
+      --rule-soft: #1b2528;
+      --accent:    #4fb3a1;
+      --below:     #6fc0da;
+      --below-bg:  #16303a;
+      --above:     #e0a355;
+      --above-bg:  #392a16;
+      --warn:      #d9a55c;
+      --warn-bg:   #332713;
+      --err:       #e08878;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #0d1416;
+    --surface:   #141d1f;
+    --ink:       #e7eeec;
+    --ink-soft:  #9aabad;
+    --ink-faint: #6b7d80;
+    --rule:      #243134;
+    --rule-soft: #1b2528;
+    --accent:    #4fb3a1;
+    --below:     #6fc0da;
+    --below-bg:  #16303a;
+    --above:     #e0a355;
+    --above-bg:  #392a16;
+    --warn:      #d9a55c;
+    --warn-bg:   #332713;
+    --err:       #e08878;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--bg);
-    color: var(--text);
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 860px; margin: 0 auto; padding: 56px 24px 80px; }
-  h1 { font-size: 28px; letter-spacing: -0.01em; margin: 0 0 6px; }
-  .sub { color: var(--muted); margin: 0 0 36px; }
-  .panel {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 20px 22px;
-    margin-bottom: 18px;
-  }
-  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--muted); margin: 0 0 14px; font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  tr:last-child td { border-bottom: 0; }
-  td:first-child { color: var(--muted); width: 46%; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
-  .yes { color: var(--ok); }
+  main { max-width: 860px; margin: 0 auto; padding-block: 48px 72px; padding-inline: 20px; }
+  main.wide { max-width: 1500px; padding-block: 28px 64px; }
+
+  h1 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif; font-weight: 700;
+       font-size: clamp(26px, 5vw, 38px); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+  .sub { color: var(--ink-soft); font-size: 14px; margin: 5px 0 0; max-width: 58ch; }
+  .muted { color: var(--ink-faint); }
+  .err { color: var(--err); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+         font-size: 13px; word-break: break-word; }
+
+  .head { display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: flex-end;
+          justify-content: space-between; padding-bottom: 16px; border-bottom: 2px solid var(--ink); }
+  .status { display: flex; flex-wrap: wrap; gap: 10px 26px; }
+  .stat { display: flex; flex-direction: column; gap: 1px; }
+  .stat-k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+            letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .stat-v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px;
+            font-weight: 500; font-variant-numeric: tabular-nums; }
+
+  .banner { margin-top: 18px; padding: 11px 14px; border-radius: 3px; font-size: 13.5px;
+            border-left: 3px solid var(--warn); background: var(--warn-bg); color: var(--ink); }
+  .banner b { font-weight: 600; }
+
+  .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
+           padding: 20px 22px; margin-top: 22px; box-shadow: var(--shadow); }
+  .panel h2 { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+              text-transform: uppercase; letter-spacing: .1em; color: var(--ink-faint);
+              margin: 0 0 12px; font-weight: 600; }
+  .panel p { margin: 0 0 8px; }
+  .panel table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .panel td { padding: 7px 0; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  .panel tr:last-child td { border-bottom: 0; }
+  .panel td:first-child { color: var(--ink-soft); width: 46%; }
+
+  .scroll { margin-top: 26px; overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px;
+            background: var(--surface); box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  thead th { position: sticky; top: 0; z-index: 3; background: var(--surface);
+             font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; font-size: 11px;
+             letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft);
+             text-align: right; padding: 12px 12px 9px; border-bottom: 1.5px solid var(--rule);
+             white-space: nowrap; }
+  thead th.sym { text-align: left; left: 0; z-index: 4; }
+  thead th .norm { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
+                   letter-spacing: 0; text-transform: none; color: var(--ink-faint);
+                   font-weight: 400; margin-top: 2px; }
+
+  tbody td { padding: 7px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+             font-size: 13px; text-align: right; border-bottom: 1px solid var(--rule-soft);
+             white-space: nowrap; }
+  tbody td.sym { position: sticky; left: 0; background: var(--surface); text-align: left;
+                 font-weight: 600; font-size: 13.5px; z-index: 2; }
+  tbody td.sym .co { display: block; font-family: "IBM Plex Sans", sans-serif; font-weight: 400;
+                     font-size: 11px; color: var(--ink-faint); }
+  tbody tr:hover td, tbody tr:hover td.sym { background: var(--rule-soft); }
+
+  tr.band td { background: var(--paper); padding: 9px 12px 7px;
+               font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+               letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft);
+               text-align: left; border-top: 1px solid var(--rule);
+               border-bottom: 1px solid var(--rule); }
+  tr.band td .n { font-family: ui-monospace, Menlo, monospace; color: var(--ink-faint);
+                  font-weight: 400; letter-spacing: 0; margin-left: 8px; }
+
+  /* Severity in form as well as colour, so it survives greyscale and colourblindness. */
+  tbody td.mark { position: relative; font-weight: 600; }
+  tbody td.below { color: var(--below); background: var(--below-bg); }
+  tbody td.above { color: var(--above); background: var(--above-bg); }
+  tbody td.mark::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px; }
+  tbody td.below::before { background: var(--below); }
+  tbody td.above::before { background: var(--above); }
+  tbody td.unjudged { color: var(--ink-faint); }
+  .bell { color: var(--accent); font-size: 10px; vertical-align: 3px; margin-left: 3px; }
+  .warm { color: var(--warn); margin-left: 2px; }
+
+  .foot { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 22px 34px; margin-top: 30px; }
+  .foot h2 { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+             letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+             margin: 0 0 8px; font-weight: 600; }
+  .foot p { margin: 8px 0 0; font-size: 13px; color: var(--ink-soft); }
+  .key { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+  .chip { display: inline-block; padding: 1px 7px; border-radius: 2px; font-size: 11.5px;
+          font-family: ui-monospace, Menlo, monospace; font-weight: 500; border-left: 2.5px solid; }
+  .chip.b { color: var(--below); background: var(--below-bg); border-color: var(--below); }
+  .chip.a { color: var(--above); background: var(--above-bg); border-color: var(--above); }
+  .chip.n { color: var(--ink-faint); background: transparent; border-color: var(--rule); }
+  dl { margin: 0; font-size: 12.5px; }
+  dl div { display: flex; justify-content: space-between; gap: 14px; padding: 3px 0;
+           border-bottom: 1px solid var(--rule-soft); }
+  dt { color: var(--ink-soft); }
+  dd { margin: 0; font-family: ui-monospace, Menlo, monospace; color: var(--ink); }
+
+  .note { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--rule);
+          font-size: 12.5px; color: var(--ink-faint); max-width: 78ch; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  a { color: var(--accent); }
+  a:focus-visible, :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .yes { color: var(--accent); }
   .no { color: var(--warn); }
-  footer { color: var(--muted); font-size: 13px; margin-top: 32px; }
-  a { color: inherit; }
+  footer { color: var(--ink-faint); font-size: 13px; margin-top: 32px; }
 `;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+        />
         <style dangerouslySetInnerHTML={{ __html: CSS }} />
       </head>
       <body>{children}</body>

@@ -324,3 +324,31 @@ explicit practice — PROPOSAL is versioned, not frozen.
 only real hits, both now corrected rather than deleted. ONBOARDING gained two comprehension
 questions covering exactly the assumptions a reader of v1 would otherwise import.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — The dashboard exists
+**What:** `web/app/page.tsx` is now the grid — 36 names banded by theme, ten parameters each, with
+a verdict on the four that have a norm. Plus a freshness line that is always rendered and a
+staleness banner that cannot be dismissed. The old deployment check moved to `/status`.
+**How:** a server component reading `grid_status`, `tickers`, `grid_cells` and `norms` through
+PostgREST with the service_role key, cached 15 minutes, pivoted to a row per ticker in the page.
+The long-format view means adding a parameter later is one line in `COLUMNS` and one in the view.
+Decision 0025.
+**Design:** severity is a left stripe plus a weight change as well as a colour, so it survives
+greyscale and colourblindness. The semantic colours are **blue for below a norm and ochre for
+above** — deliberately not red and green, because below means possibly cheap and above means
+possibly stretched, and this tool has no view on which is good. Unjudged values render grey: "we
+have no opinion" must not look like "inside the norm". A `*` marks a value inside its warm-up
+window — shown, never judged.
+**Architecture impact:** the read path exists end to end for the first time. RLS stays
+deny-by-default with **no read policy at all**, because nothing but the server reads the database.
+**Verified by:** `next build` with **no environment variables at all**, the way CI runs it — passes,
+and prerenders a page that names the missing variables rather than crashing. Rebuilt against an
+unreachable host: renders `grid_status: could not reach example.invalid (fetch failed)` instead of
+a 500. And the one that matters most — built with a **sentinel value** in
+`SUPABASE_SERVICE_ROLE_KEY` and grepped the client bundle and every served HTML file for it:
+**zero occurrences**. Next inlines `NEXT_PUBLIC_*` into the browser at build time, this repo is
+public, and a leaked service_role key is irreversible, so that check is run rather than reasoned
+about.
+**Not yet verified:** the page has never rendered real data. The sandbox has no network route to
+`*.supabase.co`, so the happy path is confirmed only by the first deploy with the env vars set.
+**By:** Bodhi + Claude

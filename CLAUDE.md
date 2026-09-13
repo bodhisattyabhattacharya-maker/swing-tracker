@@ -94,7 +94,10 @@ parameter layer exists as the `daily_features` matview, checked by
 UTC and a concurrent matview refresh at 22:45, weekdays (decision 0022). There is no user-led
 refresh by design, so those two jobs are the only path: if they do not fire, the dashboard is
 stale and nobody can fix it from the page. A green `cron.job_run_details` row is **not** evidence
-of a good ingest — pg_net is fire-and-forget. Check `ingest_runs`, then the freshness check. `web/` holds a deployment-check page, not the dashboard. The pg_cron schedule,
+of a good ingest — pg_net is fire-and-forget. Check `ingest_runs`, then the freshness check. `web/` now holds **the dashboard** at `/`, server-rendered with service_role over PostgREST so the
+browser never touches Postgres and RLS needs no read policy (decision 0025); the deployment check
+moved to `/status`. It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set in Vercel — the key
+**must not** carry a `NEXT_PUBLIC_` prefix, which Next would inline into the browser bundle. The pg_cron schedule,
 session-aligned hourly bars, weekly and market-context parameters, cross-sectional ranks, CI
 gating of the golden values, and the grid itself do not exist yet.
 `docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is
