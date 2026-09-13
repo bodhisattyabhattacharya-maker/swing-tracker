@@ -118,3 +118,28 @@ seconds and gave the exact error. That is now the first step in the debug-ingest
 **Still unexplained, honestly:** the 150 s exhaustion. Three FRED series plus a handful of
 failing equities should have completed in well under a minute. The timeout and the logging exist
 precisely so that if it recurs it is diagnosable rather than inferred.
+
+## 2026-09-13 — the backfill could not make progress, and would have looped forever
+**Symptom:** run 1 of the backfill wrote seven equities. Run 2, identical command, wrote **one**
+new symbol and left `deferred` at 28 — it had spent its whole eleven-symbol budget re-fetching
+five weeks of data for the eight names that were already complete. A third run would have done
+the same, and a fourth, indefinitely.
+**Root cause:** the loop walked symbols alphabetically and decided each one's range as it went,
+so "needs 494 bars" and "needs 24 bars" competed on equal footing for the same budget. The
+alphabetically-first symbols were complete, so the budget was consumed before reaching anything
+that actually needed work. A scheduled job would have looked healthy — `ok: true`, rows written —
+while making no progress at all, which is the worst shape a bug can have.
+**Fix:** plan the whole run before fetching anything, and sort symbols needing a full backfill
+ahead of those needing a top-up. The log line now states the split ("N to backfill, M to top
+up") so a stalled run is visible at a glance.
+**A second defect found the same way:** `hasBars` was called OUTSIDE the per-symbol try, so a
+single failing count aborted the entire run — twice, on SMCI and WMT, taking 15 symbols' work
+with them. A third run died on `tickers read` before touching any symbol. All three were
+PostgREST returning "Gateway Timeout" or an error with an **empty message**, on a project
+reporting `ACTIVE_HEALTHY`. Reads now retry once after 400 ms, and a count failure costs one
+symbol rather than the run. Writes are deliberately **not** retried.
+**Earlier detection:** the pattern is now explicit enough to name, because it is the third time
+tonight: **one symbol's problem must never cost another symbol's work.** The double-incremented
+budget, the count that killed a run, and this ordering stall are all the same mistake wearing
+different clothes. When reviewing this loop, ask of every failure "what else does this take
+down?" — not merely "is it handled?".
