@@ -88,6 +88,43 @@ jobs:
             deno check "$f"
           done
 
+  parameters:
+    name: Parameter verification
+    runs-on: ubuntu-latest
+    # A real PostgreSQL, because the parameters ARE SQL. Testing them anywhere else would be
+    # testing a reimplementation. pg_cron and pg_net do not exist here and are stubbed in
+    # scripts/ci/bootstrap.sql - see that file for what the stubs cannot prove.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports: [5432:5432]
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci
+    steps:
+      - uses: actions/checkout@v4
+      # Applies every migration in order to an empty database, loads a synthetic fixture, and
+      # compares daily_features against values an independent implementation computed from the
+      # same series. Exits non-zero if any check does not PASS.
+      #
+      # This gates the FORMULAS. It does not gate the vendor's data or the adjustment basis -
+      # the MU golden values cover that and stay a manual check against production, because the
+      # data plan is licensed for individual use and a price series cannot be committed to a
+      # public repo. DEFINITIONS.md section 6 keeps both straight.
+      - name: Migrations, fixture, and the formula gate
+        run: bash scripts/ci/run.sh
+
   web:
     name: Web build
     runs-on: ubuntu-latest

@@ -419,3 +419,30 @@ schedule itself cannot be verified before it fires; **the first real send is Mon
 carries Resend's message id on success and the error text on failure - not the cron log, which
 reports success as soon as the request is queued.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Formula regressions now fail the build
+**What:** a `parameters` CI job. PostgreSQL 16 service container, every migration applied in order
+to an empty database, a synthetic fixture loaded, and `daily_features` compared against values an
+independent implementation computed from the same series. Plus `scripts/ci/` as a set of files
+anyone can run by hand against any empty database — `scripts/ci/run.sh` is the whole gate.
+**How:** decision 0029. The fixture is shaped to hit edges rather than to look realistic: a steady
+trend, a drawdown that drives RSI low, a dead-flat stretch, and a gap up. Three degenerate
+companions cover a flat series (RSI undefined, not 50), a 10-bar series below every window, and a
+close-only series shaped like a FRED index.
+**Architecture impact:** this closes the integrity gap that has been the top outstanding item since
+the parameter layer landed. It also makes the practice repeatable rather than remembered — every
+migration in this project has been verified against a throwaway PostgreSQL before its PR, and that
+is now a committed script rather than a habit.
+**What it does NOT gate, stated plainly:** the MU golden values. Reproducing them needs a real price
+series, and the data plan is licensed for individual use, so committing one to a public repo is
+redistribution. They stay a manual check against production. CI gates the formulas; the goldens
+gate the data and the basis.
+**Verified by:** the gate ran green end to end locally — 24 formula assertions across four dates,
+four degenerate checks, two scheduling checks, and all 26 invariant checks from
+`verify_parameters.sql`. RSI, EMA and SMA agree with the independent reference at **exactly
+0.000e+00** relative difference; realised volatility at 1.6e-16. The five golden checks report
+MISSING, which the runner treats as expected rather than as failure, and says so.
+**Two bugs the exercise found in itself:** an idempotency loop asserting that every migration could
+be re-applied — false, and correctly failing, since migrations here are forward-only; and a counter
+treating the SUMMARY row as a check, which reported a clean run as failing.
+**By:** Bodhi + Claude
