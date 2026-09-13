@@ -46,11 +46,11 @@ next agent to the wrong file confidently.
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
 | `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam) → `yahoo.ts` (implementation), `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
-| `web/` | Next.js dashboard, desktop-first _(planned)_ | — |
+| `web/` | Next.js 16 App Router, TypeScript, desktop-first. Only `app/page.tsx` exists: a deployment check that reads no data. The grid is _(planned)_ and blocked on parameter views + read policies. | `app/page.tsx`; Vercel root directory is `web/` |
 | `scripts/` | Local helpers — verification, one-off checks _(planned)_ | — |
 | `docs/` | Context files. Start at `ONBOARDING.md` | — |
 | `.claude/skills/` | Per-task procedures | Matched to your task |
-| `.github/workflows/` | CI: secret scan, config validation, edge-function tests, hygiene gate | `ci.yml` |
+| `.github/workflows/` | CI: secret scan, config validation, edge-function tests, web build, hygiene gate | `ci.yml` |
 
 ## Where to start reading, by question
 

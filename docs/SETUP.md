@@ -41,7 +41,16 @@ wired. Owner steps happen once; contributor steps happen per person.
 
 ## Owner — Vercel, once
 
-- [ ] Import the GitHub repo. Auto-deploy on push to `main`.
+- [ ] Import the GitHub repo. **Set Root Directory to `web/`** — the repo root holds `supabase/`
+      and `docs/` too, and Vercel will not find the app without this.
+- [ ] Framework preset: Next.js. Build command, output directory and install command: leave as
+      the detected defaults. Node 22.
+- [ ] Environment variables (Production + Preview): `NEXT_PUBLIC_SUPABASE_URL` and
+      `NEXT_PUBLIC_SUPABASE_ANON_KEY`. **Only these two.** The `NEXT_PUBLIC_` prefix means Next
+      compiles them into the browser bundle; the anon key is designed for that, the service_role
+      key must never be given that prefix or put in this project at all.
+- [ ] Confirm the pipeline: open the deployed URL and check the commit SHA on the page matches
+      the latest merge to `main`, and that both variables read "set".
 - [ ] The other contributor needs **no Vercel account** — deployment is a side effect of merging.
 
 ## Each contributor
