@@ -73,7 +73,7 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 | One-time account and service wiring | `docs/SETUP.md` |
 | Where code lives, how data flows | `docs/CODEMAP.md` |
 | How to write code here | `docs/CODE_STYLE.md` |
-| Plan and scope | `docs/PROPOSAL.md` |
+| Plan and scope — what the product **is** | `docs/PROPOSAL.md` (**v2**; versioned, not frozen — decision 0024) |
 | Indicator formulas, TradingView-anchored | `docs/DEFINITIONS.md` |
 | Why we chose X over Y | `docs/DECISIONS.md` |
 | Verified facts about external APIs | `docs/CONSTRAINTS.md` |

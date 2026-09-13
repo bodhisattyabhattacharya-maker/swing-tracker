@@ -65,6 +65,11 @@ cleanly invite a collaborator.
 habit that produced the look-ahead bug.
 
 ## 0010 — 2026-09-12 — PROPOSAL is the frozen spec; FEATURES is the record of what exists
+> **Amended by 0024 (2026-09-13): "frozen" became "versioned".** The split below still holds and is
+> the important half — what the product *is* versus what exists are different documents, and a
+> feature shipping is never a reason to edit the spec. What changed is that a genuine change of
+> SCOPE now earns a numbered revision with an entry in PROPOSAL's revision history, rather than
+> leaving the most-read document in the repo permanently describing a product we decided against.
 **Decided:** `PROPOSAL.md` is edited only when **scope** changes. What actually got built, and
 how, is recorded in `FEATURES.md`. **Why:** both documents otherwise end up describing the same
 system, drift apart, and nobody knows which is true. **Rejected:** keeping the proposal current
@@ -365,3 +370,31 @@ rather than wiping the table.
 a day, no retry and no refresh button, the realistic failure is ten people reading silently stale
 numbers, so the page must be unable to hide it. `last_run_ok` and `is_stale` are deliberately
 separate columns — a run can succeed and the data still be a day behind.
+
+## 0024 — 2026-09-13 — PROPOSAL.md is versioned, not frozen; v2 issued
+**Decided:** `docs/PROPOSAL.md` carries a revision number and a revision-history table, and is
+rewritten when the product surface genuinely changes. It is **not** a historical artefact to be
+preserved unedited. v2 is issued today.
+**Why:** the change matrix already makes PROPOSAL the single file a scope change may touch, and
+`ONBOARDING.md` sends every new session there for 20 minutes to learn what the product is. A
+document with that job cannot describe four clocks, a "Refresh now" button, two RLS-enforced roles
+and a keyless Yahoo feed when none of those exist — a new contributor would build against it, and
+the contradictions were already being discovered one at a time in other files. Freezing a spec
+preserves the wrong thing: it preserves the words instead of the intent.
+**What v2 changes**, each already decided elsewhere and merely now reflected: the price vendor and
+the $29 plan (0019, 0021); five years of history rather than "full listing history", and the
+consequences for the extremes columns; one clock rather than four (0022); no user-led refresh and
+no login, with staleness on the page as the compensating control (v1 scope, 2026-09-13); norms
+compared in the database (0023); hourly bars built from minute data rather than fetched; `rs_vs_sox`
+dropped (0019); `pct_off_ath` renamed (0023).
+**Why a revision table and not just git:** git holds the diff, but a new session reads the file, not
+the log. The table answers "what would surprise me if I last read v1" in twenty seconds, which is
+the question a reader of a rewritten spec actually has.
+**Rejected:** leaving PROPOSAL frozen and recording drift only in DECISIONS — which is what we were
+doing, and it meant the most-read document was the least accurate. Also rejected: deleting the
+superseded text outright. The revision table keeps what changed visible, because "we used to think
+we needed four clocks" is context, and the reasoning for dropping each one is why the next person
+should not propose it again.
+**Consequence:** ONBOARDING now sends readers to the revision table first, and adds two
+comprehension questions covering the two assumptions most likely to be imported from the old
+version — that a viewer can refresh, and that a green scheduler run means data arrived.

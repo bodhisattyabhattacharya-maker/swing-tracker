@@ -4,11 +4,21 @@ An end-of-day dashboard that watches a fixed list of companies we already have a
 
 | | |
 |---|---|
+| **Revision** | **v2 — 13 September 2026** (first draft 17 August 2026) |
 | **Horizon** | Swing / LEAPS, 6 months+ |
-| **Team** | Two, Claude coding on each end |
-| **Repo** | Shared GitHub |
-| **Scope** | 26 parameters × 40 tickers |
-| **Drafted** | 17 August 2026 |
+| **Team** | Two builders, ~10 readers, Claude coding on each end |
+| **Repo** | Shared GitHub, public |
+| **Scope** | 26 parameters × 36 tickers + 3 index series |
+| **Data** | Polygon Stocks Starter ($29/mo) + FRED + SEC XBRL |
+
+> **This document is the product surface: what the thing IS.** It is the only file the change
+> matrix lets a scope change touch, and nothing else may contradict it. It does **not** track build
+> status — `docs/FEATURES.md` does that, and `CLAUDE.md` carries the current state in a paragraph.
+>
+> **What changed in v2 is listed at the end**, under Revision history. Three things moved enough to
+> be worth knowing before reading anything else: the price source changed vendor, v1 has **one**
+> daily clock rather than four, and there is **no user-led refresh and no login** — the dashboard is
+> open and its schedule is set by us.
 
 ---
 
@@ -36,17 +46,17 @@ v1 is deliberately a **tracker, not an advisor**. Twenty-six numbers per company
 
 Everything in v1 serves one goal: a page in front of us each morning that we actually open. Anything else is in section 3.
 
-- **Scheduled data pipeline** — four clocks (hourly, daily, weekly, on-filing), each refreshing the parameters that move at that speed. Runs unattended; failures are logged and visible.
-- **Full OHLC, not just closes** — anything computed from range (RSI, true range, intraday extremes) is wrong without it.
-- **Three RSI timeframes** — weekly frames the trade, daily times it, hourly says whether today is a bad moment to click.
-- **True all-time high and low** — from full listing history, so a name that peaked decades ago is measured against its real high.
+- **A scheduled data pipeline that is the only path.** One clock, after the US close on weekdays: fetch, then rebuild the parameters. It runs unattended, every run is recorded, and there is no manual alternative — see *No user-led refresh* in section 4 for why that is a choice rather than a shortcut.
+- **Full OHLC, not just closes** — anything computed from range (RSI, true range, intraday extremes) is wrong without it. Index series are the exception and carry closes only, which no parameter of theirs needs.
+- **Three RSI timeframes** — weekly frames the trade, daily times it, hourly says whether today is a bad moment to click. Hourly needs session-aligned bars the vendor does not publish directly, so it lands after the first two.
+- **Extremes over stored history, labelled as such.** Five years, not all time. INTC, QCOM and GE peaked in 2000 and sit outside any tier we would plausibly buy, so the column is named for the window it actually covers rather than claiming more.
 - **Searched columns** — forward P/E, PEG, price targets and consensus aren't available from any free feed, and we're not paying for one. A Claude web search fills them weekly, stamped with source, date and fiscal year.
 - **A properly deployed app** — a real front end reading live from the database, on a stable URL. Desktop-first: the grid is a wide table and we're not pretending otherwise.
+- **Open to anyone with the link, with no login.** About ten people read it, on their own devices, and none of them should have to hold a password. The page is public; the database is not — the server reads it and returns HTML, so the browser never touches Postgres.
+- **Freshness stated on the page, not assumed.** One run a day, no retry, no refresh button: the realistic failure is people reading stale numbers that look current. The page carries a last-updated stamp and says so plainly when the data is behind.
 - **A daily digest by email** — the phone surface. Three lines on which names crossed a norm today, with a link. When none did, it says so.
-- **Refresh now** — a manual trigger, coalesced and rate-limited so it can't be abused or run up cost.
-- **Two roles, enforced in the database** — owners trigger refreshes and searches; everyone else reads. Row-level security, not hidden buttons.
-- **Colour-coded against norms we set** — thresholds we define per parameter decide what gets shaded. Editable config, not hardcoded. No score, no ranking.
-- **Add a ticker without a UI** — the watchlist is a file in the repo. Add a line, commit, next run backfills its history.
+- **Colour-coded against norms we set** — thresholds we define per parameter decide what gets shaded. They live in an editable config file, are compared in the database so the grid, the digest and later the rule engine share one definition of "outside normal", and carry **no score and no ranking**.
+- **Add a ticker without a UI** — the watchlist is a file in the repo. Add a line, commit, next run backfills its history. Norms work the same way.
 - **Two-person workflow** — one repo holding schema, rules, ingest and frontend. We each run Claude against it and review each other's PRs.
 
 ---
@@ -72,44 +82,59 @@ The rule engine, alerts and backtesting aren't "someday" — they're **Phase 2**
 
 ## 4. How we build it
 
-**One constraint shapes the whole design:** AI coding sandboxes have no network route to market-data providers — Yahoo, Stooq, Polygon and the rest all fail at the proxy. So the fetching can't live where we write code. It lives in the database platform, which does have open internet access.
+**One constraint shapes the whole design:** AI coding sandboxes have no network route to market-data providers — every one of them fails at the proxy. So the fetching cannot live where we write the code. It lives in the database platform, which does have open internet access.
 
 ```
   1. FETCH            2. STORE           3. COMPUTE          4. PUBLISH
-  Database-side  →    Postgres      →    SQL parameters  →   Static page
-  functions, on       Hourly/daily/      Same query serves   One URL,
-  four clocks         weekly bars,       tonight's scan      desktop-first,
-                      fundamentals       and a 10y replay    email digest
+  Database-side  →    Postgres      →    SQL parameters  →   Server-rendered
+  functions, on       Daily bars,        Same query serves   page, one URL,
+  a schedule          index series,      tonight's scan      open, no login,
+  we control          fundamentals       and a 10y replay    plus email digest
 ```
 
-### The four clocks
+The third column is the one worth pausing on. **The same query serves tonight's scan and a ten-year
+replay**, because every parameter is computed for every (ticker, date) rather than only for today.
+That is what makes a backtest a `WHERE` clause instead of a second implementation that drifts from
+the first — and it is the single decision the rest of the architecture is arranged around.
 
-| Clock | Runs | Requests/day | What it refreshes |
-|---|---|---|---|
-| **Hourly bars** | Midday + close | 80 | Two years of hourly bars, refreshed at the tail. Feeds **hourly RSI** only. Twice a day rather than hourly — this is an EOD tool, and hourly RSI only needs to be current when we're about to act. |
-| **Daily** | After US close | 40 | Full OHLCV. Recomputes **daily RSI, MA positions, distance from highs, relative strength, realized vol, market and sector context**. |
-| **SEC check** | Daily | 40 | Cheap check for new filings. Recomputes **all fundamentals** only when one lands. |
-| **Weekly** | Saturday | 80/week | Rolls weekly bars, recomputes **weekly RSI and MAs**, re-pulls **full-history high/low**, runs the **Claude search sweep**. |
+### The clock
 
-**Baseline ≈ 160 requests/day**, plus 80 on Saturdays. Nowhere near any published limit — the SEC's is 10 requests/second, and we run sequentially with a delay.
+**v1 runs on one clock.** After the US close on weekdays: fetch every symbol, then rebuild the parameter layer a few minutes later. That is the whole pipeline.
 
-### Refresh triggers, and why viewer count doesn't matter
+| Job | Runs | What it does |
+|---|---|---|
+| **Ingest** | Weekdays, after the close and the vendor's publication delay | Full OHLCV for every equity, closes for the index series. One pass, whole watchlist. |
+| **Rebuild** | Fifteen minutes later | Recomputes every parameter for every ticker and date, so the grid is an index scan rather than a computation. |
 
-The data is **identical for every viewer** — there's no per-user state. So refresh cost must be decoupled from how many people are looking. Ten people pressing "Refresh now" must never cause ten fetches.
+Two design points that are easy to get wrong later:
 
-The trigger writes to a **job queue, not a fetcher**:
+**The two jobs are separate, not chained.** Chaining would guarantee the rebuild only ever sees fresh data, but it would collapse two failures into one silence — a fetch that dies leaves the rebuild untouched with nothing to distinguish it from a quiet day. Separate jobs mean a failed fetch and a stale parameter layer are two visible problems.
 
-- Requests enqueue against a *scope* (prices, fundamentals, searches) rather than executing directly.
-- If a job for that scope completed inside the **15-minute cooldown**, the request returns existing data. Ten simultaneous presses collapse to one job, or zero.
-- A **global daily cap** of 12 manual refreshes across all users combined, not per user. Worst case ~640 requests/day, still comfortable.
-- Every run is recorded in `ingest_runs` with who triggered it and what came back, so an unexplained spike is traceable to a person.
+**A scheduler reporting success is not the same as data arriving.** The fetch is dispatched asynchronously, so the scheduler records success the moment it *asks*. What actually answers "did today work" is the run log and the freshness check, in that order. This distinction has bitten this project repeatedly in other forms and is written down wherever it applies.
+
+More clocks arrive with the parameters that need them — a filings check when fundamentals land, a weekly sweep for the searched columns, an intraday clock if hourly columns prove worth watching. Each is a schedule entry, not an architecture change.
+
+### No user-led refresh, and what that costs
+
+There is **no "Refresh now" button**, for anyone. The schedule is set by us and is the only way data moves.
+
+That deletes a whole category of design — queueing, coalescing, cooldowns, per-user rate limits, a global daily cap, and the question of who is allowed to press it. None of that has to exist, and none of it has to be got right.
+
+**What it costs is honesty about staleness.** With one run a day and no retry, a failure means a stale day, and nobody looking at the page can do anything about it. So staleness cannot be a detail:
+
+- The page carries a **last-updated stamp**, always visible.
+- It shows a **clear banner** when the data is older than it should be.
+- The threshold for "older than it should be" is a norm in config, not a number buried in the frontend.
+- The database decides it, not the browser — the same judgment then serves the grid, the digest, and anything later.
+
+Ten people reading silently stale numbers that look current is the worst failure this design permits. Making it loud is the compensating control for removing the button.
 
 ### Guardrails on the searched columns
 
 These are the only part of the system that **costs money per use and writes to shared state** — a bad value is visible to everyone, not just whoever triggered it. So:
 
-- **Owner-only, enforced in the database.** Row-level security rejects a search trigger from any non-owner. A hidden button isn't a guardrail; the API has to refuse.
-- **Capped per day** globally, independent of who asks.
+- **Not triggerable from the page at all.** v1 has no login and no user-initiated actions, so this is enforced by there being no route rather than by a role check. When the searched columns land they run on their own schedule, like everything else. If a manual trigger is ever wanted, it needs an identity model first — that is the reason to add one, and the only one so far.
+- **Capped per day** globally, since a schedule can misfire as easily as a person can.
 - **Every value stores provenance** — number, source URL, retrieval date, and the fiscal year it refers to. A forward P/E without a stated year is meaningless, and sources use different consensus sets.
 - **Usable in a rule as a filter, never as the trigger.** A searched value can narrow a rule as an AND condition — weekly RSI below 35 *and* more than 20% below target — but never fires one alone. It's a slow-moving weekly number: a standing eligibility condition, not something that changes today.
 - **Appended, never overwritten.** Every retrieval adds a row. Costs nothing now, and it's the only way we accumulate the history that makes these columns backtestable later.
@@ -123,7 +148,9 @@ We're starting keyless and free. If the watchlist grows to hundreds of names, or
 - **Nothing downstream knows where a number came from.** Parameters compute from tables, and tables don't encode a vendor.
 - **Every stored value carries its source.** A `source` column on every row, so a migration is auditable — we can run both providers side by side and compare before cutting over.
 
-What constrains scale isn't the schema, it's the free tier and the unofficial endpoint's patience. Both are what a paid feed fixes, and neither requires the rest of the system to change.
+This has already been tested once, in the way that counts: the price vendor changed entirely — a different company, a different API, a different rate limit and a different history depth — and the change landed in one file plus two constants, with the golden values reproducing to within 1.5×10⁻⁴ afterwards. The seam works.
+
+What constrains scale is not the schema. Measured: a full history fetch costs about a fifth of a second per symbol, so a few hundred names fit inside one scheduled run. Past that the answer is bulk files rather than per-symbol requests, which is a change to one provider file.
 
 ### Surfaces — where this gets used
 
@@ -151,11 +178,12 @@ Email before Slack: no shared workspace needed, works for anyone we later share 
 | Piece | Tool | Why |
 |---|---|---|
 | Database + scheduler | Supabase | Postgres, edge functions and cron in one free-tier project. Its network reaches the data providers ours can't. |
-| Prices, all timeframes | Yahoo chart API | No key, no signup. Hourly, daily and full listing history from one endpoint. Unofficial, so every run is logged. |
+| Prices, equities | Polygon / massive.com, Stocks Starter | $29/month. Keyed, published limits, unlimited calls, five years of history. Replaced a keyless endpoint that blocked our egress IP permanently after a single burst — a key identifies us instead of our address, which is the actual lesson. |
+| Index series | FRED (St. Louis Fed) | Free, official, documented. Carries VIX and the 3-month VIX, without which there is no term structure and no "the market is peaking" signal. Daily closes only, which is all these parameters read. |
 | Fundamentals | SEC XBRL | Free, no key, stamped with filing dates — point-in-time, which is what lets us replay a fundamental rule honestly. |
 | Searched columns | Claude web search | Weekly, or on demand for one ticker. Writes value, source, date, fiscal year. Owner-only. |
 | Front end | Next.js on Vercel | A real deployed app reading live from the database, desktop-first. Free tier, stable URL, deploys on push. |
-| Identity & roles | Supabase Auth | **Owner** (triggers refreshes and searches) and **viewer** (read-only), enforced by row-level security so the rules hold even against a direct API call. |
+| Identity & roles | **None in v1** | The page is open and read-only, so there is nothing to authorise. The server reads the database and returns HTML; the browser never queries Postgres, so no read policy is load-bearing and no key reaches a viewer. Identity gets added when something needs to distinguish between people — per-person watchlists, or a manual trigger. Not before. |
 | Daily digest | Resend or Postmark | Sends the morning email from a scheduled function. Free at our volume. The one step outside single-platform tidiness — worth it, because a dashboard you must remember to open is one you stop opening. |
 | Code | GitHub | Schema, rules, ingest and frontend in one repo. |
 
@@ -295,7 +323,11 @@ Deliberately outside all six, and therefore absent: ownership and flows (insider
 
 ### On the hourly series
 
-We hold **two years of hourly bars**, not three months — Yahoo returns roughly 3,500 per ticker back to September 2024, and storing them costs nothing. The *reported* parameter is the standard 3-month hourly RSI; the extra depth means later trend work needs no re-fetch, and the Wilder smoothing gets proper warm-up rather than starting cold inside the display window.
+Hourly is the one timeframe that cannot simply be fetched, and the reason is worth stating because it looks like an easy column.
+
+The vendor publishes hour aggregates aligned to **clock hours**, including extended-hours trading. TradingView — the reference every number in this system is anchored to — aligns its 1-hour bars to the **09:30 session open** and excludes extended hours. Those are different bars, so they produce different RSI values. Hourly RSI is read against a 30/70 threshold, and bar alignment moves a value across a threshold.
+
+So hourly bars are **built, not fetched**: minute aggregates rolled up into session-aligned hours. The depth is worth taking generously while we are there, so the Wilder smoothing warms up long before the window we display rather than starting cold inside it. Until that lands the column is absent, which is the honest state — a clock-hour RSI labelled as an hourly RSI would be the exact failure this project spends most of its effort avoiding.
 
 ### How we know the numbers are right
 
@@ -403,7 +435,7 @@ Each data requirement was tested against the live endpoint rather than assumed. 
 
 **✅ Hourly bars, two years deep.** True hourly granularity, keyless — roughly 3,500 bars per ticker back to September 2024. An earlier draft claimed hourly history was capped at three months; that was wrong, and tested. We store the full two years and report the standard 3-month hourly RSI from it.
 
-**✅ Full listing history for all-time high and low.** Back to first trade — 1984 for Micron, 1980 for Intel. Returned at quarterly resolution, but each candle carries its own high and low, so the extreme is *exact*, not approximated. **Caveat:** split- and dividend-adjusted, so an adjusted all-time high won't match the nominal price anyone remembers. Label the column as adjusted.
+**⚠️ Full listing history for all-time high and low — no longer true, and the reason matters.** This was checked against the keyless vendor we have since abandoned (v2, and decision 0019). The current plan carries **five years**. INTC, QCOM and GE all peaked in 2000 and sit outside it, so the parameter measures the highest price *we hold*, is named `pct_off_high_stored` for exactly that reason, and must never be presented as an all-time figure. A one-time deep backfill would fix it and is not built. The original caveat still stands for whatever we do hold: prices are split-adjusted, so a historical high will not match the nominal number anyone remembers.
 
 **✅ Point-in-time fundamentals.** SEC XBRL returns as-reported figures stamped with the date each became public. That's what makes a fundamental replay honest.
 
@@ -421,7 +453,7 @@ Phase 1 gets twenty-six parameters in front of us reliably, shaded against norms
 
 A named condition over one or more parameters that we want to be told about:
 
-- *"MU pulls back"* — gap to all-time high greater than 25% **and** weekly RSI below 45
+- *"MU pulls back"* — gap to its stored high greater than 25% **and** weekly RSI below 45
 - *"Semis oversold"* — daily RSI below 30 **and** price above the 200-week SMA, across all semiconductor names
 - *"Cheap against the street"* — weekly RSI below 35 **and** more than 20% below analyst target
 - *"Getting stretched"* — weekly RSI above 65 **and** trailing P/E percentile above the 80th
@@ -438,7 +470,7 @@ A rule that fires every day is a broken rule, not a signal. Conditions should be
 | **Composition** | Any number of parameters, combined with AND / OR. |
 | **Naming** | Every rule is named. An unnamed rule is unmaintainable six weeks later, when nobody remembers what it was for. |
 | **Who can create** | Anyone with an account. Rules cost nothing to evaluate, so they don't need the owner-only guardrail. |
-| **Who can trigger a refresh or search** | Owners only. That distinction stays. |
+| **Who can trigger a refresh or search** | Nobody, from the page. v1 has no user-initiated actions at all, so this is a property of the architecture rather than a permission. If Phase 2 wants a manual trigger, it brings an identity model with it. |
 
 ### Backtesting
 
@@ -472,19 +504,52 @@ The tradeoff: between 2a and 2b, rule creation is limited to whoever is comforta
 
 ## 10. Open decisions
 
-**Settled:** no paid data feed — forward P/E and PEG come from Claude search. No score and no ranking in v1; colour carries the scanning load. Relative and Market deepened from one column each to four and three. Extremes measured on intraday highs and lows.
+**Settled since the first draft**, each with its reasoning in `docs/DECISIONS.md`:
+
+- **We do pay for data** — $29/month, and the trigger was concrete rather than aspirational: the 200-week SMA is one of the 26 parameters and could not be computed at all on two years of history. Forward P/E and PEG still come from Claude search; no feed sells us those at a price worth paying.
+- **The dashboard is open, with no login.** About ten readers on their own devices, none of whom should need a password for a page of public-market numbers.
+- **No user-led refresh.** We set the schedule.
+- **Norms are compared in the database**, so the grid, the digest and the future rule engine share one definition of "outside normal" and history stays queryable.
+- **No score and no ranking in v1**; colour carries the scanning load.
+- **Extremes measured on intraday highs and lows**, over stored history, labelled with the window they actually cover.
+- **`rs_vs_sox` dropped.** No free source carries the PHLX Semiconductor Index, and a proxy ETF would have meant reporting one thing under another thing's name.
 
 Still open:
 
-1. **How many tickers?** 36 is comfortable. Past roughly 60 the hourly pull and free-tier limits start to matter, and the page stops being scannable in a minute.
+1. **How many tickers?** 36 is comfortable and the page stays scannable in a minute. The technical ceiling turned out to be far higher than assumed — a few hundred names fit inside one scheduled run — so this is now a **legibility** question, not a capacity one. The likely answer is sector ETFs and a broader universe, which is a different product shape and deserves its own decision.
+2. **Sector exposure: real indices, or the ETFs that track them?** ETFs are covered by the plan we already pay for, carry full history, and are the things one can actually buy. They are also not the indices — so if we use them the parameter must be named for the ETF. Naming it otherwise is the failure mode this whole document keeps circling.
+3. **NYMO, and whether we can honestly have it.** No retail feed sells the McClellan Oscillator as data. It can be computed from whole-market advance/decline counts, but the published version counts *all* NYSE issues — preferreds, closed-end funds, ADRs — so a version over our own filtered universe is a near-neighbour that diverges exactly at the extremes one would want to trust it at. Either we compute it and name it ours, or we do without.
+4. **Does the searched column survive contact with reality?** Forward P/E scraped weekly may prove too inconsistent between sources to be worth the column width. Give it a month, then keep it, tighten the sources, or drop it.
+5. **Which columns, if any, want intraday updates?** "Some of them" is not yet a list, and the list determines how many clocks exist. Worth answering only after we have looked at the daily grid for a while.
+6. **The eight fundamental definitions.** GAAP versus non-GAAP, which EBITDA, which invested capital, and so on — listed in `docs/DEFINITIONS.md` §7. These are the largest divergence from what consumer apps show, and each needs a judgment call before any of that code is written.
+7. **What breaks first?** The keyless endpoint that was the obvious answer is gone, along with the risk. The honest candidates now are a vendor changing a response shape without notice, and the scheduled run failing quietly on a day nobody looks. The second is the one we have built for.
 
-2. **How often should the hourly series refresh?** Proposed twice a day, midday and close. Every market hour is affordable (280 requests/day) but probably pointless for a tool we open in the morning.
+---
 
-3. **Does the searched column survive contact with reality?** Forward P/E scraped weekly may prove too inconsistent between sources to be worth the column width. Give it a month, then keep it, tighten the sources, or drop it.
+## Revision history
 
-4. **How do we onboard a third viewer?** Roles are owner and viewer, but we haven't decided whether viewers are invited individually or anyone with the link can read.
+Git holds the full diff; this is the summary of what a reader of the previous version would find
+changed. Every entry has its reasoning in `docs/DECISIONS.md`.
 
-5. **What breaks first?** Most likely the unofficial price endpoint changing shape without warning. The nightly smoke test tells us fast; the question is whether we want a fallback source ready or are content to fix it when it happens.
+### v2 — 13 September 2026
+
+| Changed | Was | Now |
+|---|---|---|
+| **Price source** | Yahoo chart API, keyless and free | **Polygon / massive.com Stocks Starter, $29/month** — the keyless endpoint blocked our egress IP permanently after one burst of requests. Index series moved to **FRED**. |
+| **History depth** | "Full listing history", so a true all-time high | **Five years.** INTC, QCOM and GE peaked in 2000 and sit outside it, so the parameter is named for the window it covers. The purchase was triggered by the 200-week SMA being uncomputable on two years. |
+| **Clocks** | Four — hourly, daily, SEC-check, weekly | **One**, after the close on weekdays, plus a separate rebuild. More arrive with the parameters that need them. |
+| **Refresh** | A "Refresh now" button with queueing, cooldowns and a global daily cap | **None.** The schedule is the only path. Staleness is stated on the page instead. |
+| **Identity** | Owner and viewer roles enforced by row-level security | **No login.** The page is open and read-only; the server reads the database and the browser never touches it. |
+| **Readers** | Two | **About ten**, on their own devices. |
+| **Norms** | Editable config | Still editable config, but now **synced to the database and compared there**, so the grid, the digest and the rule engine cannot drift apart. |
+| **Hourly RSI** | Available from the price feed | **Built, not fetched** — session-aligned bars rolled from minute data, because clock-hour bars are different bars and hourly RSI is read against a threshold. |
+| **`rs_vs_sox`** | A parameter | **Dropped.** No free source for the index, and a proxy would have meant mislabelling. |
+| **`pct_off_ath`** | The norm's name | **`pct_off_high_stored`** — norms match parameters by name, so the old key would have coloured nothing, silently and forever. |
+
+### v1 — 17 August 2026
+
+First draft. Original scope: 26 parameters × 40 tickers, four clocks, keyless free data, two roles,
+a manual refresh trigger.
 
 ---
 

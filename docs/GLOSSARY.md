@@ -9,11 +9,11 @@ Shared vocabulary. Cheap file; it stops two people building two meanings for one
 | **Rule** (Phase 2) | A named condition over one or more parameters that we want to be alerted on. |
 | **Signal** | One firing of a rule on one ticker on one date. |
 | **Episode** | A deduplicated run of consecutive signals. A rule firing 60 days straight is ~1 episode, not 60 — use episodes when judging sample size. |
-| **Clock** | One of the four refresh schedules: hourly, daily, SEC-check, weekly. |
+| **Clock** | A refresh schedule. v1 runs **one** — after the close on weekdays — plus a separate rebuild. Hourly, SEC-check and weekly clocks arrive with the parameters that need them. |
 | **Baseline** | Buying any watchlist name on any random day over the test window. The bar a backtest must beat. |
 | **Edge** | A rule's average forward return minus the baseline's, at the same horizon. |
 | **Searched column** | A value obtained by Claude web search, not an API. Displayed with provenance; usable as a rule filter; never a trigger; not backtestable. |
-| **Owner / viewer** | Owner can trigger refreshes and searches. Viewer reads only. Enforced by RLS. |
+| **Owner / viewer** | ~~Two roles enforced by RLS.~~ **Not in v1** — the dashboard is open with no login and has no user-initiated actions, so there is nothing to authorise (PROPOSAL §4). Kept because Phase 2 may reintroduce it; if it does, that is the reason to add identity, not the other way round. |
 | **Completed week** | The last fully-closed weekly bar. All weekly parameters read this, never the current partial week. |
 | **Warm-up floor** | The minimum bars before a recursive indicator stops reflecting its seed value. Below it, suppress the number rather than showing it. Floors are listed in `DEFINITIONS.md` §4 — **not** `CONSTRAINTS.md`, which is about the outside world. |
 | **Golden value** | A known-correct figure for a specific ticker and date, committed as a test fixture. Catches the 'plausible but wrong' errors that invariant checks miss. |

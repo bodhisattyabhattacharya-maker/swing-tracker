@@ -299,3 +299,28 @@ bounds preserved as one-sided.
 **Renamed:** `pct_off_ath` → `pct_off_high_stored` in norms.yml. Norms match parameters by name, so
 the old key matched nothing and would have coloured nothing, silently.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Documentation brought level with the build; PROPOSAL v2
+**What:** a docs-only pass so the written product matches the built one. `docs/PROPOSAL.md` rewritten
+and versioned (v2, with a revision-history table), plus corrections in `GLOSSARY.md`,
+`ONBOARDING.md` and `CLAUDE.md`.
+**Why now:** PROPOSAL is the file ONBOARDING gives every new session 20 minutes to read, and it
+still described four clocks, a "Refresh now" button, two RLS-enforced roles, keyless Yahoo data and
+a true all-time high. None of those exist. The contradictions were being found one at a time by
+whoever tripped over them, which is the expensive way.
+**What changed in the docs, not the code:** one clock rather than four; no user-led refresh and no
+login, with the staleness stamp and banner named as the compensating control rather than as polish;
+Polygon and FRED in the stack table with the reason the previous vendor was abandoned; five years of
+history and what that means for the extremes columns; norms compared in the database; hourly bars
+built from minute aggregates rather than fetched, and why clock-hour bars are a different thing;
+`rs_vs_sox` and `pct_off_ath` recorded as gone and renamed. Open decisions rewritten — the ticker
+ceiling turns out to be a legibility question rather than a capacity one, and three genuinely new
+ones are listed (sector ETFs versus indices, whether NYMO can be had honestly, which columns want
+intraday).
+**Architecture impact:** none. This is the paper trail catching up, which decision 0024 makes an
+explicit practice — PROPOSAL is versioned, not frozen.
+**Verified by:** every removed concept was grepped out of the docs tree rather than assumed gone —
+"Refresh now", "four clocks", owner/viewer roles — and the two survivors in `GLOSSARY.md` were the
+only real hits, both now corrected rather than deleted. ONBOARDING gained two comprehension
+questions covering exactly the assumptions a reader of v1 would otherwise import.
+**By:** Bodhi + Claude
