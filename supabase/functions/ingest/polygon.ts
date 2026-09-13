@@ -9,13 +9,18 @@
  * API cannot do that to us - the key identifies us, not the IP - and the free plan's limits are
  * published rather than guessed at.
  *
- * PLAN LIMITS on the free (Basic) plan, from the published pricing page:
- *   - 5 requests per minute. Hence minIntervalMs = 12500 (4.8/min, deliberately under).
- *   - 2 years of history. `full` therefore means 2 years, NOT all time - see the ATH note below.
- *   - Minute and day aggregates; 15-minute-delayed or EOD data, which is all an end-of-day
- *     tracker needs.
- *   Upgrading to Starter ($29) makes calls unlimited and history 5 years; only the two
- *   constants below change.
+ * PLAN LIMITS on the Stocks Starter plan ($29/month, subscribed 2026-09-13):
+ *   - **Unlimited** API calls. Pacing is now a courtesy, not a constraint - see MIN_INTERVAL_MS.
+ *   - **5 years** of history. `full` therefore means ~5 years, still NOT all time - see the ATH
+ *     note below, which the upgrade shortens but does not remove.
+ *   - Minute and day aggregates, 15-minute delayed, which is irrelevant to an end-of-day tracker.
+ *   - Flat files / S3 bulk access included. NOT used yet: at 36 symbols the per-symbol request
+ *     loop is fine. It becomes the right answer at ~200 symbols, where the loop is what breaks.
+ *
+ * We were on the free (Basic) plan until 2026-09-13: 5 requests/minute and 2 years of history.
+ * The old header predicted that upgrading would change "only the two constants below". It did -
+ * exactly two constants and two tests. Worth noting because that prediction was the whole point
+ * of putting the plan's limits in named constants instead of inline numbers.
  *
  * BASIS: `adjusted=true` adjusts for SPLITS ONLY - "We support historical market data that is
  * adjusted for splits, but not dividends" (vendor knowledge base, 2026-09-13). That is the same
@@ -23,10 +28,11 @@
  * computed on, and it is TradingView's default chart basis. So `close` is comparable across the
  * provider switch and `adj_close` is left null rather than filled with a lie.
  *
- * ALL-TIME HIGH: two years of history cannot produce a true all-time high. For most of this
- * watchlist the high is recent and inside the window, but INTC, QCOM and GE peaked in 2000.
- * `% off ATH` is therefore bounded by what we store until a deep one-time backfill lands -
- * flagged in DEFINITIONS.md rather than quietly reported as an all-time figure.
+ * ALL-TIME HIGH: five years of history still cannot produce a true all-time high. INTC, QCOM and
+ * GE peaked in 2000, outside every tier we would plausibly buy. `% off ATH` remains bounded by
+ * what we store, the column is still named `pct_off_high_stored`, and DEFINITIONS.md still says
+ * so. The upgrade moved the bound from 2 years to 5; it did not remove it, and the naming must
+ * not drift into implying otherwise.
  *
  * VOLUME is a FLOAT in Polygon's response - MU came back with `v: 25426639.075335`, which is
  * fractional share volume aggregated up. `daily_bars.volume` is `bigint`, so it must be rounded
@@ -47,11 +53,26 @@ export const POLYGON_SOURCE = "polygon-aggs";
 
 const HOST = "https://api.polygon.io";
 
-/** 5 req/min published, so 12.5 s between requests keeps us at 4.8/min with margin. */
-const MIN_INTERVAL_MS = 12_500;
+/**
+ * Starter publishes "unlimited" API calls, so this is no longer a rate limit - it is deliberate
+ * politeness. 200 ms is 5 requests/second, which keeps a 36-symbol sweep at 7 s and even a
+ * 200-symbol sweep at 40 s, both inside the edge function's 150 s wall clock.
+ *
+ * NOT zero, and not to be "optimised" to zero. "Unlimited" is a billing statement, not a promise
+ * about burst behaviour, and finding out empirically is precisely how the Yahoo pipeline died:
+ * 90 requests in 6.9 seconds earned an IP block that was still in force 4.5 hours later
+ * (INCIDENTS.md 2026-09-13, decision 0019). There is nothing to gain from going faster than this
+ * and a whole provider to lose.
+ */
+const MIN_INTERVAL_MS = 200;
 
-/** Free plan ceiling is 2 years; 720 days leaves room for the window being inclusive. */
-const FULL_DAYS = 720;
+/**
+ * Starter ceiling is 5 years (1826 days). 1800 leaves 26 days of margin, because asking for more
+ * than the plan allows may be rejected - or worse, silently truncated, which would look like a
+ * short history rather than a rejected request. Verify the depth from the earliest stored bar,
+ * never from the billing page.
+ */
+const FULL_DAYS = 1800;
 
 /** Incremental covers a missed week of scheduled runs several times over. */
 const INCREMENTAL_DAYS = 35;

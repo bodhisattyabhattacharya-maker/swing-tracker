@@ -60,7 +60,7 @@ export interface BarProvider {
    *
    * This exists because pacing is a property of the PROVIDER, not of the ingest loop. Yahoo had
    * no published limit and punished us for guessing (INCIDENTS.md 2026-09-13); Polygon's free
-   * plan publishes 5 requests/minute, so the number below is derived from a documented figure
+   * plan publishes its limit, so the number below is derived from a documented figure
    * rather than a hunch. A provider that raises its limit changes this one line.
    */
   readonly minIntervalMs: number;
@@ -88,4 +88,42 @@ export class RateLimitError extends Error {
     super(`${provider}/${symbol}: rate limited (HTTP 429) - aborting run`);
     this.name = "RateLimitError";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Per-run caps.
+//
+// These live here rather than in index.ts for two reasons. One: index.ts calls `Deno.serve` at
+// module top level, so importing anything from it inside a test starts a real HTTP listener and
+// leaks it. Two: this file already owns `minIntervalMs`, so "how fast may we go" and "how much may
+// one run do" end up in the same place instead of two.
+//
+// The numbers come from the edge function's 150 s wall clock, NOT from a rate limit - Stocks
+// Starter publishes unlimited calls (2026-09-13). See the header of index.ts.
+// ---------------------------------------------------------------------------
+
+/** 35 days is ~24 bars per symbol, so the whole watchlist fits one run, with room for growth. */
+const DEFAULT_LIMIT_INCREMENTAL = 45;
+
+/**
+ * A full fetch is ~1250 bars per symbol at roughly 2-3 s each, so 15 is about 40 s. The margin
+ * under 150 s is deliberately generous: a run killed by the wall clock loses every per-symbol
+ * error it had collected, which is how the first live attempt became an unexplainable "504".
+ */
+const DEFAULT_LIMIT_FULL = 15;
+
+/**
+ * Pure: how many symbols this run may fetch. An explicit `?limit=` always wins; junk falls back to
+ * the default rather than to zero, because a limit of zero fetches nothing and looks like success.
+ *
+ * Exported so a test pins the intent. The regression being guarded against is someone collapsing
+ * the two defaults into one, which either throttles every routine refresh or gets a backfill
+ * killed halfway.
+ */
+export function planLimit(forceFull: boolean, explicit: string | null): number {
+  if (explicit !== null && explicit !== "") {
+    const n = Number(explicit);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return forceFull ? DEFAULT_LIMIT_FULL : DEFAULT_LIMIT_INCREMENTAL;
 }

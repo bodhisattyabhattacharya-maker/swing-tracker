@@ -19,7 +19,9 @@ Evidence and dates in `docs/CONSTRAINTS.md`; formulas in `docs/DEFINITIONS.md`.
    still `429` after 4.5 hours of silence and on a second host. Keyless Yahoo is not an option
    from a shared cloud IP — decision 0019, INCIDENTS.md 2026-09-13.
 3. **Prices come from Polygon (now massive.com), indices from FRED.** Both keyed, both with
-   published limits. Polygon free: 5 requests/minute and 2 years of history, so a backfill runs
+   published limits. Polygon **Stocks Starter** ($29/mo since 2026-09-13): unlimited calls and
+   5 years of history. The binding constraint is now the edge function's 150 s wall clock, not a
+   rate limit. "% off all-time high" is still bounded by stored history, so a backfill runs
    in batches and "% off all-time high" is bounded by what we store.
 4. **SEC XBRL works keyless**, stamped with filing dates, so genuinely point-in-time. Needs a
    User-Agent with a contact email.

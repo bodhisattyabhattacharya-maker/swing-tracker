@@ -17,15 +17,30 @@
  *          would otherwise deactivate every ticker.
  *
  * WHY THIS RUNS IN BATCHES - the thing to understand before "fixing" the limit:
- *   Polygon's free plan allows 5 requests/minute, so each equity costs 12.5 s of wall clock and
- *   an edge function does not live long enough to walk 36 of them. One run therefore fetches
- *   `limit` symbols and lists the rest in `deferred`; the next run picks them up, because a
- *   symbol with no bars still qualifies for the automatic full catch-up. Four runs cover the
- *   watchlist. Raising `limit` past ~11 does not go faster, it just gets the run killed halfway.
- *   Upgrading to Polygon Starter makes calls unlimited and this whole batching story goes away.
+ *   Until 2026-09-13 the binding constraint was the rate limit: 5 requests/minute meant 12.5 s of
+ *   wall clock per equity and four runs to cover the watchlist. On Stocks Starter calls are
+ *   unlimited, so the binding constraint is now the edge function's **150 s wall clock** and the
+ *   size of the payload, not politeness.
+ *
+ *   That changes the arithmetic, not the mechanism. A routine incremental run fetches 35 days per
+ *   symbol - small payloads, ~39 symbols, comfortably one run. A `full` run fetches ~1250 bars per
+ *   symbol and costs seconds each, so it still needs slicing. Hence two defaults below rather than
+ *   one: the cost of the work decides the cap, so nobody has to remember to lower it.
  *
  *   Symbols with NO bars are always planned BEFORE symbols that only need a top-up, so a
  *   backfill cannot be starved by routine refreshes. Learned the hard way - INCIDENTS.md.
+ *
+ *   `offset` EXISTS FOR ONE-TIME DEEPENING, and it is deliberately manual. When the plan's history
+ *   depth increases (free 2 years -> Starter 5), every symbol already has bars, so `full=1` marks
+ *   all of them "full" on every run and a sliced run would redo the same first N forever - the
+ *   plan order is stable and nothing distinguishes "already deepened" from "not yet". `offset`
+ *   lets the operator walk the list: `full=1&limit=15`, then `&offset=15`, then `&offset=30`.
+ *
+ *   The rejected alternative was automatic depth detection - "re-fetch any symbol whose earliest
+ *   bar is later than the window allows". It cannot work without recording state, because a
+ *   symbol that simply LISTED later (SNDK, 2025-02-13) looks identical to one not yet deepened,
+ *   and would be re-fetched on every run forever. Recording that state means a schema column for
+ *   a one-time operation. `offset` is three lines and the operator can see what it did.
  *
  *   Not done yet, deliberately: Polygon's GROUPED daily endpoint returns every US ticker for one
  *   date in a single call, which would make the incremental path 1 request instead of 36. Worth
@@ -41,7 +56,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "./auth.ts";
-import { type BarProvider, type Range, RateLimitError } from "./provider.ts";
+import { type BarProvider, planLimit, type Range, RateLimitError } from "./provider.ts";
 import { polygon } from "./polygon.ts";
 import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
@@ -54,7 +69,18 @@ import { fetchWatchlist } from "./watchlist.ts";
 const PROVIDERS: BarProvider[] = [fred, polygon];
 
 const UPSERT_CHUNK = 1000; // PostgREST is happiest under a few thousand rows per call
-const DEFAULT_LIMIT = 10; // see "WHY THIS RUNS IN BATCHES"
+
+/**
+ * Per-run symbol caps, chosen from wall clock rather than from a rate limit - see the header.
+ *
+ * Incremental: 35 days is ~24 bars per symbol, so the whole watchlist fits one run with headroom
+ * for tickers we add later. A routine refresh should never need a second run.
+ *
+ * Full: ~1250 bars per symbol at roughly 2-3 s each. 15 is about 40 s, which leaves real margin
+ * under the 150 s wall clock - and a run killed by the wall clock loses every error record it had
+ * collected, which is why the margin is generous rather than tight.
+ */
+// Per-run caps live in provider.ts alongside minIntervalMs - see planLimit there.
 
 type Scope = "tickers" | "daily" | "hourly" | "all";
 
@@ -193,6 +219,7 @@ async function ingestBars(
   symbols: string[],
   forceFull: boolean,
   limit: number,
+  offset: number,
 ): Promise<SymbolResult> {
   const table = kind === "daily" ? "daily_bars" : "hourly_bars";
   const key = kind === "daily" ? "symbol,d" : "symbol,ts";
@@ -237,6 +264,15 @@ async function ingestBars(
   }
   // Stable partition: everything needing a full backfill, then the cheap top-ups.
   plan.sort((a, b) => (a.range === b.range ? 0 : a.range === "full" ? -1 : 1));
+
+  // Applied AFTER the sort, so `offset` walks the same ordered list every run - which is the only
+  // reason it converges. Skipped symbols are reported as deferred because that is what they are:
+  // not done this run. They are not errors and must not read as success either.
+  if (offset > 0) {
+    for (const p of plan.slice(0, offset)) result.deferred.push(p.symbol);
+    plan.splice(0, offset);
+    console.log(`${kind}: offset ${offset} - skipped ${result.deferred.length} planned symbols`);
+  }
   console.log(
     `${kind}: ${plan.filter((p) => p.range === "full").length} to backfill, ` +
       `${plan.filter((p) => p.range === "incremental").length} to top up, limit ${limit}`,
@@ -318,7 +354,12 @@ Deno.serve(async (req) => {
   }
   const only = url.searchParams.get("symbols")?.split(",").map((s) => s.trim()).filter(Boolean) ?? null;
   const forceFull = url.searchParams.get("full") === "1";
-  const limit = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT);
+  // The default follows the cost of the work: a full backfill is ~50x the payload of a top-up, so
+  // defaulting both to the same number would either throttle routine runs or get a backfill killed
+  // halfway. An explicit ?limit= still overrides.
+  const limit = planLimit(forceFull, url.searchParams.get("limit"));
+  // Skip the first N of the planned work. Only useful for one-time deepening - see the header.
+  const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
   const triggeredBy = url.searchParams.get("by") ?? "schedule";
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -343,7 +384,7 @@ Deno.serve(async (req) => {
     if (scope === "daily" || scope === "all") {
       // Indices included: ^VIX, ^VIX3M and ^GSPC are the market block and relative-strength base.
       const syms = await activeSymbols(sb, only, true);
-      const r = await ingestBars(sb, "daily", syms, forceFull, limit);
+      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset);
       out.daily = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;
@@ -354,7 +395,7 @@ Deno.serve(async (req) => {
       // session-aligned hourly yet, so this currently reports every symbol as skipped - see
       // the HOURLY note in polygon.ts for why that is deliberate rather than broken.
       const syms = await activeSymbols(sb, only, false);
-      const r = await ingestBars(sb, "hourly", syms, forceFull, limit);
+      const r = await ingestBars(sb, "hourly", syms, forceFull, limit, offset);
       out.hourly = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;

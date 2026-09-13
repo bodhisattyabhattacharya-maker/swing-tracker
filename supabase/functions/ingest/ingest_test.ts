@@ -24,7 +24,7 @@ const assertEquals = (a: unknown, b: unknown, msg?: string) => assert.deepEqual(
 const assertThrows = (fn: () => unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
 
-import { RateLimitError } from "./provider.ts";
+import { planLimit, RateLimitError } from "./provider.ts";
 import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import { parseWatchlist } from "./watchlist.ts";
@@ -36,13 +36,15 @@ const FIXED_NOW = new Date("2026-09-13T00:00:00Z");
 // Polygon: URL construction
 // ---------------------------------------------------------------------------
 
-Deno.test("aggsUrl: full range asks for ~2 years of DAY bars, split-adjusted", () => {
+Deno.test("aggsUrl: full range asks for ~5 years of DAY bars, split-adjusted", () => {
   const u = aggsUrl("MU", "full", FIXED_NOW);
   assertEquals(u.includes("/range/1/day/"), true);
   assertEquals(u.includes("adjusted=true"), true);
   assertEquals(u.includes("sort=asc"), true);
-  // 720 days before 2026-09-13, and `to` is tomorrow so today's bar is in the window.
-  assertEquals(u.includes("/2024-09-23/2026-09-14"), true);
+  // 1800 days before 2026-09-13, and `to` is tomorrow so today's bar is in the window.
+  // Pinned as a literal date rather than recomputed: the point of this test is to catch the
+  // window silently changing, and a test that recomputes the expected value cannot do that.
+  assertEquals(u.includes("/2021-10-09/2026-09-14"), true);
   assertEquals(u.includes("apiKey"), false, "the key goes in a header, never the URL");
 });
 
@@ -139,7 +141,7 @@ Deno.test("mapAggs throws on a non-OK status - how a plan restriction arrives", 
   assertThrows(() => mapAggs({ status: "NOT_AUTHORIZED", results: [] }, "MU"), "NOT_AUTHORIZED");
 });
 
-Deno.test("mapAggs accepts DELAYED, which is what the free plan returns", () => {
+Deno.test("mapAggs accepts DELAYED, which is what a 15-minute-delayed plan returns", () => {
   assertEquals(mapAggs({ status: "DELAYED", results: [] }, "MU"), []);
 });
 
@@ -220,11 +222,17 @@ Deno.test("neither provider serves hourly yet, and says so with null not []", as
   assertEquals(await fred.hourly("^VIX", "full"), null);
 });
 
-Deno.test("pacing comes from the provider, derived from its published limit", () => {
-  // Polygon free is 5 req/min; anything under 12000ms would exceed it.
-  assertEquals(polygon.minIntervalMs >= 12_000, true);
-  // FRED allows 120/min; being slower than Polygon would be pointless.
-  assertEquals(fred.minIntervalMs < polygon.minIntervalMs, true);
+Deno.test("pacing comes from the provider, and no provider paces at zero", () => {
+  // Each provider is checked against its OWN published limit. The previous version of this test
+  // asserted fred.minIntervalMs < polygon.minIntervalMs, which was true only because Polygon's
+  // free tier was the slowest thing in the system. On Starter that ordering inverts, and a test
+  // that encodes an accident fails for the wrong reason.
+  //
+  // Polygon Starter publishes unlimited calls, so the only requirement is that we are not
+  // hammering: a floor, not a ceiling. 90 requests in 6.9 s is what killed the Yahoo pipeline.
+  assertEquals(polygon.minIntervalMs >= 100, true, "never pace Polygon faster than 10/second");
+  // FRED publishes 120 requests/minute, i.e. 500ms; we sit well above it out of courtesy.
+  assertEquals(fred.minIntervalMs >= 500, true, "FRED's published limit is 120/min");
 });
 
 // ---------------------------------------------------------------------------
@@ -354,4 +362,27 @@ Deno.test("callerAllowed: exact byte match with the env var passes (non-JWT key 
 
 Deno.test("callerAllowed: no token is refused", () => {
   assertEquals(callerAllowed(null, "anything"), false);
+});
+
+// ---------------------------------------------------------------------------
+// Per-run caps. The rate limit stopped being the constraint on 2026-09-13; the 150 s wall clock
+// and the payload size are. These pin that a full backfill defaults LOWER than a top-up.
+// ---------------------------------------------------------------------------
+
+Deno.test("planLimit: a full backfill defaults lower than a routine top-up", () => {
+  const full = planLimit(true, null);
+  const incremental = planLimit(false, null);
+  assertEquals(full < incremental, true, "a full run costs ~50x the payload of a top-up");
+  // The whole watchlist (39 symbols today) must fit one incremental run, or a routine refresh
+  // silently needs a second call that nothing is scheduled to make.
+  assertEquals(incremental >= 39, true);
+});
+
+Deno.test("planLimit: an explicit limit always wins, and junk falls back", () => {
+  assertEquals(planLimit(true, "7"), 7);
+  assertEquals(planLimit(false, "7"), 7);
+  assertEquals(planLimit(true, ""), planLimit(true, null), "empty is not a limit of zero");
+  assertEquals(planLimit(true, "0"), planLimit(true, null), "zero would fetch nothing forever");
+  assertEquals(planLimit(true, "-5"), planLimit(true, null));
+  assertEquals(planLimit(true, "abc"), planLimit(true, null));
 });
