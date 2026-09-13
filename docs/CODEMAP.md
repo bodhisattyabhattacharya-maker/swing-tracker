@@ -47,7 +47,7 @@ next agent to the wrong file confidently.
 | Path | Holds | Entry point |
 |---|---|---|
 | `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
-| `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. | Oldest first; never edit a merged one |
+| `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. Includes the pg_cron schedule — `select jobname, schedule from cron.job` is the live answer to "what runs when". | Oldest first; never edit a merged one |
 | `supabase/functions/` | Deno edge functions, one directory each. `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces, `planLimit()` caps one run) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js 16 App Router, TypeScript, desktop-first. Only `app/page.tsx` exists: a deployment check that reads no data. The grid is _(planned)_ and blocked on parameter views + read policies. | `app/page.tsx`; Vercel root directory is `web/` |
 | `scripts/` | SQL you paste into the Supabase editor, not code that runs on a schedule. `verify_parameters.sql` — golden values plus invariants, one row per check, `PASS`/`FAIL`/`MISSING`. | Run it after any change to an indicator, and after any ingest |
@@ -67,6 +67,7 @@ next agent to the wrong file confidently.
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
+| Why is the data stale? | `public.ingest_runs` first, then `cron.job_run_details`. A green cron row only means the request was queued. |
 
 ## Invariants that outlive any refactor
 
