@@ -150,7 +150,11 @@ Three consequences are now permanent facts of the system rather than temporary a
 a backfill spans several runs (5 req/min against a wall clock), "% off all-time high" is bounded
 by two years of stored history, and hourly bars are absent until session-aligned rolling lands.
 All three are written where they bite rather than only here.
-**Verified by:** 32 tests pass — URL construction pinned so a wrong window cannot silently
+**Live (2026-09-13):** FRED verified working — 8,049 rows across the three index series, mean bar
+gap 1.44 days, so the VIX term structure is real. Polygon verified reachable and correct, but
+every equity initially failed on a float volume against a `bigint` column (INCIDENTS.md); fixed
+with rounding, plus per-request timeouts and logging that the same incident showed were missing.
+**Verified by:** 34 tests pass — URL construction pinned so a wrong window cannot silently
 return the wrong granularity again, both DST offsets for the trading-date conversion, `"."`
 observations dropped rather than zeroed, `adj_close` never filled from `close`, routing proven
 exhaustive and disjoint, 429 distinguished from a rejected key. `deno check` clean. Config

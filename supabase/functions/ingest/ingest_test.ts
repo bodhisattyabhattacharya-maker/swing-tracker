@@ -106,6 +106,24 @@ Deno.test("mapAggs never fills adj_close from close - Polygon is split-adjusted 
   for (const b of mapAggs(AGGS_OK, "MU")) assertEquals(b.adj_close, null);
 });
 
+Deno.test("mapAggs rounds volume to an integer - Polygon returns it as a float", () => {
+  // The real value that broke the first live run: MU came back with v: 25426639.075335 and
+  // `daily_bars.volume` is bigint, so PostgreSQL rejected the entire batch.
+  // INCIDENTS.md 2026-09-13.
+  const frac = {
+    status: "OK",
+    results: [{ t: Date.UTC(2026, 6, 13, 4), c: 124, v: 25426639.075335 }],
+  };
+  const b = mapAggs(frac, "MU")[0];
+  assertEquals(b.volume, 25426639);
+  assertEquals(Number.isInteger(b.volume), true, "a float here rejects the whole upsert batch");
+});
+
+Deno.test("mapAggs keeps a null volume null rather than rounding it to zero", () => {
+  const none = { status: "OK", results: [{ t: Date.UTC(2026, 6, 13, 4), c: 124 }] };
+  assertEquals(mapAggs(none, "MU")[0].volume, null);
+});
+
 Deno.test("mapAggs treats results:null as zero bars, not an error", () => {
   assertEquals(mapAggs({ status: "OK", results: null }, "THIN"), []);
 });

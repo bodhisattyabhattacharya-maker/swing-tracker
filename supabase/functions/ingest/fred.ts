@@ -31,6 +31,9 @@ export const FRED_SOURCE = "fred";
 const HOST = "https://api.stlouisfed.org";
 const MIN_INTERVAL_MS = 1_000;
 
+/** See polygon.ts: an unanswered request must become an error, not a killed run. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
 /**
  * Watchlist symbol -> FRED series id.
  *
@@ -126,7 +129,10 @@ export const fred: BarProvider = {
 
     // FRED takes the key as a query parameter; it has no header form.
     const url = `${observationsUrl(seriesId, range)}&api_key=${encodeURIComponent(key)}`;
-    const r = await fetch(url, { headers: { Accept: "application/json" } });
+    const r = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (r.status === 429) throw new RateLimitError(FRED_SOURCE, symbol);
     if (r.status === 400) {
       // FRED returns 400 for a bad key or a bad series id, with the reason in the body.

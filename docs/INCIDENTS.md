@@ -89,3 +89,32 @@ then through 4.5 hours, then on `query2.finance.yahoo.com` as well. The endpoint
 and the provider replaced — decision 0019. The lasting lesson is not about pacing: it is that
 an unofficial endpoint can withdraw consent permanently and without recourse, so the thing to
 avoid was depending on one, not merely hitting it too fast.
+
+## 2026-09-13 — every equity rejected: Polygon returns volume as a float
+**Symptom:** first run on the new provider returned `504` and was killed at exactly 150 seconds
+with `finished_at` null, so no per-symbol errors were recorded at all — the only evidence was
+the status code. FRED's three index series had written 8,049 rows correctly; Polygon had written
+nothing. A single-symbol probe (`?scope=daily&symbols=MU&limit=1`) returned in seconds with the
+real cause: `daily_bars upsert: invalid input syntax for type bigint: "25426639.075335"`.
+**Root cause:** Polygon reports aggregate volume as a **float** — fractional share volume summed
+up — and `daily_bars.volume` is `bigint`. PostgreSQL rejects the whole batch, so every equity
+failed at the upsert rather than the fetch. Polygon itself was working perfectly the entire time.
+**Fix:** `Math.round()` in `mapAggs`. Rounding rather than widening the column: volume is a share
+count, the only parameter reading it is a ratio against a 50-bar average, and a fraction of a
+share cannot move it. Two tests pin it — the exact failing value, and that a null volume stays
+null rather than rounding to zero.
+**Two other defects the same incident exposed**, both of which made diagnosis harder than the bug:
+- **No per-request timeout.** An unanswered `fetch` hung until the 150 s wall clock killed the
+  run. Now `AbortSignal.timeout(20_000)` on both providers, so a hang becomes a recorded error.
+- **`fetched` was incremented twice** for a symbol that failed after its request — once before
+  the upsert and again in the catch — silently halving each run's budget. Now counted once, at
+  the moment the request is made.
+- **No logging whatsoever.** A killed run left no breadcrumbs; I diagnosed a 504 by arithmetic.
+  Each symbol now logs before its attempt and after its result.
+**Earlier detection:** no fixture could have caught this — the fixture is whatever we believed
+the API returns, and we believed volume was an integer because every other provider reports it
+that way. What *would* have caught it: a one-symbol smoke call before a full run, which cost
+seconds and gave the exact error. That is now the first step in the debug-ingest skill.
+**Still unexplained, honestly:** the 150 s exhaustion. Three FRED series plus a handful of
+failing equities should have completed in well under a minute. The timeout and the logging exist
+precisely so that if it recurs it is diagnosable rather than inferred.

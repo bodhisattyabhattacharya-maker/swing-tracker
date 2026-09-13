@@ -28,6 +28,13 @@
  * `% off ATH` is therefore bounded by what we store until a deep one-time backfill lands -
  * flagged in DEFINITIONS.md rather than quietly reported as an all-time figure.
  *
+ * VOLUME is a FLOAT in Polygon's response - MU came back with `v: 25426639.075335`, which is
+ * fractional share volume aggregated up. `daily_bars.volume` is `bigint`, so it must be rounded
+ * before the upsert or PostgreSQL rejects the whole batch ("invalid input syntax for type
+ * bigint"). Rounding is the right call rather than widening the column: volume is a share count,
+ * the only parameter that reads it is a ratio against a 50-bar average, and a fraction of one
+ * share cannot move it. Verified live 2026-09-13 - INCIDENTS.md.
+ *
  * HOURLY: not implemented here yet, and deliberately. Polygon's hour aggregates align to clock
  * hours and include extended-hours trading; TradingView's 1H bars align to the 09:30 session
  * open and exclude it. Rolling minute aggregates into session-aligned hours is the correct fix
@@ -48,6 +55,14 @@ const FULL_DAYS = 720;
 
 /** Incremental covers a missed week of scheduled runs several times over. */
 const INCREMENTAL_DAYS = 35;
+
+/**
+ * Per-request timeout. Without one, a single unanswered request hangs until the edge function's
+ * 150 s wall clock kills the whole run, taking every symbol's error with it - which is exactly
+ * what happened on the first live attempt. 20 s is generous for a 2-year daily payload; if a
+ * request needs longer than that, something is wrong and we want it recorded, not waited on.
+ */
+const REQUEST_TIMEOUT_MS = 20_000;
 
 /** The fields we read from an aggregate bar. Everything else in the response is ignored. */
 interface Agg {
@@ -132,7 +147,8 @@ export function mapAggs(json: AggsResponse, symbol: string): DailyBar[] {
       close: a.c,
       // Split-adjusted only - see the BASIS note in the file header. Not a missing value.
       adj_close: null,
-      volume: a.v ?? null,
+      // Rounded, not truncated, and never left as a float - see the VOLUME note in the header.
+      volume: a.v == null ? null : Math.round(a.v),
       source: POLYGON_SOURCE,
     });
   }
@@ -162,6 +178,7 @@ export const polygon: BarProvider = {
 
     const r = await fetch(aggsUrl(symbol, range), {
       headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (r.status === 429) throw new RateLimitError(POLYGON_SOURCE, symbol);
     if (r.status === 401 || r.status === 403) {
