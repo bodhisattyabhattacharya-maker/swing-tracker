@@ -51,7 +51,19 @@ const LABELS: Record<string, string> = {
 };
 
 const label = (p: string) => LABELS[p] ?? p;
-const num = (v: number | null, digits = 1) => (v === null ? "—" : v.toFixed(digits));
+/**
+ * TWO decimals, where the grid shows one. Not an inconsistency — a different job.
+ *
+ * The grid displays a value; the digest asserts that a value CROSSED something. At one decimal
+ * place the assertion can contradict itself on screen: on 2026-09-11 QCOM went to -29.99 against a
+ * norm of -30, which rounds to "-30.0 → back inside", and CAT left a -25 norm from -25.0088, which
+ * rounds to "-25.0 → was outside". Both verdicts were correct and both lines read as wrong.
+ *
+ * A reader who doubts one line doubts the whole email, so the digit the claim rests on has to be
+ * visible. The grid keeps one decimal because it is a scan of 360 cells where the extra digit is
+ * noise rather than evidence.
+ */
+const num = (v: number | null, digits = 2) => (v === null ? "—" : v.toFixed(digits));
 
 /**
  * Pure: the whole email as plain text. Exported and pure so the wording is testable without a

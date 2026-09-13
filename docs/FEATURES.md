@@ -400,3 +400,22 @@ than NaN, and an unmapped parameter falls back to its raw name rather than leavi
 2026-09-11 - SNDK and STX moving outside, CAT, MRVL, QCOM and STX coming back in. A plausible daily
 volume, and a mix that shows the bidirectional design working rather than only flagging weakness.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — The digest is scheduled; the system now sends mail
+**What:** `swing-digest` at 23:00 UTC on weekdays, after the 22:30 ingest and the 22:45 rebuild.
+Plus a precision fix: the digest now reports two decimals.
+**Why the precision fix:** the dry run produced two lines that contradicted themselves. QCOM at
+**-29.99** against a -30 norm rendered as "-30.00 → back inside"; CAT leaving a -25 norm from
+**-25.0088** rendered as "-25.0 → was outside". Both verdicts were right and both lines read as
+wrong, which is worse than being wrong - it teaches the reader to distrust the email. Decision 0028.
+**Architecture impact:** this is the first thing in the system that reaches real people on a timer
+and cannot be recalled. The kill switch is one `cron.unschedule` and is written into the migration
+header where someone looking for it in a hurry will find it.
+**Verified by:** the dry run was read end to end against live data before this was written, and it
+matched what the views predicted exactly - 2 out, 4 back in, 36 values across 22 names still
+outside, for the close of 2026-09-11. 8 digest tests still pass with the new precision. The
+schedule itself cannot be verified before it fires; **the first real send is Monday 2026-09-14 at
+23:00 UTC**, and the thing to check afterwards is `ingest_runs` where scope = 'digest', which
+carries Resend's message id on success and the error text on failure - not the cron log, which
+reports success as soon as the request is queued.
+**By:** Bodhi + Claude
