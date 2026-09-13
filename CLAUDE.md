@@ -86,8 +86,12 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 
 Phase 1 (tracker) in progress. Foundation schema applied (`tickers`, `daily_bars`,
 `hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand, now over
-Polygon + FRED (decision 0019). `web/` holds a deployment-check page, not the dashboard. The
-pg_cron schedule, session-aligned hourly bars, parameter views, golden-value harness and the
-grid itself do not exist yet.
+Polygon + FRED (decision 0019), with a full verified daily backfill in place. The **daily**
+parameter layer exists as the `daily_features` matview, checked by
+`scripts/verify_parameters.sql` — but it is a cache that **nothing refreshes yet**, so run
+`refresh materialized view public.daily_features;` after an ingest, or the freshness check will
+tell you off. `web/` holds a deployment-check page, not the dashboard. The pg_cron schedule,
+session-aligned hourly bars, weekly and market-context parameters, cross-sectional ranks, CI
+gating of the golden values, and the grid itself do not exist yet.
 `docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is
 specified, not started.

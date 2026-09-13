@@ -127,6 +127,34 @@ SMAs have no seed and are simply null until the window fills.
 
 ---
 
+### How warm-up is enforced in the implementation
+
+Two different questions hide under the word "warm-up", and `daily_features` answers them
+differently on purpose.
+
+| Question | Threshold | What the view does |
+|---|---|---|
+| **Does the window exist at all?** | 15 bars for RSI(14), 21 for EMA(21), 50 and 200 for the SMAs | The column is `NULL`. There is no value to report. |
+| **Has the seed decayed?** | the table above — **125** bars for RMA(14), **97** for EMA(21) | The value **is** published, and `rsi_daily_seed_ok` / `ema21_seed_ok` is `false`. |
+
+The split matters because the two thresholds are different kinds of thing. The first is a
+definition: a 30-bar average is not an SMA(50). The second is a display judgment: the number is
+computed correctly, it just still remembers where it started, so a cell should not be coloured on
+it (hard constraint 8). Nulling it in the view would throw away a value a backtest may
+legitimately want, and a null cannot be un-nulled.
+
+What is *not* a display judgment is the floor itself. It appears in exactly two places — the table
+above, and two named constants in `supabase/migrations/20260913064000_daily_features.sql` — and
+`scripts/verify_parameters.sql` asserts that the flags agree with those numbers. So a floor that
+changes in one place fails a check instead of drifting into the grid, the digest and the rule
+engine as three different numbers.
+
+**One thing this does not cover:** RSI is null, legitimately, on a genuinely flat 14-bar stretch —
+zero average gain *and* zero average loss, where RSI is undefined. That is why the verify script
+checks "RSI never present before bar 15" but not "RSI always present after bar 15". A halted or
+illiquid name is not a bug.
+
+
 ## 4a. Basis — which price series everything is computed on
 
 **Every price in this system is split-adjusted and NOT dividend-adjusted.** That is one
@@ -210,15 +238,31 @@ Two things this establishes beyond "the numbers still work":
 
 ### Standing checks
 
-- **Golden values.** Still **not** automated. The 2026-09-13 re-verification above was run by
-  hand in SQL, and the figures protect nothing mechanically — a change to indicator code will not
-  fail a build. Wiring this into CI is outstanding work. Do not read this section as a passing
-  test suite.
+- **Golden values.** Now **scripted but not gated.** `scripts/verify_parameters.sql` asserts all
+  four figures above, plus MU's peak intraday high as of the same date, at 1e-3 absolute
+  tolerance — chosen because observed cross-provider agreement is 2.4×10⁻⁵ to 1.5×10⁻⁴ while the
+  error it exists to catch (a plain rolling mean instead of Wilder's) is 9.4 RSI *points* wide.
+  A human still has to run it and read the result; nothing fails a build yet. Progress on the
+  2026-09-13 position, not a substitute for CI. The script reports `MISSING` rather than `PASS`
+  when the row it needs is absent, which is the whole point — a check that silently verifies zero
+  rows is the "successful operation that changed nothing" bug wearing a green tick.
+- **Formula-level verification against an independent reference, 2026-09-13.** The
+  `daily_features` SQL was run against a synthetic 300-bar series in a throwaway PostgreSQL 16
+  instance and compared column by column with a Python implementation written from these
+  definitions: **1,798 values, worst relative error 3.9×10⁻¹⁶, zero null-placement mismatches.**
+  Degenerate series were included deliberately — flat (RSI undefined → null), monotonically rising
+  (RSI exactly 100), monotonically falling (RSI exactly 0), a 10-bar series below every window,
+  and a close-only series shaped like a FRED index (every high/low/volume column null). This is
+  the check that proves the *formulas*; the golden values prove the *basis and the data*. Neither
+  substitutes for the other.
 - **Cross-implementation.** Three implementations have now agreed: the Python reference,
   production SQL over Yahoo data, and production SQL over Polygon data.
-- **Invariants.** Checked by hand on the 2026-09-13 backfill — 0 bars with `high < low`, 0 with a
-  close outside its own range, 0 non-positive closes, 0 incomplete equity rows across 25,729
-  rows. Also not yet automated.
+- **Invariants.** Now in `scripts/verify_parameters.sql` as 21 checks — impossible bars, future
+  dates, RSI range, non-negative volatility, close never outside the running extremes (which is
+  what catches a `range` window frame where `rows` was meant), exact warm-up placement in both
+  directions, seed flags against the floors, per-symbol coverage, and matview freshness. Every one
+  is phrased as "count the rows that violate this", so the expected answer is always zero and a
+  new violation cannot hide inside an average. Still run by a human.
 
 ---
 

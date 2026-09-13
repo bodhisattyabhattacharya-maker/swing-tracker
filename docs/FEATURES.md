@@ -183,3 +183,31 @@ from Yahoo eight days earlier, including the Wilder RSI from a completely differ
 start. DEFINITIONS.md §6 carries the table. Note these checks were run **by hand**; automating
 them is the outstanding piece.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Daily parameter layer, and the first scripted integrity check
+**What:** `daily_features`, a materialised view carrying the daily technical parameters for every
+(symbol, date) we hold — Wilder RSI(14), EMA(21), SMA(50/200) with their percentage positions,
+% off stored high, % above stored low, % off the 252-bar high, 20-day realised volatility, and
+volume ratio — plus `scripts/verify_parameters.sql`, which checks the four MU golden values and 21
+invariants and prints one row per check.
+**How:** the recursive indicators are a PL/pgSQL set-returning function called once per symbol
+(decision 0020); everything else is a window function with `rows` frames. Every date is computed,
+not just the latest, so a backtest is a `WHERE` clause and not a second implementation
+(decision 0002). Seed-decay floors are published as `rsi_daily_seed_ok` / `ema21_seed_ok` rather
+than nulled, so suppression at the display layer reads a boolean instead of re-deriving a floor.
+**Architecture impact:** this is the layer the grid, the digest, the rule engine and the backtester
+all read, and the first three now have something to read. It also introduces a **cache that
+nothing refreshes**: `refresh materialized view public.daily_features` is a hand operation until
+pg_cron lands, and the verify script's freshness check exists to catch a stale one. Still missing
+from the 26: everything weekly, everything cross-sectional (sector ranks, breadth), market context
+(VIX band, term structure), relative strength, hourly RSI and all fundamentals.
+**Verified by:** the SQL was run against a throwaway PostgreSQL 16 instance and compared column by
+column with an independent Python implementation of the same definitions — **1,798 values, worst
+relative error 3.9×10⁻¹⁶, zero null-placement mismatches**, including flat, monotone-up,
+monotone-down, too-short and close-only (FRED-shaped) series. Cross-symbol isolation was proven by
+byte-comparing one symbol's output before and after five others were added. The verify script's
+own `PASS` / `FAIL` / `MISSING` paths were each exercised deliberately, which is how a `to_char`
+format error that only fires on a failing check was found before it could fire on a real one.
+**Not yet verified against production data** — the migration has not merged, so the five golden
+checks currently report `MISSING`, which is the correct answer and not a pass.
+**By:** Bodhi + Claude
