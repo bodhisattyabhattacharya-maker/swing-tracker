@@ -182,11 +182,43 @@ A third implementation — pandas `ewm(alpha=1/14, adjust=False)`, a completely 
 
 **Invariants checked:** RSI within 0–100 across the series; SMA(200) lies between the min and max of its own window; realized volatility non-negative; EMA(21) closer to the latest price than SMA(50) in a trend.
 
+### Cross-provider re-verification, 2026-09-13
+
+The provider changed from Yahoo to Polygon (decision 0019). Rather than assume the figures above
+survived, they were recomputed **in production SQL, from Polygon data**, for the same date:
+
+| Indicator | From Polygon | Golden (from Yahoo, 2026-09-05) | Difference |
+|---|---|---|---|
+| RSI(14) daily, Wilder | 60.146703 | 60.146789 | −8.6×10⁻⁵ |
+| EMA(21) daily | 943.557960 | 943.558105 | −1.45×10⁻⁴ |
+| SMA(50) daily | 938.279500 | 938.279600 | −1.0×10⁻⁴ |
+| SMA(200) daily | 606.479525 | 606.479549 | −2.4×10⁻⁵ |
+
+All four inside 1.5×10⁻⁴, same sign and magnitude — consistent with sub-cent differences in the
+vendors' reported closes, not a difference in method or basis. Independently, Polygon's maximum
+high for MU is **1255**, matching the $1,255.00 all-time high measured from Yahoo on 2026-09-05.
+
+Two things this establishes beyond "the numbers still work":
+
+1. **The basis is genuinely the same.** Both vendors report split-adjusted, dividend-unadjusted
+   prices (§4a). That was the claim that justified the provider swap; it is now measured rather
+   than asserted.
+2. **The warm-up floors in CONSTRAINTS.md are real.** The golden RSI came from a 2,529-bar
+   history; this one from 490 bars, so the Wilder seed started at a completely different point
+   and still converged to the same value. Past the 125-bar RMA floor the seed is gone, exactly as
+   the table predicts. Same for EMA(21) past its 97-bar floor.
+
 ### Standing checks
 
-- **Golden values.** The five figures above **will be** committed as test fixtures when the test harness lands; until then they are recorded here and protect nothing mechanically. Once committed, any change that moves them fails CI.
-- **Cross-implementation.** SQL against the Python reference on every build.
-- **Invariants.** Run on every ingest.
+- **Golden values.** Still **not** automated. The 2026-09-13 re-verification above was run by
+  hand in SQL, and the figures protect nothing mechanically — a change to indicator code will not
+  fail a build. Wiring this into CI is outstanding work. Do not read this section as a passing
+  test suite.
+- **Cross-implementation.** Three implementations have now agreed: the Python reference,
+  production SQL over Yahoo data, and production SQL over Polygon data.
+- **Invariants.** Checked by hand on the 2026-09-13 backfill — 0 bars with `high < low`, 0 with a
+  close outside its own range, 0 non-positive closes, 0 incomplete equity rows across 25,729
+  rows. Also not yet automated.
 
 ---
 

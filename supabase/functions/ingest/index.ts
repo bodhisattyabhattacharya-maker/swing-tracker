@@ -24,6 +24,9 @@
  *   watchlist. Raising `limit` past ~11 does not go faster, it just gets the run killed halfway.
  *   Upgrading to Polygon Starter makes calls unlimited and this whole batching story goes away.
  *
+ *   Symbols with NO bars are always planned BEFORE symbols that only need a top-up, so a
+ *   backfill cannot be starved by routine refreshes. Learned the hard way - INCIDENTS.md.
+ *
  *   Not done yet, deliberately: Polygon's GROUPED daily endpoint returns every US ticker for one
  *   date in a single call, which would make the incremental path 1 request instead of 36. Worth
  *   doing once the per-symbol path is proven - see FEATURES.md.
@@ -72,6 +75,30 @@ function providerFor(symbol: string): BarProvider | null {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Retry a Supabase read once after a short pause.
+ *
+ * PostgREST on this project intermittently returns "Gateway Timeout", or an error with an EMPTY
+ * message, on a perfectly ordinary count or select. It happened four times during the first
+ * backfill and twice it killed an entire run. The project reports ACTIVE_HEALTHY, so this is
+ * flakiness rather than a resource limit - and a read that fails once and succeeds 400 ms later
+ * should not cost us eight symbols.
+ *
+ * Reads only. Nothing here retries a WRITE: an upsert that may have partially applied must not
+ * be blindly repeated, and our upserts are idempotent enough that the next scheduled run fixes
+ * them anyway.
+ */
+async function retryRead<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    const first = e instanceof Error ? e.message : String(e);
+    console.warn(`${what}: first attempt failed (${first || "empty error"}), retrying once`);
+    await sleep(400);
+    return await fn();
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Auth - see auth.ts
@@ -123,22 +150,26 @@ async function syncTickers(sb: SupabaseClient, url?: string) {
 // ---------------------------------------------------------------------------
 
 async function activeSymbols(sb: SupabaseClient, only: string[] | null, indices: boolean) {
-  let q = sb.from("tickers").select("symbol").eq("active", true);
-  if (!indices) q = q.eq("is_index", false);
-  if (only) q = q.in("symbol", only);
-  const { data, error } = await q.order("symbol");
-  if (error) throw new Error(`tickers read: ${error.message}`);
-  return (data ?? []).map((r) => r.symbol as string);
+  return await retryRead("tickers read", async () => {
+    let q = sb.from("tickers").select("symbol").eq("active", true);
+    if (!indices) q = q.eq("is_index", false);
+    if (only) q = q.in("symbol", only);
+    const { data, error } = await q.order("symbol");
+    if (error) throw new Error(`tickers read: ${error.message}`);
+    return (data ?? []).map((r) => r.symbol as string);
+  });
 }
 
 /** True if this symbol has at least one row in `table`. Drives the automatic full catch-up. */
 async function hasBars(sb: SupabaseClient, table: "daily_bars" | "hourly_bars", symbol: string) {
-  const { count, error } = await sb
-    .from(table)
-    .select("symbol", { count: "exact", head: true })
-    .eq("symbol", symbol);
-  if (error) throw new Error(`${table} count ${symbol}: ${error.message}`);
-  return (count ?? 0) > 0;
+  return await retryRead(`${table} count ${symbol}`, async () => {
+    const { count, error } = await sb
+      .from(table)
+      .select("symbol", { count: "exact", head: true })
+      .eq("symbol", symbol);
+    if (error) throw new Error(`${table} count ${symbol}: ${error.message}`);
+    return (count ?? 0) > 0;
+  });
 }
 
 async function upsertChunked(sb: SupabaseClient, table: string, rows: unknown[], onConflict: string) {
@@ -177,20 +208,46 @@ async function ingestBars(
   const lastRequestAt = new Map<string, number>();
   let fetched = 0;
 
+  // ---------------------------------------------------------------------------
+  // PLAN BEFORE FETCHING, and put the symbols that have NO bars first.
+  //
+  // This ordering is the whole point. The first backfill walked symbols alphabetically and spent
+  // its entire budget re-fetching five weeks of data for names that were already complete, while
+  // 28 symbols with nothing at all sat in `deferred` run after run. It would have looped forever.
+  // A symbol needing 494 bars and a symbol needing 24 must not compete on equal footing.
+  //
+  // Deciding the range up front also means a flaky count query is handled HERE, where a failure
+  // costs one symbol, rather than inside the loop where it aborted the run twice tonight.
+  // ---------------------------------------------------------------------------
+  const plan: Array<{ symbol: string; provider: BarProvider; range: Range }> = [];
   for (const symbol of symbols) {
     const provider = providerFor(symbol);
     if (!provider) {
       result.errors[symbol] = "no provider serves this symbol";
       continue;
     }
+    try {
+      const range: Range = forceFull || !(await hasBars(sb, table, symbol)) ? "full" : "incremental";
+      plan.push({ symbol, provider, range });
+    } catch (e) {
+      // One symbol's count failed even after a retry. Record it and carry on; it stays eligible
+      // for a full catch-up next run because it still has no bars.
+      result.errors[symbol] = e instanceof Error ? e.message : String(e);
+    }
+  }
+  // Stable partition: everything needing a full backfill, then the cheap top-ups.
+  plan.sort((a, b) => (a.range === b.range ? 0 : a.range === "full" ? -1 : 1));
+  console.log(
+    `${kind}: ${plan.filter((p) => p.range === "full").length} to backfill, ` +
+      `${plan.filter((p) => p.range === "incremental").length} to top up, limit ${limit}`,
+  );
 
+  for (const { symbol, provider, range } of plan) {
     // The per-run cap exists because of wall clock, not politeness - see the header.
     if (fetched >= limit) {
       result.deferred.push(symbol);
       continue;
     }
-
-    const range: Range = forceFull || !(await hasBars(sb, table, symbol)) ? "full" : "incremental";
 
     const since = Date.now() - (lastRequestAt.get(provider.name) ?? 0);
     if (since < provider.minIntervalMs) await sleep(provider.minIntervalMs - since);

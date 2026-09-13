@@ -161,3 +161,25 @@ exhaustive and disjoint, 429 distinguished from a rejected key. `deno check` cle
 validates at 36 tickers, 3 indices, 16 norms. **Not yet verified live** — no successful fetch
 through either provider has happened at the time of writing.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — Full daily backfill complete and independently verified
+**What:** every active symbol now has daily bars — 36 equities from Polygon and 3 index series
+from FRED, 25,729 rows. Plus three robustness fixes to the ingest loop and a migration closing a
+publicly-callable SECURITY DEFINER function.
+**How:** the backfill ran in batches against Polygon's 5 requests/minute limit. Equities carry
+494 bars each (2024-09-23 → 2026-09-11) except SNDK at 390, which is correct — it only listed on
+2025-02-13 after the WDC spin-off. FRED series carry ~10 years. The loop now plans before
+fetching and puts symbols needing a full backfill ahead of routine top-ups, retries flaky reads
+once, and keeps a failing count query to one symbol instead of the whole run.
+**Architecture impact:** the data layer is done and trustworthy, which unblocks parameter views.
+The `limit`/`deferred` batching is permanent while we are on the free plan, and now self-driving
+rather than needing a hand-picked symbol list. Steady-state daily refresh still needs ~5 runs for
+39 symbols, which is what the pg_cron schedule is for.
+**Verified by:** 36/36 equities and 3/3 indices present with the latest bar; **0** impossible bars
+(`high < low`, close outside its range), **0** incomplete equity rows, **0** non-positive closes
+across 25,729 rows; mean bar spacing 1.46 days with a maximum of 4 (long weekends). And the real
+test — all four MU golden values reproduced from Polygon data within 1.5×10⁻⁴ of figures derived
+from Yahoo eight days earlier, including the Wilder RSI from a completely different recursion
+start. DEFINITIONS.md §6 carries the table. Note these checks were run **by hand**; automating
+them is the outstanding piece.
+**By:** Bodhi + Claude
