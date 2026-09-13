@@ -245,3 +245,30 @@ now checked against its own published limit. **Not yet verified against live dat
 re-backfill has not run, so no symbol has more than two years of history yet, and the 200-week SMA
 is still null everywhere.
 **By:** Bodhi + Claude
+
+## 2026-09-13 — The daily clock: the pipeline now runs itself
+**What:** two pg_cron jobs — `swing-ingest-daily` (22:30 UTC, weekdays) and
+`swing-refresh-features` (22:45 UTC, weekdays, `refresh materialized view concurrently`). With no
+user-led refresh in v1, these are the entire data pipeline. Plus the 5-year re-backfill landed:
+**50,402 daily bars across 39 symbols**, up from 25,729.
+**How:** one fixed UTC schedule rather than DST-aware duplicates — 22:30 UTC is 18:30 ET in summer
+and 17:30 ET in winter, both after the close plus the 15-minute vendor delay, which is the property
+that actually matters. The refresh is a separate job so a failed ingest and a stale matview are two
+visible failures rather than one silence. Decision 0022.
+**Architecture impact:** the last two manual steps are gone. What replaces them is a **new class of
+silent failure** — pg_net's `http_post` is fire-and-forget, so a green `cron.job_run_details` row
+means "we queued a request", not "the data is good". `ingest_runs` and the freshness check are the
+real signals, and this is why the grid's freshness stamp and staleness banner are requirements
+rather than polish.
+**Verified by:** the migration was applied against a stub `cron`/`net`/`vault` schema on a local
+PostgreSQL 16 instance — it parses, registers exactly two jobs with the intended schedules, and
+**re-applying it leaves two jobs, not four**. The refresh job body was extracted from the stored
+command and executed for real. The stored ingest command was checked to contain a Vault lookup and
+no secret value, which matters because this repo is public and `cron.job` is world-readable inside
+the database. What a stub cannot prove is that pg_cron accepts these schedule strings and fires at
+the right minute; **that is confirmed only by watching the first real run**.
+**Re-backfill results:** all 36 equities current to 2026-09-11, 0 impossible bars, 0 non-positive
+closes. 32 of 36 reach 2021-10-11 — the other four listed later (SNDK 2025-02-24, ALAB 2024-03-20,
+ARM 2023-09-14, CRDO 2022-01-27). **33 of 36 now have 200+ weekly bars, up from zero**, so the
+200-week SMA is unblocked. All 24 verification checks pass, including all five goldens.
+**By:** Bodhi + Claude

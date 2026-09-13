@@ -123,11 +123,18 @@ A recursive indicator's seed decays as `(1−α)^bars`. Below the bar counts her
 
 SMAs have no seed and are simply null until the window fills.
 
-**Live consequence on the current watchlist:** every name clears the daily thresholds. On weekly bars, measured 2026-09-13 against what is actually stored: **SNDK has 81 weekly bars against the 97 needed for a weekly 21 EMA**, and is the only name that fails. 35 of 36 clear it — but only just, because the two-year window caps weekly history at **103 bars** for every name.
+**Live consequence on the current watchlist.** Every name clears the daily thresholds.
 
-An earlier version of this line quoted ALAB at 129 weekly bars and ARM at 156. Those figures came from the deep Yahoo prototype and were **wrong for the current dataset** — 103 was the ceiling. Corrected rather than deleted, because a confidently wrong number is the kind of thing a later session builds on.
+Weekly bar counts depend entirely on the data plan, so they are stamped with it. **Any figure here without a plan and a date attached should be distrusted** — this paragraph has now been wrong twice in one day for exactly that reason.
 
-**Two consequences of the 103-bar ceiling**, both real today: the **200-week SMA cannot be computed at all** (zero of 36 names have 200 weekly bars), and the weekly recursive indicators reproduce the §6 golden values only to ~4×10⁻⁴ rather than the ~1×10⁻⁵ the daily ones manage — residual seed weight after 102 bars is 4.4×10⁻⁴ for EMA(21) and 1.6×10⁻³ for RMA(14). The 2026-09-13 upgrade to a 5-year plan lifts the ceiling to ~260 weeks once a re-backfill runs, which resolves both.
+| Measured | Plan | Weekly bars available | Names with 200+ weekly bars |
+|---|---|---|---|
+| 2026-09-13, before the re-backfill | Polygon free, 2 years | **103 maximum**, for every name | **0 of 36** |
+| 2026-09-13, after the re-backfill | Polygon Stocks Starter, 5 years | ~256 for a name listed throughout | **33 of 36** |
+
+So the **200-week SMA is computable** as of the re-backfill. The three names short of it are short for a real reason, not a data gap: **ARM** (listed 2023-09-14, ~156 weekly bars), **ALAB** (2024-03-20, ~129) and **SNDK** (2025-02-24, ~81). SNDK is also the only name that fails the 97-bar seed floor for the weekly 21 EMA, and will until roughly March 2027.
+
+A note on a correction that was itself corrected: this line originally quoted ALAB at 129 and ARM at 156 from the deep Yahoo prototype. Mid-day it was "corrected" to say the ceiling was 103 for every name — true at that moment, on two years of history. The re-backfill made the original figures right again. The lesson is not that either number was careless; it is that a bar count is a fact about a **subscription**, not about a company, and writing it down without the plan attached guarantees it goes stale invisibly.
 
 ---
 
@@ -246,7 +253,16 @@ Two things this establishes beyond "the numbers still work":
   four figures above, plus MU's peak intraday high as of the same date, at 1e-3 absolute
   tolerance — chosen because observed cross-provider agreement is 2.4×10⁻⁵ to 1.5×10⁻⁴ while the
   error it exists to catch (a plain rolling mean instead of Wilder's) is 9.4 RSI *points* wide.
-  A human still has to run it and read the result; nothing fails a build yet. Progress on the
+  A human still has to run it and read the result; nothing fails a build yet.
+
+  **The residual difference is a floor, not convergence error.** Re-verified 2026-09-13 after the
+  history behind each value went from 494 bars to 1235: the diffs did not move at all — RSI stayed
+  at 8.634×10⁻⁵ and EMA(21) at 1.452×10⁻⁴, byte for byte. The reason is that Wilder's seed had
+  already decayed to about 4×10⁻¹⁶ by 494 bars, far below float64 resolution, so there was nothing
+  left to converge. What remains is the genuine difference between the vendor the goldens came from
+  (Yahoo) and the one we use now (Polygon), plus rounding in a hand-read TradingView figure. **More
+  history will never shrink it**, so do not treat a future non-shrinking diff as a failure to
+  improve — and do not tighten the tolerance below it expecting the numbers to catch up. Progress on the
   2026-09-13 position, not a substitute for CI. The script reports `MISSING` rather than `PASS`
   when the row it needs is absent, which is the whole point — a check that silently verifies zero
   rows is the "successful operation that changed nothing" bug wearing a green tick.

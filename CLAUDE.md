@@ -90,9 +90,11 @@ Phase 1 (tracker) in progress. Foundation schema applied (`tickers`, `daily_bars
 `hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand, now over
 Polygon + FRED (decision 0019), with a full verified daily backfill in place. The **daily**
 parameter layer exists as the `daily_features` matview, checked by
-`scripts/verify_parameters.sql` — but it is a cache that **nothing refreshes yet**, so run
-`refresh materialized view public.daily_features;` after an ingest, or the freshness check will
-tell you off. `web/` holds a deployment-check page, not the dashboard. The pg_cron schedule,
+`scripts/verify_parameters.sql`, and **pg_cron now runs the whole pipeline** — ingest at 22:30
+UTC and a concurrent matview refresh at 22:45, weekdays (decision 0022). There is no user-led
+refresh by design, so those two jobs are the only path: if they do not fire, the dashboard is
+stale and nobody can fix it from the page. A green `cron.job_run_details` row is **not** evidence
+of a good ingest — pg_net is fire-and-forget. Check `ingest_runs`, then the freshness check. `web/` holds a deployment-check page, not the dashboard. The pg_cron schedule,
 session-aligned hourly bars, weekly and market-context parameters, cross-sectional ranks, CI
 gating of the golden values, and the grid itself do not exist yet.
 `docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is

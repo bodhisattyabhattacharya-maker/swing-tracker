@@ -296,3 +296,36 @@ required before any of this shows up in the data, and the depth must be verified
 stored bar rather than the billing page, because an over-wide date range may be silently truncated.
 `% off all-time high` stays bounded and stays named `pct_off_high_stored`: INTC, QCOM and GE peaked
 in 2000, outside every tier we would plausibly buy.
+
+## 0022 — 2026-09-13 — One daily clock at 22:30 UTC, and the refresh is its own job
+**Decided:** two pg_cron jobs. `swing-ingest-daily` at `30 22 * * 1-5` calls the ingest function;
+`swing-refresh-features` at `45 22 * * 1-5` runs `refresh materialized view concurrently
+public.daily_features`. No user-led refresh exists, so **these two jobs are the entire data
+pipeline**.
+**Why a fixed UTC time is not a DST bug:** pg_cron 1.6 has no per-job timezone and runs in the
+server timezone, which is UTC. 22:30 UTC is 18:30 ET in summer and 17:30 ET in winter. Both are
+comfortably after the 16:00 ET close plus the vendor's 15-minute delay, and *that* — the last daily
+bar being settled rather than partial — is the property that matters, not hitting a particular
+local minute. One fixed entry is therefore correct year-round. **Rejected:** month-guarded
+duplicate schedules, which buy nothing and break quietly in March and November.
+**Why the refresh is separate rather than chained:** chaining would guarantee it only runs on fresh
+data, but it would collapse two failures into one silence — an ingest killed by the wall clock
+would leave the matview untouched with no independent signal. Separate jobs mean a failed ingest
+still lets the refresh run and the freshness check reports the gap honestly. Two visible failures
+beat one silent one. The 15-minute gap is enormous margin against a ~5 s run, and margin is free.
+**Why CONCURRENTLY:** a plain refresh takes an ACCESS EXCLUSIVE lock and blocks every dashboard
+reader. Verified 2026-09-13 that the concurrent form is permitted inside a transaction block, which
+pg_cron requires, and `daily_features` already has the unique index it needs.
+**The limitation, recorded because a green log will otherwise be believed:** pg_net's `http_post`
+is fire-and-forget. `cron.job_run_details` records SUCCESS when the request is **queued** — not
+when the HTTP call completed, and not when the ingest succeeded. The authoritative signals are
+`ingest_runs`, then the freshness check, then cron. This is the same "operation is not the outcome"
+shape as the deploy toggle, the unapplied migration and the no-op revoke (INCIDENTS.md).
+**No retry, deliberately.** One run a day; a failure means a stale day. A second evening run was
+offered and declined, and re-running would have been safe — the upsert key is (symbol, d) and the
+pipeline is idempotent. The compensating control is that staleness must be **visible on the
+dashboard**, which makes the freshness stamp and the staleness banner requirements of the grid
+rather than nice-to-haves.
+**Secrets:** `cron.job.command` stores a Vault *lookup*, not a key. Verified against a stub that the
+stored command contains no secret value. This matters because the repo is public and `cron.job` is
+readable by anyone who can read the database.
