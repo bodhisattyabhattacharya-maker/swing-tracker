@@ -31,3 +31,21 @@ cover anon-refused, service_role-accepted-regardless-of-env, non-JWT byte match.
 **Earlier detection:** a fixture test cannot see the runtime env, so no. What would have: a
 smoke call as part of the first deploy, before writing the "verified" line in FEATURES — which is
 now the rule: a function's FEATURES entry gets its "live" line only after a real call succeeds.
+
+## 2026-09-13 — ingest 500: permission denied for table ingest_runs
+**Symptom:** with auth fixed, the next call reached the handler and failed immediately —
+`500 {"error": "ingest_runs insert: permission denied for table ingest_runs"}`. No run row, no
+bars. Every one of the four tables was affected, not just this one.
+**Root cause:** default privileges in Postgres are per **owner role**. Supabase's permissive
+defaults ("new tables usable by anon / authenticated / service_role") hang off `supabase_admin`,
+but a migration runs as `postgres`, whose defaults grant `service_role` only
+`Dxtm` — TRUNCATE, REFERENCES, TRIGGER, MAINTAIN — and no DML at all. Live ACL read as
+`service_role=Dxtm/postgres`. Not collateral damage from the foundation migration's revoke:
+that named only `anon` and `authenticated`. These tables were never writable by the function.
+**Fix:** `20260913003000_service_role_grants.sql` — `select, insert, update` on all four tables
+to `service_role`, deliberately no `delete` (decision 0018).
+**Earlier detection:** a smoke call immediately after the first deploy would have caught both
+this and the auth bug in one go, roughly 40 minutes earlier. Two runtime bugs in a row from
+"tests pass, therefore it works" — the FEATURES rule added yesterday (no "live" line until a
+real call succeeds) now has teeth. A CI check is not possible: the grant only exists in the
+deployed database, which CI cannot reach.
