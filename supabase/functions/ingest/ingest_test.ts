@@ -17,7 +17,7 @@ import assert from "node:assert/strict";
 const assertEquals = (a: unknown, b: unknown, msg?: string) => assert.deepEqual(a, b, msg);
 const assertThrows = (fn: () => unknown, _e: unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
-import { mapChart, toTradingDate, yahoo, YAHOO_SOURCE } from "./yahoo.ts";
+import { chartUrl, mapChart, RateLimitError, toTradingDate, yahoo, YAHOO_SOURCE } from "./yahoo.ts";
 import { parseWatchlist } from "./watchlist.ts";
 import { callerAllowed, jwtRole } from "./auth.ts";
 
@@ -104,10 +104,14 @@ Deno.test("toTradingDate maps a 13:30Z session open to that UTC calendar date", 
 // yahoo.daily / hourly - fetch stubbed
 // ---------------------------------------------------------------------------
 
-function withFetch<T>(body: unknown, fn: () => Promise<T>): Promise<T> {
+function withFetch<T>(body: unknown, fn: () => Promise<T>, status = 200): Promise<T> {
   const real = globalThis.fetch;
   globalThis.fetch = (() =>
-    Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))) as typeof fetch;
+    Promise.resolve(
+      typeof body === "string"
+        ? new Response(body, { status })
+        : new Response(JSON.stringify(body), { status }),
+    )) as typeof fetch;
   return fn().finally(() => {
     globalThis.fetch = real;
   });
@@ -210,4 +214,61 @@ Deno.test("callerAllowed: exact byte match with the env var passes (non-JWT key 
 
 Deno.test("callerAllowed: no token is refused", () => {
   assertEquals(callerAllowed(null, "anything"), false);
+});
+
+// ---------------------------------------------------------------------------
+// chartUrl - the downsampling trap, pinned (INCIDENTS.md 2026-09-13)
+// ---------------------------------------------------------------------------
+
+const FIXED_NOW = new Date("2026-09-13T00:00:00Z"); // epoch 1789257600
+
+Deno.test("chartUrl: daily FULL uses epoch bounds and never range=max", () => {
+  const u = chartUrl("MU", "daily", "full", FIXED_NOW);
+  assertEquals(u.includes("range="), false, "range=max&interval=1d silently returns quarterly bars");
+  assertEquals(u.includes("period1=0"), true);
+  assertEquals(u.includes("interval=1d"), true);
+  // period2 is tomorrow, so today's session is inside the window.
+  assertEquals(u.includes(`period2=${1789257600 + 86400}`), true);
+});
+
+Deno.test("chartUrl: daily incremental is a one-month range of daily bars", () => {
+  assertEquals(
+    chartUrl("MU", "daily", "incremental", FIXED_NOW),
+    "https://query1.finance.yahoo.com/v8/finance/chart/MU?range=1mo&interval=1d&includeAdjustedClose=true",
+  );
+});
+
+Deno.test("chartUrl: hourly keeps the ranges verified live (5d / 2y, 1h bars)", () => {
+  assertEquals(chartUrl("MU", "hourly", "incremental", FIXED_NOW).includes("range=5d&interval=1h"), true);
+  assertEquals(chartUrl("MU", "hourly", "full", FIXED_NOW).includes("range=2y&interval=1h"), true);
+});
+
+Deno.test("chartUrl: a caret index symbol is percent-encoded", () => {
+  assertEquals(chartUrl("^VIX", "daily", "incremental", FIXED_NOW).includes("/chart/%5EVIX?"), true);
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+Deno.test("a 429 raises RateLimitError, not a generic error - the caller must stop, not skip", async () => {
+  let caught: unknown = null;
+  try {
+    // Yahoo returns plain text for 429, so this also proves we check status before parsing JSON.
+    await withFetch("Too Many Requests\r\n", () => yahoo.daily("MU", "incremental"), 429);
+  } catch (e) {
+    caught = e;
+  }
+  assertEquals(caught instanceof RateLimitError, true);
+});
+
+Deno.test("a non-429 HTTP failure stays a plain error - only 429 aborts a run", async () => {
+  let caught: unknown = null;
+  try {
+    await withFetch("gateway blew up", () => yahoo.daily("MU", "incremental"), 503);
+  } catch (e) {
+    caught = e;
+  }
+  assertEquals(caught instanceof Error, true);
+  assertEquals(caught instanceof RateLimitError, false);
 });

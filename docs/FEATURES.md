@@ -110,6 +110,10 @@ here in a follow-up line.
 bugs found by calling it, both logged in INCIDENTS.md: a 401 on a genuine service_role key (auth
 moved to `auth.ts` — role claim of the gateway-verified JWT, or byte match), then a 500 on
 `permission denied` (migration `20260913003000_service_role_grants`, decision 0018).
-Yahoo-from-this-project and wall-clock per call: recorded below once the first successful run
-lands.
+First successful run 2026-09-13 00:33: `ok: true`, 41 tickers synced (24 rankable, matching
+`make context`), 15,100 rows in **6.9 s**, zero per-symbol errors. Hourly verified correct —
+3,484 bars per symbol, 2024-09-12 → 2026-09-11, the exact 2-year cap. Daily verified **wrong**:
+`range=max&interval=1d` returns monthly/quarterly bars (INCIDENTS.md), fixed by switching to
+epoch bounds. Yahoo then rate-limited the egress IP for minutes (INCIDENTS.md), so the request
+rate dropped to ~2/s and a 429 now aborts the run.
 **By:** Bodhi + Claude
