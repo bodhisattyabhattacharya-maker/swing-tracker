@@ -72,6 +72,7 @@ next agent to the wrong file confidently.
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
 | Why is the data stale? | `public.ingest_runs` first, then `cron.job_run_details`. A green cron row only means the request was queued. |
+| Is the VIX current? | `select * from public.index_status`. FRED publishes later than the evening run, so the index series can legitimately sit a trading day behind the grid; `current = false` for a few hours after the close is normal, past the 11:00 UTC catch-up it is not. |
 | Did the digest actually send? | `select * from public.ingest_runs where scope = 'digest'` — `ok` means mail went out, `message_id` is Resend's receipt, `unavailable` lists anything the email was missing. On 2026-09-14 `cron.job_run_details` said `succeeded` for a run that sent nothing. |
 
 ## Invariants that outlive any refactor

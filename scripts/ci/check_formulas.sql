@@ -282,12 +282,30 @@ degenerate as (
           + (select count(*) from public.digest_standing where param like '%weekly%' or param like '%w'))::text,
            'weekly params step for the whole watchlist on one Monday; that is the calendar, not news'
     union all
-    select 'scheduling', 'all three jobs registered exactly once',
-           case when (select count(*) from cron.job where jobname like 'swing-%') = 3
+    select 'scheduling', 'all four jobs registered exactly once',
+           case when (select count(*) from cron.job where jobname like 'swing-%') = 4
                 then 'PASS' else 'FAIL' end,
-           '3',
+           '4',
            (select count(*)::text from cron.job where jobname like 'swing-%'),
            'a re-applied migration must not leave duplicates firing alongside the new ones'
+    union all
+    select 'scheduling', 'the index catch-up asks for the indices scope, not all',
+           case when (select count(*) from cron.job
+                      where jobname = 'swing-refresh-indices'
+                        and command like '%scope=indices%') = 1
+                then 'PASS' else 'FAIL' end,
+           '1',
+           (select count(*)::text from cron.job
+             where jobname = 'swing-refresh-indices' and command like '%scope=indices%'),
+           'scope=all here would re-fetch 36 equities every morning for three index values'
+    union all
+    select 'scheduling', 'the index catch-up runs every day, not only weekdays',
+           case when (select count(*) from cron.job
+                      where jobname = 'swing-refresh-indices' and schedule = '0 11 * * *') = 1
+                then 'PASS' else 'FAIL' end,
+           '1',
+           coalesce((select schedule from cron.job where jobname = 'swing-refresh-indices'), '(absent)'),
+           'Friday''s close is what a Saturday run collects; weekdays-only leaves the weekend stale'
     union all
     select 'scheduling', 'no scheduled command embeds a secret value',
            case when (select count(*) from cron.job

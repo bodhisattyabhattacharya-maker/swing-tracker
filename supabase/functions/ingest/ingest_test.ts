@@ -24,7 +24,7 @@ const assertEquals = (a: unknown, b: unknown, msg?: string) => assert.deepEqual(
 const assertThrows = (fn: () => unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
 
-import { planLimit, RateLimitError } from "./provider.ts";
+import { isScope, planLimit, RateLimitError, SCOPES, universeFor } from "./provider.ts";
 import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import { parseWatchlist } from "./watchlist.ts";
@@ -449,3 +449,48 @@ Deno.test("parseNorms skips a commented-out norm without failing the whole file"
   assertEquals(norms.length, 1);
   assertEquals(norms[0].param, "rsi_daily");
 });
+
+// ---------------------------------------------------------------------------
+// Scope routing. Added 2026-09-15 with the `indices` scope.
+//
+// Worth testing rather than eyeballing because every failure here is silent: a scope that resolves
+// to the wrong universe fetches the wrong symbols and still reports success, and a scope missing
+// from the validator is a 400 on a cron job nobody is watching at 11:00 UTC.
+// ---------------------------------------------------------------------------
+
+Deno.test("every scope resolves to a universe, or explicitly to none", () => {
+  // The point is exhaustiveness: a scope added later without a universeFor() case would return
+  // undefined and `activeSymbols` would silently fetch everything.
+  for (const scope of SCOPES) {
+    const u = universeFor(scope);
+    assertEquals(
+      u === null || u === "all" || u === "equities" || u === "indices",
+      true,
+      `scope ${scope} resolved to ${String(u)}`,
+    );
+  }
+});
+
+Deno.test("indices is index-only, and is NOT reachable through `all`", () => {
+  // If `all` also routed to "indices" the evening run would stop fetching equities entirely; if
+  // `indices` routed to "all" the morning catch-up would re-fetch 36 equities for nothing.
+  assertEquals(universeFor("indices"), "indices");
+  assertEquals(universeFor("all"), "all");
+  assertEquals(universeFor("daily"), "all", "daily still carries the index series");
+});
+
+Deno.test("hourly excludes indices, because FRED has no intraday series to ask for", () => {
+  assertEquals(universeFor("hourly"), "equities");
+});
+
+Deno.test("the ticker sync does no bar work", () => {
+  assertEquals(universeFor("tickers"), null);
+});
+
+Deno.test("the validator accepts exactly the scopes that exist, and nothing else", () => {
+  for (const scope of SCOPES) assertEquals(isScope(scope), true, scope);
+  for (const bad of ["", "index", "indice", "Daily", "all ", "weekly", "1"]) {
+    assertEquals(isScope(bad), false, `"${bad}" must be rejected`);
+  }
+});
+

@@ -542,3 +542,26 @@ null to every null and reported 3,347 phantom violations. A check must identify 
 judging, not infer it from a value.
 **By:** Bodhi + Claude
 
+## 2026-09-15 — The index series stop running a day behind
+**What:** an `indices` scope on the ingest, a fourth cron job that uses it at 11:00 UTC daily, and
+`public.index_status` — how far each FRED series lags the equities, counted in trading days so a
+weekend reads as zero. Groundwork for market context.
+**How:** decision 0033, migration `20260915120000`. `provider.ts` gains `Scope`, `SCOPES`,
+`isScope()` and `universeFor()`, so "which symbols does this run touch" is one exhaustive switch
+rather than a boolean at two call sites; `activeSymbols` takes `"all" | "equities" | "indices"`
+instead of an include-indices flag, which could not express the one case the morning run needs.
+**Architecture impact:** an index run writes `detail.indices`, never `detail.daily`, so it cannot
+reset the grid's staleness clock. Anything reading the index series — market context first — takes
+its as-of date from `index_status` rather than from the grid's date, because the two can legitimately
+differ by a day.
+**Verified by:** 47 ingest tests (5 new, covering exhaustive scope→universe routing, `indices` not
+being reachable through `all`, hourly excluding indices, and the validator rejecting near-misses like
+`"index"` and `"Daily"`), `deno check` clean, and the CI gate green at 83 checks — including three
+new scheduling assertions that four jobs are registered exactly once, that the new one asks for
+`scope=indices` rather than `all`, and that it runs every day rather than weekdays.
+**Measured, and honestly bounded:** at the 22:30 run on 2026-09-14 all 36 equities returned Monday's
+bar and all three index series stopped at Friday. That is the whole of the clean evidence — every
+other index row came from one backfill — so **FRED's publication hour is not known**, 11:00 UTC is
+chosen to be comfortably late rather than tight, and `index_status` is what will let us tighten it.
+**By:** Bodhi + Claude
+

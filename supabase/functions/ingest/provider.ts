@@ -127,3 +127,53 @@ export function planLimit(forceFull: boolean, explicit: string | null): number {
   }
   return forceFull ? DEFAULT_LIMIT_FULL : DEFAULT_LIMIT_INCREMENTAL;
 }
+
+// ---------------------------------------------------------------------------
+// Scopes, and which slice of the watchlist each one touches.
+//
+// Lives here rather than in index.ts for the usual reason: index.ts calls `Deno.serve` at module
+// top level, so a test that imported it would start a real listener. Routing is this file's job
+// already - `supports()` decides which provider claims a symbol - and "which symbols does this run
+// touch" is the same kind of decision one level up.
+// ---------------------------------------------------------------------------
+
+export type Scope = "tickers" | "daily" | "hourly" | "indices" | "all";
+
+export const SCOPES: readonly Scope[] = ["tickers", "daily", "hourly", "indices", "all"] as const;
+
+export function isScope(v: string): v is Scope {
+  return (SCOPES as readonly string[]).includes(v);
+}
+
+export type Universe = "all" | "equities" | "indices";
+
+/**
+ * Which symbols a scope's BAR work covers, or null when it does no bar work.
+ *
+ * `daily` and `all` include the index series, because the market block and the relative-strength
+ * base are indices and they are cheap - three FRED calls.
+ *
+ * `hourly` excludes them: hourly feeds RSI-hourly, which is not computed for indices, and FRED
+ * publishes a daily close with no intraday series to ask for.
+ *
+ * `indices` is the odd one, added 2026-09-15. It exists because **FRED publishes later than the
+ * 22:30 UTC run**: on 2026-09-14 that run fetched Friday's ^VIX, not Monday's, while every equity
+ * came back same-evening. A second, index-only pass the next morning catches the previous close
+ * without re-fetching 36 equities that are already current. It is NOT part of `all` - `all` already
+ * covers indices through `daily`, and having two names for the same work is how a run gets done
+ * twice.
+ */
+export function universeFor(scope: Scope): Universe | null {
+  switch (scope) {
+    case "daily":
+    case "all":
+      return "all";
+    case "hourly":
+      return "equities";
+    case "indices":
+      return "indices";
+    case "tickers":
+      return null;
+  }
+}
+
