@@ -87,17 +87,48 @@ SQL
 # makes a run with only expected-MISSING goldens look like a failure. Caught by this script
 # reporting "1 invariant failing" when every actual invariant passed.
 status_count () {  # file, pattern -> number of CHECK rows whose status column matches
-  psql --no-psqlrc -tAF'|' -f "$1" 2>/dev/null \
+  psql -v ON_ERROR_STOP=1 --no-psqlrc -tAF'|' -f "$1" \
     | awk -F'|' -v p="$2" '$2 != "SUMMARY" && $4 ~ p {n++} END {print n+0}'
 }
 
+# A CHECK SCRIPT THAT DOES NOT RUN MUST NOT READ AS A PASS.
+#
+# This gate counted rows whose status was FAIL. A file with a syntax error emits NO rows, so it
+# counted zero failures and reported "all green" - the gate itself doing the thing it exists to
+# catch. Found 2026-09-15 when a doubled quote in a new market-context check made the whole of
+# check_formulas.sql unparseable and the run still exited 0.
+#
+# Two guards, because either alone is escapable:
+#   run_checks   runs the file with ON_ERROR_STOP and fails the build on a non-zero exit. The old
+#                `2>/dev/null` in status_count actively hid the error message that would have
+#                given it away.
+#   expect_rows  insists the file produced at least N check rows. An empty result is now a failure
+#                rather than a silence, which also catches a file that parses but selects nothing.
+run_checks () {  # file, label, minimum rows
+  if ! psql -v ON_ERROR_STOP=1 --no-psqlrc --quiet -P pager=off -f "$1"; then
+    echo "    FAILED: $2 did not run to completion - see the error above"
+    exit 1
+  fi
+  # awk rather than `grep -c`: grep exits 1 when it matches nothing, which under `set -o pipefail`
+  # aborts this function before it can report anything, turning a clear "checked nothing" into a
+  # bare non-zero exit. awk always exits 0 and the count is the whole point.
+  local rows
+  rows=$(psql -v ON_ERROR_STOP=1 --no-psqlrc -tAF'|' -f "$1" | awk 'NF {n++} END {print n+0}')
+  if [ "$rows" -lt "$3" ]; then
+    echo "    FAILED: $2 produced $rows rows, expected at least $3 - it ran but checked nothing"
+    exit 1
+  fi
+}
+
 echo "==> formula gate (independent reference implementation)"
-psql --no-psqlrc --quiet -P pager=off -f "$here/check_formulas.sql"
+# The row floors are deliberately blunt: they are not the real count, they are "far too few to be
+# the real count". Tightening them to the exact number would make every added check a build break.
+run_checks "$here/check_formulas.sql" "check_formulas.sql" 40
 bad_formula=$(status_count "$here/check_formulas.sql" '^(FAIL|MISSING)$')
 
 echo
 echo "==> invariants and goldens (scripts/verify_parameters.sql)"
-psql --no-psqlrc --quiet -P pager=off -f "$repo/scripts/verify_parameters.sql"
+run_checks "$repo/scripts/verify_parameters.sql" "verify_parameters.sql" 30
 bad_verify=$(status_count "$repo/scripts/verify_parameters.sql" '^FAIL$')
 missing_verify=$(status_count "$repo/scripts/verify_parameters.sql" '^MISSING$')
 

@@ -244,3 +244,38 @@ meant. The authority order written into `20260913183000_cron_daily.sql` — `ing
 freshness check second, `cron.job_run_details` last — was correct, and this is the night it paid for
 itself. Anyone who had checked the cron log would have concluded the pipeline was healthy.
 
+## 2026-09-15 — the formula gate reported "all green" while the check file did not run
+
+**What happened:** a new market-context assertion was added to `scripts/ci/check_formulas.sql` with a
+doubled quote — `''^VIX''` instead of `'^VIX'`. PostgreSQL rejected the whole file with
+`type "vix" does not exist`. `scripts/ci/run.sh` printed that error, counted **zero** failing checks,
+and exited **0** with `all green`.
+
+**Cause:** the gate counted rows whose status column read FAIL or MISSING. A file that does not parse
+emits no rows at all, so it contributes no failures. Two details made it worse rather than catching
+it: `status_count` ran psql without `ON_ERROR_STOP`, and it redirected stderr to `/dev/null`, which
+actively discarded the only evidence.
+
+**Why this one stings:** this is the gate doing the exact thing it exists to prevent. Every other
+entry on this page is a component failing silently; here the **detector** failed silently, which is
+worse, because a green gate is what everything else is checked against. It is the seventh instance of
+"a successful operation that changed nothing" in this log, and the first where the operation was the
+check itself.
+
+**Fix:** `run_checks` in `run.sh` now runs each check file with `ON_ERROR_STOP=1`, fails the build on
+a non-zero exit with a named message, and additionally insists the file produced at least a floor
+number of rows — so a file that parses but selects nothing is also a failure rather than a silence.
+The floors are deliberately far below the real counts, so adding a check never breaks the build.
+
+**Verified by deliberately breaking it, twice.** A syntax error now exits 1 with
+`FAILED: check_formulas.sql did not run to completion`; a file that parses and returns no rows exits
+1 with `FAILED: check_formulas.sql produced 0 rows, expected at least 40 - it ran but checked
+nothing`.
+
+**A second lesson, about how the fix was tested.** The first attempt at that negative test appeared
+to work — both broken variants exited non-zero. They had both died in `bootstrap.sql` on
+`role "anon" already exists`, never reaching the check file. The non-zero exit was real and meant
+nothing. **Asserting on an exit code proves the run failed, not that it failed for the reason you
+intended**; the test now greps for the specific message the guard prints. This was the second vacuous
+negative test in one day — the first had a `create view ... already exists` abort standing in for a
+passing check (see the weekly as-of work, same date).

@@ -282,6 +282,101 @@ degenerate as (
           + (select count(*) from public.digest_standing where param like '%weekly%' or param like '%w'))::text,
            'weekly params step for the whole watchlist on one Monday; that is the calendar, not news'
     union all
+    -- ---------------------------------------------------------------------------
+    -- The market block (20260915130000). The fixture supplies ^VIX, ^VIX3M and ^GSPC shaped to hit
+    -- every band, both sides of the term structure, gaps in each series, and dates with no index
+    -- data at all - so these assert behaviour rather than merely that the view parses.
+    -- ---------------------------------------------------------------------------
+    select 'market', 'every VIX band matches its own value',
+           case when (select count(*) from public.market_context
+                      where vix is not null
+                        and vix_band is distinct from
+                            case when vix < 16 then '<16' when vix < 30 then '16-30'
+                                 when vix < 50 then '30-50' when vix < 80 then '50-80'
+                                 else '>80' end) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where vix is not null
+               and vix_band is distinct from
+                   case when vix < 16 then '<16' when vix < 30 then '16-30'
+                        when vix < 50 then '30-50' when vix < 80 then '50-80'
+                        else '>80' end),
+           'the bands must be exhaustive and disjoint - a value falling between two is unreachable'
+    union all
+    select 'market', 'all five bands occur in the fixture',
+           case when (select count(distinct vix_band) from public.market_context
+                      where vix_band is not null) = 5
+                then 'PASS' else 'FAIL' end,
+           '5',
+           (select count(distinct vix_band)::text from public.market_context where vix_band is not null),
+           'a band never exercised is a band never tested; >80 has happened once in eleven years'
+    union all
+    select 'market', 'term structure is never computed across two dates',
+           case when (select count(*) from public.market_context
+                      where term_structure is not null and vix3m_as_of is distinct from vix_as_of) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where term_structure is not null and vix3m_as_of is distinct from vix_as_of),
+           'a ratio of two series taken at different moments is a different quantity, not a stale one'
+    union all
+    select 'market', 'a VIX day with no VIX3M reports null, not a number',
+           case when (select count(*) from public.market_context
+                      where vix is not null and vix3m_as_of is distinct from vix_as_of
+                        and term_structure is not null) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where vix is not null and vix3m_as_of is distinct from vix_as_of and term_structure is not null),
+           '0 would read as a flat curve, which is a real and different market state'
+    union all
+    select 'market', 'no index value is ever dated after the row it appears on',
+           case when (select count(*) from public.market_context
+                      where vix_as_of > d or vix3m_as_of > d or spx_as_of > d) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where vix_as_of > d or vix3m_as_of > d or spx_as_of > d),
+           'an as-of join that reaches forward is look-ahead, the same defect as the weekly one'
+    union all
+    select 'market', 'the as-of VIX is the newest one on or before the date',
+           case when (select count(*) from public.market_context mc
+                      where mc.vix_as_of is distinct from (
+                        select max(b.d) from public.daily_bars b
+                        where b.symbol = '^VIX' and b.d <= mc.d)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context mc
+             where mc.vix_as_of is distinct from (
+               select max(b.d) from public.daily_bars b where b.symbol = '^VIX' and b.d <= mc.d)),
+           're-derived with max() against the view''s lateral limit-1, the same cross-check as weekly'
+    union all
+    select 'market', 'breadth is null exactly when nobody is eligible',
+           case when (select count(*) from public.market_context
+                      where (breadth_eligible = 0) <> (breadth_pct is null)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where (breadth_eligible = 0) <> (breadth_pct is null)),
+           '0% would read as every name below its 200 SMA - the most bearish value the field has'
+    union all
+    select 'market', 'breadth stays within 0..100',
+           case when (select count(*) from public.market_context
+                      where breadth_pct is not null and (breadth_pct < 0 or breadth_pct > 100)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context
+             where breadth_pct is not null and (breadth_pct < 0 or breadth_pct > 100)),
+           'a share of a population cannot leave its own bounds'
+    union all
+    select 'market', 'eligible never exceeds tracked',
+           case when (select count(*) from public.market_context where breadth_eligible > breadth_tracked) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_context where breadth_eligible > breadth_tracked),
+           'names without 200 bars leave BOTH numerator and denominator, not just the numerator'
+    union all
     select 'scheduling', 'all four jobs registered exactly once',
            case when (select count(*) from cron.job where jobname like 'swing-%') = 4
                 then 'PASS' else 'FAIL' end,

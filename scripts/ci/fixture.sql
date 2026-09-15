@@ -23,7 +23,12 @@ insert into public.tickers (symbol, name, theme, active, is_index) values
   ('SYNTH', 'Synthetic Fixture', 'fixture', true, false),
   ('FLAT',  'Flat Fixture',      'fixture', true, false),
   ('SHORT', 'Short Fixture',     'fixture', true, false),
-  ('^IDX',  'Index Fixture',     'index',   true, true);
+  ('^IDX',  'Index Fixture',     'index',   true, true),
+  -- Named exactly as production names them, because market_context selects them by literal symbol.
+  -- A fixture that called them anything else would pass while testing nothing.
+  ('^VIX',   'VIX Fixture',      'index',   true, true),
+  ('^VIX3M', 'VIX3M Fixture',    'index',   true, true),
+  ('^GSPC',  'SPX Fixture',      'index',   true, true);
 
 insert into public.daily_bars (symbol, d, open, high, low, close, volume, source) values
   ('SYNTH','2021-01-04',98.4904,98.852,98.1712,98.4904,1661245,'fixture'),
@@ -355,6 +360,40 @@ insert into public.daily_bars (symbol, d, open, high, low, close, volume, source
   select 'SHORT', date '2024-01-01' + g, 20, 21, 19, 20, 1000, 'fixture' from generate_series(0,9) g;
 insert into public.daily_bars (symbol, d, close, source)
   select '^IDX', date '2024-01-01' + g, 15 + g * 0.05, 'fred' from generate_series(0,199) g;
+
+-- ---------------------------------------------------------------------------
+-- The market block's inputs. HAND-WRITTEN, unlike everything above it, and deliberately so: these
+-- exercise ROUTING AND SHAPE - band boundaries, as-of fallback, null-versus-zero - not formulas, so
+-- there is no independent reference value to generate. Every number below is a closed-form
+-- expression of `g`, so the series is reproducible by reading it.
+--
+-- Each choice targets one thing the view could get wrong:
+--   * 9 + (g % 40) * 2   sweeps 9 -> 87, crossing EVERY band boundary including >80, which
+--                        production has seen exactly once in eleven years and would otherwise
+--                        never be tested.
+--   * g % 17 = 5         punches holes in ^VIX, so some dates have no bar of their own and must
+--                        fall back to an earlier one. Without gaps the as-of join is
+--                        indistinguishable from a plain equi-join.
+--   * g % 7 = 0          puts ^VIX3M BELOW ^VIX, so backwardation is covered and not just contango.
+--   * g % 23 = 3         drops ^VIX3M entirely on those dates: term_structure must be null there,
+--                        never 0, which would read as a flat curve.
+--   * g >= 30            starts ^GSPC late, so early dates have a null close while VIX has a value
+--                        - the partial-market-block case.
+-- Dates before 2024 (the SYNTH range) get no index bars at all, which covers the other end: a row
+-- that exists with the whole market block null rather than vanishing from the series.
+-- ---------------------------------------------------------------------------
+insert into public.daily_bars (symbol, d, close, source)
+  select '^VIX', date '2024-01-01' + g, 9 + (g % 40) * 2.0, 'fred'
+  from generate_series(0,199) g where g % 17 <> 5;
+
+insert into public.daily_bars (symbol, d, close, source)
+  select '^VIX3M', date '2024-01-01' + g,
+         (9 + (g % 40) * 2.0) * (case when g % 7 = 0 then 0.85 else 1.15 end), 'fred'
+  from generate_series(0,199) g where g % 17 <> 5 and g % 23 <> 3;
+
+insert into public.daily_bars (symbol, d, close, source)
+  select '^GSPC', date '2024-01-01' + g, 4000 + g * 5.0, 'fred'
+  from generate_series(30,199) g;
 
 -- Expected values, computed by the reference implementation at generation time.
 create table ci_expected (

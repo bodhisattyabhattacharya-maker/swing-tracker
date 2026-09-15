@@ -733,3 +733,45 @@ it for every later reader, and `index_status` reports it honestly meanwhile. So 
 its as-of date from `index_status`, not from the grid. That degradation is the design, not an
 oversight.
 
+## 0034 — 2026-09-15 — The market block is a view, every borrowed value carries its own date
+
+**Decision:** `public.market_context`, one row per tracked date: VIX level and fixed regime band,
+VIX term structure, S&P 500 close, and watchlist breadth. **A plain view, not a materialized one**,
+and every value borrowed from the FRED series is published beside the date it actually came from.
+
+**Why a view, against the habit of this project.** Every other derived layer here is a matview
+because it is expensive per row and read per symbol. This is one row per date over ~1,200 dates, and
+its inputs refresh on **two different clocks** — equities at 22:30, the index series at 11:00 the
+next morning (decision 0033). A matview would be correct only between those two moments and quietly
+wrong the rest of the time, or would need adding to both jobs. A view is always current and is one
+fewer thing to forget in the migration that adds the next matview.
+
+**As-of, not exact-match, and the date is published.** On the evening the grid is built there is
+often no index bar for that date yet. Leaving the block null would blank it every evening and refill
+it every morning, which reads as a fault. So each series is taken as of the date — the newest bar on
+or before it — and `vix_as_of`, `vix3m_as_of` and `spx_as_of` say which day the number is really
+from. `vix_as_of < d` is an honest report of a known lag; **"VIX 15.84" printed under Monday's date
+when the number is Friday's is not**, and that is what a silent join would produce.
+
+**Term structure is null unless both series share an as-of date.** This is the subtle one, and the
+first version got it wrong. Both series are taken as of independently, so on a date where `^VIX3M`
+has no observation the as-of join supplies an older one — and the ratio would then divide today's VIX
+by last week's VIX3M and report a clean percentage. **A term structure is a statement about one
+moment in the curve; two moments is not a stale reading of it, it is a different quantity wearing its
+name.** Production has 33 such days in 2,785. Caught by a CI fixture built to drop `^VIX3M` on a
+cycle for exactly this reason.
+
+**Null is not zero, in three places, each measured first.** `term_structure` null on 33 of 2,785 VIX
+days (0 would read as a flat curve). `breadth_pct` null on 199 of 1,236 dates where no name yet has
+200 bars (0% would read as every name below its 200 SMA — the most bearish value the field can take).
+`spx_close` null before FRED's licensed window opens in 2016. `breadth_eligible` is published beside
+the percentage because 0% of 2 names and 0% of 36 are different facts.
+
+**Bands stay fixed, not percentile.** A percentile band calls 16 "high" in a calm decade and "low" in
+a violent one; a regime label has to mean the same thing every year. Measured over 2,785 days the
+fixed bands land at 43% / 51% / 5% / 0.6% / one single day above 80 — well shaped, and the rarest
+band is exercised in CI because production would otherwise never test it.
+
+**Relative strength is deliberately NOT in this PR.** It shares nothing with the market block but a
+migration slot, and it has its own subtle problem — lagging on each series' own bar index rather than
+the calendar. Two separable problems, two reviews.

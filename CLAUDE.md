@@ -92,30 +92,39 @@ Phase 1 (tracker) is **live and running unattended**: swing-tracker-nu.vercel.ap
 listed it as not existing. Rewritten 2026-09-15. `docs/FEATURES.md` remains the authoritative list;
 if this and FEATURES ever disagree again, FEATURES wins.*
 
-**Running on its own**, three pg_cron jobs, UTC, weekdays: ingest 22:30 → refresh 22:45 → digest
-23:00 (decisions 0022, 0028). The refresh rebuilds **both** matviews; any new matview must be added
-to that job in the migration that creates it. There is no user-led refresh by design, so the schedule
-is the only path — if it does not fire, the dashboard is stale and nobody can fix it from the page.
+**Running on its own**, four pg_cron jobs, UTC: ingest 22:30 → refresh 22:45 → digest 23:00 on
+weekdays (decisions 0022, 0028), plus an index-only catch-up at 11:00 **every day** because FRED
+publishes later than the evening run (0033). The refresh rebuilds **both** matviews; any new matview
+must be added to that job in the migration that creates it. There is no user-led refresh by design,
+so the schedule is the only path — if it does not fire, the dashboard is stale and nobody can fix it
+from the page.
 
 **Built:** the full 5-year daily backfill over Polygon + FRED (decision 0019); the **daily** and
-**weekly** parameter layers (`daily_features`, `weekly_features`), with Wilder's recursion existing
-exactly once in `public.recursive_indicators` (decision 0030); norms, flags and `grid_cells`;
-pipeline-based staleness (0026); **the dashboard** at `/`, server-rendered with service_role over
-PostgREST so the browser never touches Postgres and RLS needs no read policy (0025), with the
-deployment check at `/status`; the **weekday email digest** (0027, 0028); and a **CI formula gate**
-comparing the SQL to an independent implementation at 1e-9 (0029).
+**weekly** parameter layers, with Wilder's recursion existing exactly once in
+`public.recursive_indicators` (0030); norms, flags and `grid_cells`, now carrying **both timeframes**
+with weekly joined to the day by date arithmetic that cannot see the future (0032); pipeline-based
+staleness (0026); **the dashboard** at `/`, server-rendered with service_role over PostgREST so the
+browser never touches Postgres and RLS needs no read policy (0025), with the deployment check at
+`/status`; the **weekday email digest**, which retries its reads and sends a partial email rather
+than going silent (0027, 0028, 0031); an **index catch-up run** and `index_status` (0033); the
+**market block** `market_context` (0034); and a **CI formula gate** comparing the SQL to an
+independent implementation at 1e-9 (0029) — which since 2026-09-15 also fails when a check file does
+not run, rather than counting zero failures and reporting green.
 
-**Not built:** market context and relative strength, session-aligned hourly bars, sector-relative
-ranks, fundamentals from SEC XBRL, weekly columns on the grid, and the scale-out to ~200 tickers.
-Phase 2 (rule engine, alerts, backtesting) is specified, not started.
+**Not built:** relative strength, session-aligned hourly bars, sector-relative ranks, fundamentals
+from SEC XBRL, and the scale-out to ~200 tickers. The market block exists in the database but is not
+yet rendered on the page. Phase 2 (rule engine, alerts, backtesting) is specified, not started.
 
-**Two things that will bite you, both learned the hard way:**
+**Three things that will bite you, all learned the hard way:**
 - A green `cron.job_run_details` row is **not** evidence of anything but a queued request — pg_net is
   fire-and-forget. On 2026-09-14 it read `succeeded` for a digest that sent no email. Authority
   order: `ingest_runs` → `grid_status` → `cron.job_run_details` last.
 - **Absence of evidence is not evidence of health** (decision 0031). An unread change list is not a
-  quiet day; a missing freshness field is not a fresh pipeline. Both of those shipped as cheerful
-  green text before they were caught.
+  quiet day; a missing freshness field is not a fresh pipeline; a check file that failed to parse is
+  not a passing gate. All three shipped as cheerful green text before they were caught.
+- **An as-of value carries its own date.** The index series legitimately lag the grid by a session,
+  so `market_context` publishes `vix_as_of` beside `vix` — and a ratio across two different as-of
+  dates (term structure) is null, not stale (0034).
 
 Vercel needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — the key **must not** carry a
 `NEXT_PUBLIC_` prefix, which Next would inline into the browser bundle.

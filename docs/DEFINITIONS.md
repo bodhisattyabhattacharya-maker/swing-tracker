@@ -126,7 +126,22 @@ Decision 0032; asserted in `scripts/ci/check_formulas.sql` under the `as-of` sec
 | **VIX level** | `^VIX` close. |
 | **VIX regime band** | Fixed bands, not percentiles: `< 16` / `16–30` / `30–50` / `50–80` / `> 80`. |
 | **VIX term structure** | `VIX3M / VIX − 1`, as a percentage. Positive = contango (normal), negative = backwardation (stress priced as persistent). |
-| **Watchlist breadth** | Share of active non-index tickers whose close is above their own daily SMA(200), as a percentage. Names without 200 bars are excluded from both numerator and denominator. |
+| **Watchlist breadth** | Share of active non-index tickers whose close is above their own daily SMA(200), as a percentage. Names without 200 bars are excluded from both numerator and denominator. **Null, not 0%, when nobody is eligible** — 199 of 1,236 stored dates, all early history. `breadth_eligible` is published alongside, because 0% of 2 names and 0% of 36 are different facts. |
+
+### How the market block is dated
+
+FRED publishes later than the evening ingest, so on the date the grid is built there is often no
+index bar for it yet (decision 0033). Each series is therefore taken **as of** the date — the newest
+observation on or before it — and `market_context` publishes `vix_as_of`, `vix3m_as_of` and
+`spx_as_of` next to the values.
+
+- `vix_as_of < d` is an honest report of a known lag, not an error.
+- **Term structure is null unless `vix3m_as_of = vix_as_of`.** A ratio of two series taken at
+  different moments is a different quantity, not a stale one. 33 of 2,785 stored VIX days have no
+  VIX3M observation and therefore no term structure.
+- Anything reading the market block takes its currency from these dates, never from `d`.
+
+Decision 0034; asserted in `scripts/ci/check_formulas.sql` under the `market` section.
 
 ---
 

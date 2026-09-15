@@ -565,3 +565,45 @@ other index row came from one backfill — so **FRED's publication hour is not k
 chosen to be comfortably late rather than tight, and `index_status` is what will let us tighten it.
 **By:** Bodhi + Claude
 
+## 2026-09-15 — The market block
+**What:** `public.market_context` — one row per tracked date carrying VIX level and fixed regime
+band, VIX term structure, S&P 500 close, and watchlist breadth, with the as-of date of every borrowed
+index value published beside it.
+**How:** decision 0034, migration `20260915130000`. A plain view, not a matview, because its inputs
+refresh on two clocks (22:30 equities, 11:00 indices) and a matview would be right only between them.
+Each FRED series is joined as-of — newest bar on or before the date — via `left join lateral`, so a
+date with no index history still yields a row of nulls rather than disappearing from the series.
+**Architecture impact:** first surface to read `index_status`'s premise rather than the grid's date.
+Anything built on the market block takes its currency from `vix_as_of`, not from `d`.
+**Verified by:** the CI gate at 30+ checks including nine new ones — every band matching its own
+value, all five bands actually occurring, term structure never computed across two dates, a VIX day
+with no VIX3M reporting null rather than a number, no index value dated after its row, the as-of VIX
+re-derived with `max()` against the view's `limit 1`, breadth null exactly when nobody is eligible,
+breadth inside 0..100, and eligible never exceeding tracked. Production spot-check: Monday
+2026-09-14 correctly shows VIX 15.84 **as of 2026-09-11**, band `<16`, term +17.42%, breadth 77.8% of
+36 eligible.
+**The fixture earned its keep.** `scripts/ci/fixture.sql` gained hand-written `^VIX`, `^VIX3M` and
+`^GSPC` series shaped to cross every band boundary (including `>80`, which production has seen once
+in eleven years), to leave gaps that force the as-of fallback, to put VIX3M below VIX so
+backwardation is covered, and to drop VIX3M entirely on a cycle. That last one **caught a real
+defect**: the first version of the view happily divided today's VIX by an older VIX3M and reported a
+clean percentage.
+**By:** Bodhi + Claude
+
+## 2026-09-15 — The gate can no longer pass by not running
+**What:** `scripts/ci/run.sh` fails the build when a check file errors, or when it runs but produces
+implausibly few rows.
+**How:** a doubled quote made `check_formulas.sql` unparseable; the gate printed the error, counted
+zero failures, and exited 0 with `all green`. It counted rows whose status read FAIL, and a file that
+does not parse emits no rows. `status_count` also ran without `ON_ERROR_STOP` and sent stderr to
+`/dev/null`, discarding the evidence. `run_checks` now uses `ON_ERROR_STOP=1`, fails with a named
+message, and enforces a row floor deliberately set far below the real count so adding checks never
+breaks the build.
+**Architecture impact:** the detector is now checked the way the components are. Seventh instance of
+"a successful operation that changed nothing", and the first where the operation was the check.
+**Verified by:** breaking it deliberately, twice — a syntax error and a file that parses but selects
+nothing — and asserting on the **specific message** each guard prints rather than on the exit code.
+That distinction mattered: the first attempt at this test had both variants dying in `bootstrap.sql`
+on a leftover role and never reaching the check file, so the non-zero exits proved nothing.
+**By:** Bodhi + Claude
+
