@@ -377,6 +377,76 @@ degenerate as (
            (select count(*)::text from public.market_context where breadth_eligible > breadth_tracked),
            'names without 200 bars leave BOTH numerator and denominator, not just the numerator'
     union all
+    -- ---------------------------------------------------------------------------
+    -- Relative strength (20260915140000). The fixture's ^GSPC starts 30 days after the equities and
+    -- shares their calendar thereafter, so these cover both the no-SPX-yet case and the normal one.
+    -- ---------------------------------------------------------------------------
+    select 'rs', 'a row exists only where both legs have a bar',
+           case when (select count(*) from public.relative_strength r
+                      where not exists (select 1 from public.daily_bars b
+                                        where b.symbol = '^GSPC' and b.d = r.d)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.relative_strength r
+             where not exists (select 1 from public.daily_bars b
+                               where b.symbol = '^GSPC' and b.d = r.d)),
+           'an RS row on a date SPX never traded would mean the two legs ended on different sessions'
+    union all
+    select 'rs', 'rs is null until the symbol has n bars of its own',
+           case when (select count(*) from public.relative_strength r
+                      join lateral (select count(*) n from public.daily_bars b
+                                    where b.symbol = r.symbol and b.d <= r.d) c on true
+                      where (c.n <= 63  and r.rs_63b  is not null)
+                         or (c.n <= 126 and r.rs_126b is not null)
+                         or (c.n <= 252 and r.rs_252b is not null)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.relative_strength r
+             join lateral (select count(*) n from public.daily_bars b
+                           where b.symbol = r.symbol and b.d <= r.d) c on true
+             where (c.n <= 63  and r.rs_63b  is not null)
+                or (c.n <= 126 and r.rs_126b is not null)
+                or (c.n <= 252 and r.rs_252b is not null)),
+           'a 63-bar return from 40 bars is a different statistic wearing the same label'
+    union all
+    select 'rs', 'rs re-derived from raw bars matches the view',
+           case when (select count(*) from public.relative_strength r
+                      join lateral (
+                        select (select b.close from public.daily_bars b
+                                where b.symbol = r.symbol and b.d <= r.d
+                                order by b.d desc offset 63 limit 1) as sym_then,
+                               (select b.close from public.daily_bars b
+                                where b.symbol = r.symbol and b.d = r.d) as sym_now,
+                               (select b.close from public.daily_bars b
+                                where b.symbol = '^GSPC' and b.d <= r.d
+                                order by b.d desc offset 63 limit 1) as spx_then,
+                               (select b.close from public.daily_bars b
+                                where b.symbol = '^GSPC' and b.d = r.d) as spx_now) q on true
+                      where q.sym_then is not null and q.spx_then is not null
+                        and abs(r.rs_63b - (100.0*((q.sym_now/q.sym_then - 1) - (q.spx_now/q.spx_then - 1))))
+                            > 1e-9 * greatest(abs(r.rs_63b), 1e-6)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.relative_strength r
+             join lateral (
+               select (select b.close from public.daily_bars b
+                       where b.symbol = r.symbol and b.d <= r.d order by b.d desc offset 63 limit 1) as sym_then,
+                      (select b.close from public.daily_bars b where b.symbol = r.symbol and b.d = r.d) as sym_now,
+                      (select b.close from public.daily_bars b
+                       where b.symbol = '^GSPC' and b.d <= r.d order by b.d desc offset 63 limit 1) as spx_then,
+                      (select b.close from public.daily_bars b where b.symbol = '^GSPC' and b.d = r.d) as spx_now) q on true
+             where q.sym_then is not null and q.spx_then is not null
+               and abs(r.rs_63b - (100.0*((q.sym_now/q.sym_then - 1) - (q.spx_now/q.spx_then - 1))))
+                   > 1e-9 * greatest(abs(r.rs_63b), 1e-6)),
+           'offset-63 against lag(63): a different mechanism reaching the same bar, or one is wrong'
+    union all
+    select 'rs', 'a symbol never scores against itself',
+           case when (select count(*) from public.relative_strength where symbol like '^%') = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.relative_strength where symbol like '^%'),
+           'an index measured against the index is identically zero and pure noise in the grid'
+    union all
     select 'scheduling', 'all four jobs registered exactly once',
            case when (select count(*) from cron.job where jobname like 'swing-%') = 4
                 then 'PASS' else 'FAIL' end,

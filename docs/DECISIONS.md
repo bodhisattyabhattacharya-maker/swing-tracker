@@ -775,3 +775,51 @@ band is exercised in CI because production would otherwise never test it.
 **Relative strength is deliberately NOT in this PR.** It shares nothing with the market block but a
 migration slot, and it has its own subtle problem — lagging on each series' own bar index rather than
 the calendar. Two separable problems, two reviews.
+
+## 0035 — 2026-09-15 — Relative strength counts bars in each series, and publishes no as-of layer
+
+**Decision:** `public.relative_strength` — RS against the S&P 500 at **63, 126 and 252 trading
+bars**, as `(close[t]/close[t−n] − 1) − (spx[t]/spx[t−n] − 1)` in percentage points. `lag(close, n)`
+over each series' own partition, joined to SPX on an **exact date**. Rows exist only where both legs
+have a bar.
+
+**Bars, not calendar months.** `d − interval '63 days'` spans about 43 trading days and lands on a
+weekend or holiday roughly a third of the time, silently taking a neighbouring row or none. Measured
+first, because the subtraction rests on it: across the 1,236 dates we hold, SPX is missing **exactly
+one**, and that one is 2026-09-14 — the FRED publication lag, not a calendar difference. So "n bars
+back" is the same window on both legs.
+
+**No as-of layer, which is a deliberate departure from `market_context` (0034).** The obvious design
+carries each symbol's newest RS forward onto grid dates SPX has not reached, publishing `rs_as_of`.
+It was written that way and then measured:
+
+| | |
+|---|---|
+| exact-date join, whole history | **441 ms** (42,353 rows) |
+| with a band join for the as-of | **8,826 ms** — the planner discards **51 million** candidate pairs |
+
+Twenty times the cost to handle a single trailing date. The band join is cheap inside `grid_cells`
+(20 ms for one date) only because a date predicate cuts the left side to 36 rows first; unfiltered it
+degenerates, and "the same query serves today's scan and a ten-year replay" is a stated property of
+this project, so the unfiltered case is not hypothetical.
+
+So the view publishes rows **on the dates the computation is valid for** and nothing else. A reader
+wanting the newest RS takes the last row, which is an indexed lookup, and the date it carries *is*
+the as-of date. Same honesty, different cost.
+**Rejected:** the band join (above); forward-filling SPX's close onto missing dates, which would end
+the two legs on different sessions — the term-structure defect of 0034 in another costume; and a
+matview, which would need refreshing on both the 22:45 and 11:00 clocks and would otherwise hold RS a
+full day behind rather than a few hours.
+
+**Visible consequence:** on the evening of a trading day there is no RS row for that date, because
+SPX has not published. `index_status` says exactly that, and the 11:00 catch-up fills it. **A blank
+is the correct rendering of "not computable yet."**
+
+**No warm-up flag, unlike the recursive indicators.** RS is a ratio of two closes: below n bars
+`lag` returns null and the value is null. There is no seed to decay, so nothing is ever computed but
+untrustworthy. `rs_252b` stays null for a name's first year — the honest answer, not a gap to fill.
+
+**A naming mismatch left deliberately unresolved.** `config/norms.yml` carries `rs_vs_spx_6m`, from
+before this decision. 126 bars is *about* six months and is not six months, and a column named for
+one while computing the other is the labelling failure decision 0019 refused for ^SOX. The columns
+here are named by bars; **the norm gets renamed when the grid column lands**, not quietly matched to.

@@ -355,11 +355,11 @@ insert into public.daily_bars (symbol, d, open, high, low, close, volume, source
 -- Degenerate companions. FLAT has no movement at all (RSI undefined, not 50); SHORT sits below
 -- every warm-up window; ^IDX is close-only, the shape FRED delivers.
 insert into public.daily_bars (symbol, d, open, high, low, close, volume, source)
-  select 'FLAT', date '2024-01-01' + g, 50, 50, 50, 50, 1000, 'fixture' from generate_series(0,199) g;
+  select 'FLAT', date '2024-01-01' + g, 50, 50, 50, 50, 1000, 'fixture' from generate_series(0,299) g;
 insert into public.daily_bars (symbol, d, open, high, low, close, volume, source)
   select 'SHORT', date '2024-01-01' + g, 20, 21, 19, 20, 1000, 'fixture' from generate_series(0,9) g;
 insert into public.daily_bars (symbol, d, close, source)
-  select '^IDX', date '2024-01-01' + g, 15 + g * 0.05, 'fred' from generate_series(0,199) g;
+  select '^IDX', date '2024-01-01' + g, 15 + g * 0.05, 'fred' from generate_series(0,299) g;
 
 -- ---------------------------------------------------------------------------
 -- The market block's inputs. HAND-WRITTEN, unlike everything above it, and deliberately so: these
@@ -379,21 +379,25 @@ insert into public.daily_bars (symbol, d, close, source)
 --                        never 0, which would read as a flat curve.
 --   * g >= 30            starts ^GSPC late, so early dates have a null close while VIX has a value
 --                        - the partial-market-block case.
+--   * 300 bars, not 200  relative strength looks back 252 TRADING BARS. At 200 the rs_252b
+--                        column was null on every single row - present, parsed, and never
+--                        once computed. A column that is always null passes every check
+--                        anyone writes about it.
 -- Dates before 2024 (the SYNTH range) get no index bars at all, which covers the other end: a row
 -- that exists with the whole market block null rather than vanishing from the series.
 -- ---------------------------------------------------------------------------
 insert into public.daily_bars (symbol, d, close, source)
   select '^VIX', date '2024-01-01' + g, 9 + (g % 40) * 2.0, 'fred'
-  from generate_series(0,199) g where g % 17 <> 5;
+  from generate_series(0,299) g where g % 17 <> 5;
 
 insert into public.daily_bars (symbol, d, close, source)
   select '^VIX3M', date '2024-01-01' + g,
          (9 + (g % 40) * 2.0) * (case when g % 7 = 0 then 0.85 else 1.15 end), 'fred'
-  from generate_series(0,199) g where g % 17 <> 5 and g % 23 <> 3;
+  from generate_series(0,299) g where g % 17 <> 5 and g % 23 <> 3;
 
 insert into public.daily_bars (symbol, d, close, source)
   select '^GSPC', date '2024-01-01' + g, 4000 + g * 5.0, 'fred'
-  from generate_series(30,199) g;
+  from generate_series(30,299) g;
 
 -- Expected values, computed by the reference implementation at generation time.
 create table ci_expected (
