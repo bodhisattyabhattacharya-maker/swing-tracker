@@ -607,3 +607,24 @@ That distinction mattered: the first attempt at this test had both variants dyin
 on a leftover role and never reaching the check file, so the non-zero exits proved nothing.
 **By:** Bodhi + Claude
 
+## 2026-09-15 — Relative strength vs the S&P 500
+**What:** `public.relative_strength` — out/under-performance against SPX at 63, 126 and 252 trading
+bars, in percentage points, per (symbol, date).
+**How:** decision 0035, migration `20260915140000`. `lag(close, n)` over each series' own partition,
+joined to SPX on an exact date so both windows end on the same session. A view, not a matview: 441 ms
+for the whole 42,353-row history, and a matview would need refreshing on both the 22:45 and 11:00
+clocks.
+**Architecture impact:** rows exist only on dates where both legs have a bar, so the newest trading
+day is absent until FRED publishes — a blank is the correct rendering of "not computable yet", and
+`index_status` explains it. Deliberately no as-of layer; the measurement behind that is in 0035.
+**Verified by:** the CI gate green, with four new `rs` checks — a row existing only where both legs
+have a bar, RS null until the symbol has n bars of its own, **the whole calculation re-derived from
+raw bars** with `offset n` instead of `lag(n)` and compared at 1e-9, and no index scoring against
+itself. Production spot-check on 2026-09-11: the 252-bar ranking is led by SNDK, MU, WDC, DELL and
+STX — the memory and storage names — with META, SMCI and COST at the bottom.
+**The fixture was extended from 200 bars to 300, and that mattered.** At 200, `rs_252b` was null on
+every single row: the column was present, parsed, and never once computed. **A column that is always
+null passes every check anyone writes about it.** At 300 bars the 252-bar lookback is reachable and
+18 rows exercise it.
+**By:** Bodhi + Claude
+
