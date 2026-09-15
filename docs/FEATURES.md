@@ -513,3 +513,32 @@ satisfy `Promise`. It ran correctly under `deno test` and failed `deno check`, w
 that would have blocked the merge. Now `PromiseLike`.
 **By:** Bodhi + Claude
 
+## 2026-09-15 — The weekly columns reach the grid
+**What:** the dashboard shows RSI 14, vs 21 EMA, vs 30W SMA and vs 200W SMA on weekly bars, in their
+own labelled block beside the daily ones. `grid_cells` carries both timeframes; the digest does not.
+**How:** decision 0032, migration `20260915060000`. New `weekly_asof` view puts each week's successor
+alongside it so a daily row can range-join to the newest week that started before its own week —
+`week_start < date_trunc('week', d)`, which needs no market calendar and no `is_complete` flag, and
+therefore gives the same answer in a backtest as it does today. `grid_cells` is replaced in place
+with a trailing `timeframe` column, so every dependent keeps working. `config/norms.yml` loses the
+`close_vs_sma200w` entry; the sync deletes the row, which is what that file being the source of truth
+means.
+**Architecture impact:** weekly columns are constant Monday to Friday and step on the week boundary.
+That is correct — a weekly bar has one value — and it is why a weekly cell changing colour mid-week
+would be a bug rather than a move. The grid header is now two rows, because "vs 21 EMA" means a
+different number on each side of the divider.
+**Verified by:** `scripts/ci/run.sh` green, 80 checks. Seven are new: the as-of join re-derived a
+different way (correlated `max()` against the view's `lead()` range join), the source week having
+ended before the day it is shown, a weekly value being constant within its week, no weekly cells
+before a symbol's first completed week, `timeframe` taking only two values, all ten daily params
+surviving the in-place view replacement, and no weekly param reaching the digest.
+**The negative test, which is the one that counts:** the view's `<` was changed to `<=` so a day
+could see its own week. The value-comparison check failed with **230 mismatches** — and every other
+as-of check still passed. That is written into `check_formulas.sql`, because a reader needs to know
+which of those seven is load-bearing and which are shape checks.
+**A check that was wrong before the code was:** the look-ahead assertion first joined
+`grid_cells` to `weekly_features` on value equality with `is not distinct from`, which matches every
+null to every null and reported 3,347 phantom violations. A check must identify the row it is
+judging, not infer it from a value.
+**By:** Bodhi + Claude
+

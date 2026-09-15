@@ -132,6 +132,20 @@ const CSS = `
              text-align: right; padding: 12px 12px 9px; border-bottom: 1.5px solid var(--rule);
              white-space: nowrap; }
   thead th.sym { text-align: left; left: 0; z-index: 4; }
+
+  /* TWO HEADER ROWS. The group row pins at the top and the label row pins directly beneath it.
+     A sticky element cannot measure its sibling, so the label row's offset is the group row's own
+     fixed height, written as a literal. The two numbers must move together, which is why they sit
+     three lines apart rather than in separate rules. */
+  thead tr.grp th { top: 0; height: 26px; box-sizing: border-box; padding: 6px 12px 5px;
+                    font-size: 10px; letter-spacing: .1em; color: var(--ink-faint);
+                    text-align: center; border-bottom: 1px solid var(--rule-soft); }
+  thead tr.grp th.sym { border-bottom: none; }
+  thead tr:not(.grp) th { top: 26px; }
+
+  /* The daily/weekly divider. One rule, full height, so the eye can tell at a glance which side of
+     it a number lives on - "vs 21 EMA" appears on both and means different things. */
+  thead th.grp-start, tbody td.grp-start { border-left: 1.5px solid var(--rule); }
   thead th .norm { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
                    letter-spacing: 0; text-transform: none; color: var(--ink-faint);
                    font-weight: 400; margin-top: 2px; }

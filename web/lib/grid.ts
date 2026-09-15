@@ -187,18 +187,70 @@ export async function fetchGrid(): Promise<GridData> {
  * `param` must match a parameter name in `grid_cells`. A typo here shows as a permanently blank
  * column rather than an error, which is why the set is small and explicit rather than derived.
  */
-export const COLUMNS: Array<{ param: string; label: string; digits: number; signed: boolean }> = [
-  { param: "close", label: "Close", digits: 2, signed: false },
-  { param: "rsi_daily", label: "RSI 14", digits: 1, signed: false },
-  { param: "close_vs_ema21d", label: "vs 21 EMA", digits: 1, signed: true },
-  { param: "close_vs_sma50d", label: "vs 50 SMA", digits: 1, signed: true },
-  { param: "close_vs_sma200d", label: "vs 200 SMA", digits: 1, signed: true },
-  { param: "pct_off_high_stored", label: "Off high", digits: 1, signed: true },
-  { param: "pct_off_52w_high", label: "Off 52w high", digits: 1, signed: true },
-  { param: "pct_above_low_stored", label: "Above low", digits: 1, signed: true },
-  { param: "realized_vol_20", label: "Real vol 20", digits: 1, signed: false },
-  { param: "volume_ratio", label: "Vol ratio", digits: 2, signed: false },
+export type Timeframe = "daily" | "weekly";
+
+export interface Column {
+  param: string;
+  label: string;
+  digits: number;
+  signed: boolean;
+  timeframe: Timeframe;
+}
+
+/**
+ * WHY EVERY COLUMN CARRIES A TIMEFRAME, and why it is not fetched from the row.
+ *
+ * "vs 21 EMA" means two different numbers depending on whether the bars are days or weeks, and a
+ * grid that shows both without saying which is one a reader can misread without noticing. The
+ * header groups on this.
+ *
+ * `grid_cells` publishes a `timeframe` column too, but the page does not read it: the parameter
+ * names are already globally unique, so the cell lookup cannot collide, and a column has to be
+ * declared here to appear at all. The database column exists because the DIGEST filters on it,
+ * which is where it is load-bearing.
+ *
+ * WEEKLY VALUES STEP ONCE A WEEK. They come from the last week that ended before the week you are
+ * looking at, so they are identical Monday through Friday and change on the boundary. That is
+ * correct - a weekly bar has one value - and it is why a weekly cell going from blue to plain
+ * mid-week would be a bug rather than a move.
+ */
+export const COLUMNS: Column[] = [
+  { param: "close", label: "Close", digits: 2, signed: false, timeframe: "daily" },
+  { param: "rsi_daily", label: "RSI 14", digits: 1, signed: false, timeframe: "daily" },
+  { param: "close_vs_ema21d", label: "vs 21 EMA", digits: 1, signed: true, timeframe: "daily" },
+  { param: "close_vs_sma50d", label: "vs 50 SMA", digits: 1, signed: true, timeframe: "daily" },
+  { param: "close_vs_sma200d", label: "vs 200 SMA", digits: 1, signed: true, timeframe: "daily" },
+  { param: "pct_off_high_stored", label: "Off high", digits: 1, signed: true, timeframe: "daily" },
+  { param: "pct_off_52w_high", label: "Off 52w high", digits: 1, signed: true, timeframe: "daily" },
+  { param: "pct_above_low_stored", label: "Above low", digits: 1, signed: true, timeframe: "daily" },
+  { param: "realized_vol_20", label: "Real vol 20", digits: 1, signed: false, timeframe: "daily" },
+  { param: "volume_ratio", label: "Vol ratio", digits: 2, signed: false, timeframe: "daily" },
+
+  // Uncoloured by design, both of them: close_vs_sma200w had a norm that flagged 87-90% of
+  // name-weeks in every year we hold, and close_vs_sma30w has never had one measured.
+  // config/norms.yml carries the reasoning.
+  { param: "rsi_weekly", label: "RSI 14", digits: 1, signed: false, timeframe: "weekly" },
+  { param: "close_vs_ema21w", label: "vs 21 EMA", digits: 1, signed: true, timeframe: "weekly" },
+  { param: "close_vs_sma30w", label: "vs 30W SMA", digits: 1, signed: true, timeframe: "weekly" },
+  { param: "close_vs_sma200w", label: "vs 200W SMA", digits: 1, signed: true, timeframe: "weekly" },
 ];
+
+/** Column groups in order, for the grid's two-row header. Derived, so it cannot drift. */
+export function columnGroups(): Array<{ timeframe: Timeframe; label: string; span: number }> {
+  const out: Array<{ timeframe: Timeframe; label: string; span: number }> = [];
+  for (const c of COLUMNS) {
+    const last = out[out.length - 1];
+    if (last && last.timeframe === c.timeframe) last.span += 1;
+    else {
+      out.push({
+        timeframe: c.timeframe,
+        label: c.timeframe === "weekly" ? "Weekly — last completed week" : "Daily",
+        span: 1,
+      });
+    }
+  }
+  return out;
+}
 
 /** Display names for watchlist themes. An unmapped theme falls back to its raw key, visibly. */
 export const THEME_LABELS: Record<string, string> = {

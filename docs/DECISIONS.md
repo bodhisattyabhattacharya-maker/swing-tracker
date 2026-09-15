@@ -642,3 +642,51 @@ the response — we know nothing), `null` (the view returned SQL NULL — a real
 **The one-sentence version of both halves: absence of evidence is not evidence of health.** An unread
 change list is not a quiet day, and a missing freshness field is not a fresh pipeline.
 
+## 0032 — 2026-09-15 — Weekly joins to the day by date arithmetic; two columns ship uncoloured
+
+**Decision:** the four weekly parameters appear on the grid. `grid_cells` gains them plus a
+`timeframe` column, and the weekly value shown on day *d* is **the newest week that started strictly
+before the week containing d**:
+
+```
+week_start < date_trunc('week', d)
+```
+
+**Why that rule and not the `is_complete` flag.** `is_complete` means "not the newest week in the
+data as it stands today". It is a fact about *now*, so a backtest standing on 2024-03-05 that
+consulted it would be asking a question only the present can answer. The date comparison needs no
+market calendar, no flag, and returns the same answer whenever it runs — which is what keeps
+parameters a pure function of (ticker, date), decision 0002. It also cannot leak the future: any week
+earlier than d's own week had certainly finished by d, and d's own week is excluded by construction.
+That is hard constraint 5 expressed as arithmetic rather than as a warning.
+**Rejected:** joining on `is_complete` (above); a separate weekly grid the page reads alongside the
+daily one (two queries, two date pickers, and the replay property split across them); storing weekly
+values on every daily row in `daily_features` (rebuilds a verified matview to denormalise something
+a range join gives for free).
+
+**`close_vs_sma200w` ships uncoloured, and its norm is deleted.** It had `{low: 0, high: 10}` —
+"near long-term support = interesting". Measured across every complete week we hold: **87–90% of
+name-weeks sit above +10 in every single year, and only ~4% ever land inside the band.** That is
+structural, not a market phase. Distance above a four-year mean mostly says how long the universe has
+been rising; it is not a statement about the name. A threshold that flags nine rows in ten is
+decoration, not judgment, and colouring almost every cell trains the reader to ignore the colour.
+`close_vs_sma30w` is likewise uncoloured, for the duller reason that no threshold has been measured.
+**Rejected:** widening to 0…150, which would fit this month and be wrong in another regime with no
+principle for when to move it; and leaving the column off entirely, which hides a number that is
+perfectly informative uncoloured. A cross-sectional percentile would be meaningful in any regime and
+is the right long-term answer — it waits for the sector-rank work.
+
+**The digest stays daily.** Weekly values step for the whole watchlist on one Monday, so putting them
+in `digest_changes` would add a measured mean of **11.6 crossings every Monday** (p90 18, worst 26) —
+against a whole daily digest of ten on 2026-09-14. Those crossings are real but they are the calendar
+turning over, not news, and an email that reads as dramatic every Monday by construction is one you
+stop believing, which is the failure decision 0027 exists to prevent. One predicate,
+`timeframe = 'daily'`, easy to remove when weekly movement gets a treatment of its own.
+
+**Not done, and deliberately: `pct_off_52w_high` was NOT retuned.** It looked mis-set — on
+2026-09-15 its −25 floor flagged half the watchlist, with the median sitting at −23.8. Over 17,512
+name-days of the last two years it flags **28%**, with a median of −13.5. The 50% was a drawdown, not
+a calibration fault, and the norm was reporting it correctly. Recorded here because the change was
+approved on the strength of the one-day number and then withdrawn on the two-year one: **a threshold
+judged against a single day's snapshot is a threshold tuned to noise.**
+
