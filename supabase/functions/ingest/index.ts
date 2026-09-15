@@ -2,12 +2,19 @@
  * ingest — sync the watchlist and pull daily bars into Postgres.
  *
  * In:      Authorization: Bearer <service_role key>   (anything else -> 401, see auth.ts)
- *          ?scope=tickers|daily|hourly|all            default all
+ *          ?scope=tickers|daily|hourly|indices|all    default all
+ *
+ *          `indices` is the odd one: an index-ONLY pass, for the morning catch-up that exists
+ *          because FRED publishes later than the evening run. It is not part of `all`, which
+ *          already covers indices through `daily`. See provider.ts universeFor().
  *          ?symbols=MU,NVDA                           restrict to these (default: every active row)
  *          ?full=1                                    force the full range, not incremental
  *          ?limit=10                                  max symbols fetched this run (default 10)
  *          ?by=<who>                                  ingest_runs.triggered_by (default "schedule")
- * Out:     JSON { ok, run_id, scope, tickers, daily, hourly } and one row in ingest_runs.
+ * Out:     JSON { ok, run_id, scope, tickers, daily, hourly, indices } and one row in
+ *          ingest_runs. An `indices` run writes detail.indices, never detail.daily - grid_status
+ *          judges freshness on the latter, and conflating them would make a dead equity pipeline
+ *          look healthy every morning.
  *          A per-symbol failure is recorded in `errors` and does not abort the run; `ok` is
  *          false if any symbol failed, so a partial run is visible, not silent.
  * Sources: equities from ./polygon.ts, index series from ./fred.ts, routed by `supports()`
@@ -56,7 +63,17 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "../_shared/auth.ts";
-import { type BarProvider, planLimit, type Range, RateLimitError } from "./provider.ts";
+import {
+  type BarProvider,
+  isScope,
+  planLimit,
+  type Range,
+  RateLimitError,
+  type Scope,
+  SCOPES,
+  universeFor,
+  type Universe,
+} from "./provider.ts";
 import { polygon } from "./polygon.ts";
 import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
@@ -83,7 +100,8 @@ const UPSERT_CHUNK = 1000; // PostgREST is happiest under a few thousand rows pe
  */
 // Per-run caps live in provider.ts alongside minIntervalMs - see planLimit there.
 
-type Scope = "tickers" | "daily" | "hourly" | "all";
+// Scope, its validator and the universe each one covers live in provider.ts, where they can be
+// tested without this file's top-level Deno.serve starting a listener.
 
 interface SymbolResult {
   counts: Record<string, number>;
@@ -232,10 +250,13 @@ async function syncTickers(sb: SupabaseClient, url?: string) {
 // Bars
 // ---------------------------------------------------------------------------
 
-async function activeSymbols(sb: SupabaseClient, only: string[] | null, indices: boolean) {
+async function activeSymbols(sb: SupabaseClient, only: string[] | null, universe: Universe) {
   return await retryRead("tickers read", async () => {
     let q = sb.from("tickers").select("symbol").eq("active", true);
-    if (!indices) q = q.eq("is_index", false);
+    // A boolean here used to mean "include indices", which could not express "ONLY indices" - the
+    // thing the morning catch-up run needs. Three named cases beat a flag answering two questions.
+    if (universe === "equities") q = q.eq("is_index", false);
+    if (universe === "indices") q = q.eq("is_index", true);
     if (only) q = q.in("symbol", only);
     const { data, error } = await q.order("symbol");
     if (error) throw new Error(`tickers read: ${error.message}`);
@@ -405,10 +426,11 @@ Deno.serve(async (req) => {
   if (!authorized(req)) return json({ error: "unauthorized" }, 401);
 
   const url = new URL(req.url);
-  const scope = (url.searchParams.get("scope") ?? "all") as Scope;
-  if (!["tickers", "daily", "hourly", "all"].includes(scope)) {
-    return json({ error: `bad scope "${scope}"` }, 400);
+  const rawScope = url.searchParams.get("scope") ?? "all";
+  if (!isScope(rawScope)) {
+    return json({ error: `bad scope "${rawScope}" - expected one of ${SCOPES.join(", ")}` }, 400);
   }
+  const scope: Scope = rawScope;
   const only = url.searchParams.get("symbols")?.split(",").map((s) => s.trim()).filter(Boolean) ?? null;
   const forceFull = url.searchParams.get("full") === "1";
   // The default follows the cost of the work: a full backfill is ~50x the payload of a top-up, so
@@ -444,18 +466,35 @@ Deno.serve(async (req) => {
     }
     if (scope === "daily" || scope === "all") {
       // Indices included: ^VIX, ^VIX3M and ^GSPC are the market block and relative-strength base.
-      const syms = await activeSymbols(sb, only, true);
+      const syms = await activeSymbols(sb, only, universeFor(scope)!);
       const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset);
       out.daily = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `daily:${s}`));
     }
+    if (scope === "indices") {
+      // The index-only catch-up. FRED publishes later than the 22:30 run - on 2026-09-14 that run
+      // fetched Friday's ^VIX while every equity came back same-evening - so a second pass the next
+      // morning collects the previous close for three symbols instead of re-fetching 36.
+      //
+      // IT WRITES `detail.indices`, NOT `detail.daily`, AND THAT IS LOAD-BEARING. `grid_status`
+      // counts a run as a data success only when `detail ? 'daily'`. If this run used that key it
+      // would reset the staleness clock for the whole grid every morning, so a dead equity pipeline
+      // would look healthy - the exact "successful operation that changed nothing" shape this
+      // project keeps producing.
+      const syms = await activeSymbols(sb, only, universeFor(scope)!);
+      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset);
+      out.indices = r;
+      written += r.written;
+      rateLimited ||= r.rate_limited === true;
+      problems.push(...Object.keys(r.errors).map((s) => `indices:${s}`));
+    }
     if ((scope === "hourly" || scope === "all") && !rateLimited) {
       // Hourly feeds RSI-hourly only, which is not computed for indices. No provider serves
       // session-aligned hourly yet, so this currently reports every symbol as skipped - see
       // the HOURLY note in polygon.ts for why that is deliberate rather than broken.
-      const syms = await activeSymbols(sb, only, false);
+      const syms = await activeSymbols(sb, only, universeFor(scope)!);
       const r = await ingestBars(sb, "hourly", syms, forceFull, limit, offset);
       out.hourly = r;
       written += r.written;

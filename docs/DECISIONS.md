@@ -690,3 +690,46 @@ a calibration fault, and the norm was reporting it correctly. Recorded here beca
 approved on the strength of the one-day number and then withdrawn on the two-year one: **a threshold
 judged against a single day's snapshot is a threshold tuned to noise.**
 
+## 0033 — 2026-09-15 — The index series get their own morning run, and their lag is a published number
+
+**Decision:** a fourth pg_cron job, `swing-refresh-indices`, calls the ingest with a new
+**`indices`** scope at **11:00 UTC every day**. A new view, `public.index_status`, reports how far
+each index series lags the equities, in trading days.
+
+**The problem it solves.** FRED publishes later than the 22:30 UTC ingest. On 2026-09-14 that run
+returned Monday's bar for all 36 equities and Friday's for `^VIX`, `^VIX3M` and `^GSPC`. A stale
+price is visibly stale; **a stale VIX is simply wrong** — "VIX 16, calm" when yesterday it spiked to
+28 is the most believable kind of wrong, and market context is the next thing to be built on these
+series.
+
+**11:00 UTC, every day.** 07:00 ET: after any overnight publication, hours before the next session,
+so the previous close is in place before anyone opens the dashboard during US hours. Every day rather
+than weekdays because Friday's close is what a Saturday run collects — a weekday-only schedule would
+leave the whole weekend showing Thursday.
+
+**The hour is a starting point and the migration says so.** FRED's real publication time could not be
+derived from our data: one clean observation, and every other index row from a single backfill.
+`index_status` exists partly so the hour can be tightened after a week of real runs. Choosing a
+tighter hour from two data points would be the same error as tuning a norm to one day's snapshot
+(decision 0032).
+**Rejected:** moving the main 22:30 run later, which would trade a solved problem — the equity bar is
+settled year-round across both DST shifts (0022) — for an unsolved one; and doing nothing and
+labelling the lag, which is the *fallback*, not the fix, and leaves the number a day old for every
+reader rather than for a few hours.
+
+**`indices` is not part of `all`.** `all` already covers the index series through `daily`. Two names
+for the same work is how a run happens twice. `universeFor()` in `provider.ts` makes the mapping
+explicit and exhaustive, and it lives there rather than in `index.ts` because that file calls
+`Deno.serve` at module top level and cannot be imported by a test.
+
+**An index run writes `detail.indices`, never `detail.daily`.** `grid_status` counts a run as a data
+success only when `detail ? 'daily'`. Had the new run used that key it would reset the staleness
+clock every morning, so a dead equity pipeline would look healthy — the "successful operation that
+changed nothing" shape this project has now produced six times. The key choice is the whole guard.
+
+**What this deliberately does not fix.** If FRED has not published day *d*'s value by 22:30 on day
+*d*, the grid row built that evening still carries an index value from *d−1*. The morning run closes
+it for every later reader, and `index_status` reports it honestly meanwhile. So market context reads
+its as-of date from `index_status`, not from the grid. That degradation is the design, not an
+oversight.
+
