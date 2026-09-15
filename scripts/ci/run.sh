@@ -51,7 +51,12 @@ insert into public.norms (param, low, high) values
   ('rsi_daily', 30, 70),
   ('close_vs_sma200d', -5, 40),
   ('pct_off_high_stored', -30, null),
-  ('pct_off_52w_high', -25, null)
+  ('pct_off_52w_high', -25, null),
+  -- The two weekly norms that config/norms.yml actually sets, so the weekly colouring path is
+  -- exercised rather than merely present. close_vs_sma200w and close_vs_sma30w are deliberately
+  -- absent here for the same reason they are absent there - see config/norms.yml.
+  ('rsi_weekly', 45, 65),
+  ('close_vs_ema21w', -5, 20)
 on conflict (param) do update set low = excluded.low, high = excluded.high;
 insert into public.flags (key, value) values ('pipeline_stale_after_hours', '30'::jsonb)
 on conflict (key) do update set value = excluded.value;

@@ -171,6 +171,117 @@ degenerate as (
            (select coalesce(sum(bars_in_week), 0)::text from public.weekly_bars),
            'a bar counted twice or dropped would shift every weekly aggregate'
     union all
+    -- ---------------------------------------------------------------------------
+    -- The weekly-to-daily as-of join (20260915060000). This is the one place a backtest can be
+    -- silently corrupted, so the rule is re-derived here a DIFFERENT WAY than the view computes it
+    -- - a correlated max() rather than a lead() range join - and the two must agree exactly.
+    --
+    -- WHICH OF THESE IS LOAD-BEARING, stated because it is not obvious. Only the first one - the
+    -- value comparison - can catch the view picking the WRONG WEEK. Verified by changing the view's
+    -- `<` to `<=` so that a day could see its own week: that check failed with 230 mismatches and
+    -- every other check here still passed. The look-ahead check below resolves the source week by
+    -- the correct rule, so it proves the correct week had ended, not that the view used it. The
+    -- others are shape checks. Read them as one set, not as five independent guarantees.
+    -- ---------------------------------------------------------------------------
+    select 'as-of', 'every weekly cell matches an independent as-of lookup',
+           case when (select count(*) from public.grid_cells c
+                      where c.timeframe = 'weekly'
+                        and c.param = 'rsi_weekly'
+                        and c.value is distinct from (
+                              select f.rsi_weekly from public.weekly_features f
+                              where f.symbol = c.symbol
+                                and f.week_start < date_trunc('week', c.d)::date
+                              order by f.week_start desc limit 1)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.grid_cells c
+             where c.timeframe = 'weekly' and c.param = 'rsi_weekly'
+               and c.value is distinct from (
+                     select f.rsi_weekly from public.weekly_features f
+                     where f.symbol = c.symbol and f.week_start < date_trunc('week', c.d)::date
+                     order by f.week_start desc limit 1)),
+           'the lead() range join and a correlated max() must pick the same week, or one of them is wrong'
+    union all
+    -- Resolves the SOURCE WEEK by the rule, then asserts that week had finished. Written first as a
+    -- join on value equality, which failed with 3,347 spurious matches: `is not distinct from` makes
+    -- every null value match every null week, and identical floats match across unrelated weeks. A
+    -- check must identify the row it is judging, not guess it from a value.
+    select 'as-of', 'the week a cell is sourced from ended before the day it is shown',
+           case when (select count(*) from public.grid_cells c
+                      cross join lateral (
+                        select f.last_bar from public.weekly_features f
+                        where f.symbol = c.symbol
+                          and f.week_start < date_trunc('week', c.d)::date
+                        order by f.week_start desc limit 1) src
+                      where c.timeframe = 'weekly' and c.param = 'rsi_weekly'
+                        and src.last_bar >= c.d) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.grid_cells c
+             cross join lateral (
+               select f.last_bar from public.weekly_features f
+               where f.symbol = c.symbol and f.week_start < date_trunc('week', c.d)::date
+               order by f.week_start desc limit 1) src
+             where c.timeframe = 'weekly' and c.param = 'rsi_weekly'
+               and src.last_bar >= c.d),
+           'a weekly value sourced from a bar on or after the day it is shown is look-ahead - hard constraint 5'
+    union all
+    select 'as-of', 'a weekly value is constant within its week',
+           case when (select count(*) from (
+                        select c.symbol, date_trunc('week', c.d) wk, count(distinct c.value) n
+                        from public.grid_cells c
+                        where c.timeframe = 'weekly' and c.param = 'rsi_weekly' and c.value is not null
+                        group by 1,2 having count(distinct c.value) > 1) x) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select c.symbol, date_trunc('week', c.d) wk
+              from public.grid_cells c
+              where c.timeframe = 'weekly' and c.param = 'rsi_weekly' and c.value is not null
+              group by 1,2 having count(distinct c.value) > 1) x),
+           'a weekly bar has one value; it may step on the week boundary and nowhere else'
+    union all
+    select 'as-of', 'the first week of a symbol has no weekly cells',
+           case when (select count(*) from public.grid_cells c
+                      where c.timeframe = 'weekly' and c.value is not null
+                        and date_trunc('week', c.d)::date <= (
+                              select min(f.week_start) from public.weekly_features f
+                              where f.symbol = c.symbol)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.grid_cells c
+             where c.timeframe = 'weekly' and c.value is not null
+               and date_trunc('week', c.d)::date <= (
+                     select min(f.week_start) from public.weekly_features f where f.symbol = c.symbol)),
+           'there is no completed week before the first one, so those days must be blank rather than borrowing'
+    union all
+    select 'as-of', 'timeframe is only daily or weekly',
+           case when (select count(*) from public.grid_cells
+                      where timeframe not in ('daily','weekly')) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.grid_cells where timeframe not in ('daily','weekly')),
+           'a third value would silently fall through every filter written against this column'
+    union all
+    select 'as-of', 'the ten daily params survived the view rewrite',
+           case when (select count(distinct param) from public.grid_cells
+                      where timeframe = 'daily') = 10
+                then 'PASS' else 'FAIL' end,
+           '10',
+           (select count(distinct param)::text from public.grid_cells where timeframe = 'daily'),
+           'grid_cells was replaced in place; dropping a daily param would be invisible on the page'
+    union all
+    select 'digest', 'no weekly param reaches the digest',
+           case when (select count(*) from public.digest_changes where param like '%weekly%'
+                                                                   or param like '%w')
+                    + (select count(*) from public.digest_standing where param like '%weekly%'
+                                                                      or param like '%w') = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           ((select count(*) from public.digest_changes where param like '%weekly%' or param like '%w')
+          + (select count(*) from public.digest_standing where param like '%weekly%' or param like '%w'))::text,
+           'weekly params step for the whole watchlist on one Monday; that is the calendar, not news'
+    union all
     select 'scheduling', 'all three jobs registered exactly once',
            case when (select count(*) from cron.job where jobname like 'swing-%') = 3
                 then 'PASS' else 'FAIL' end,

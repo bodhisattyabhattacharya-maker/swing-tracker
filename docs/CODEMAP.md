@@ -46,7 +46,7 @@ next agent to the wrong file confidently.
 
 | Path | Holds | Entry point |
 |---|---|---|
-| `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data | Read by ingest and the grid. **Never hardcode what lives here.** |
+| `config/` | `watchlist.yml`, `norms.yml` — the two things we tune most, as data. **Removing a key from `norms.yml` deletes the norm**, which is deliberate: a threshold deleted in git must stop colouring cells. A parameter with no norm still shows its value, uncoloured — that is a normal state, not a gap. | Read by ingest and the grid. **Never hardcode what lives here.** |
 | `supabase/migrations/` | Timestamp-named, forward-only SQL. Applied by the Supabase GitHub integration on merge to `main`. Includes the pg_cron schedule — `select jobname, schedule from cron.job` is the live answer to "what runs when". | Oldest first; never edit a merged one |
 | `supabase/functions/` | Deno edge functions, one directory each. `_shared/` holds code used by more than one (`auth.ts`); an underscore prefix means Supabase does not deploy it as a function. `digest/` renders and sends the weekday email — `render.ts` is the pure wording and `retry.ts` the read-retry loop, both separate so tests can import them without `index.ts`'s top-level `Deno.serve` starting a listener. **Reads retry, the send never does** (decision 0031). `ingest/` exists: `index.ts` (handler, routing, run bookkeeping) → `auth.ts` (who may call) → `provider.ts` (the seam: `supports()` routes, `minIntervalMs` paces, `planLimit()` caps one run) → `polygon.ts` (equities) and `fred.ts` (index series), plus `watchlist.ts` (yml → `tickers`) and `norms.ts` (yml → `norms`/`flags`). `search/`, `digest/` _(planned)_ | `index.ts` in each; tests are `*_test.ts` beside the code, run by CI |
 | `web/` | Next.js 16 App Router, TypeScript, desktop-first. `app/page.tsx` is **the dashboard**; `app/status/page.tsx` is the deployment check, kept because it answers "is this deployment wired up" without needing the database. `lib/grid.ts` is the only file that talks to Postgres — **server only**, service_role over PostgREST, and nothing may import it into a client component. | `app/page.tsx`; Vercel root directory is `web/` |
@@ -66,6 +66,8 @@ next agent to the wrong file confidently.
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |
 | Where is RSI actually computed? | `public.recursive_indicators` — **once**, for every timeframe. `daily_recursive` and `weekly_features` are both callers. Do not add a second copy. |
 | Is this week finished? | `weekly_features.is_complete`, which means "not the newest week for this symbol". There is no market calendar and none is needed. |
+| Which week is a given day showing? | The newest week that started before that day's own week — `weekly_asof`, and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
+| Why did a weekly cell not move all week? | Because a weekly bar has one value. It steps on the week boundary and nowhere else. |
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |

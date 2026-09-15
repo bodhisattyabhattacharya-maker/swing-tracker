@@ -16,6 +16,7 @@
  */
 import {
   COLUMNS,
+  columnGroups,
   fetchGrid,
   formatNorm,
   formatValue,
@@ -63,6 +64,10 @@ function freshness(status: Status | null): string {
     : "never";
   return `${age}${status.is_stale ? " · stale" : " · ok"}`;
 }
+
+/** The first column whose timeframe differs from the one before it — where the divider goes. */
+const groupStart =
+  COLUMNS.find((c, i) => i > 0 && c.timeframe !== COLUMNS[i - 1].timeframe)?.param ?? null;
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -155,13 +160,29 @@ export default async function Grid() {
 
       <div className="scroll">
         <table>
+          {/* The rule down the left of the weekly block is drawn from the data, not typed in:
+              whichever column first changes timeframe gets it. Reorder COLUMNS and it follows. */}
           <thead>
+            {/* Two rows, because "vs 21 EMA" is a different number on daily bars than on weekly
+                ones and the label alone does not say which. The weekly group names the week it is
+                as of, so a reader is not left wondering why those columns sat still all week. */}
+            <tr className="grp">
+              <th className="sym" />
+              {columnGroups().map((g, i) => (
+                <th key={`${g.timeframe}-${i}`} colSpan={g.span} className={g.timeframe}>
+                  {g.label}
+                </th>
+              ))}
+            </tr>
             <tr>
               <th className="sym">Symbol</th>
               {COLUMNS.map((c) => {
                 const n = normByParam.get(c.param);
                 return (
-                  <th key={c.param}>
+                  <th
+                    key={c.param}
+                    className={c.param === groupStart ? `${c.timeframe} grp-start` : c.timeframe}
+                  >
                     {c.label}
                     {n ? <span className="norm">{formatNorm(n)}</span> : null}
                   </th>
@@ -199,7 +220,10 @@ export default async function Grid() {
                       const cls =
                         v === "below" || v === "above" ? `mark ${v}` : "unjudged";
                       return (
-                        <td key={c.param} className={cls}>
+                        <td
+                          key={c.param}
+                          className={c.param === groupStart ? `${cls} grp-start` : cls}
+                        >
                           {formatValue(cell?.value ?? null, c.digits, c.signed)}
                           {cell?.suppressed_warmup ? <span className="warm" title="Inside its warm-up window — shown, never judged">*</span> : null}
                         </td>

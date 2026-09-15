@@ -23,7 +23,18 @@ norms:
 
   close_vs_sma200d: { low: -5,  high: 40 }  # % distance from the daily 200 SMA
   close_vs_ema21w:  { low: -5,  high: 20 }  # % distance from the weekly 21 EMA
-  close_vs_sma200w: { low: 0,   high: 10 }  # near long-term support = interesting
+
+  # close_vs_sma200w had { low: 0, high: 10 } - "near long-term support = interesting" - and it was
+  # REMOVED on 2026-09-15 when the column reached the grid and the intent was finally measured.
+  # Across every complete week we hold, 87-90% of name-weeks sit above +10 in EVERY year, and only
+  # ~4% ever land inside the band. That is structural rather than a market phase: distance above a
+  # four-year mean says how long the universe has been rising, not something about the name. A
+  # threshold that flags nine rows in ten is decoration, not judgment, so the column now ships
+  # uncoloured. Removing the key here DELETES the row - the sync does that deliberately (see
+  # norms.ts) - which is the whole reason this file is the source of truth.
+  #
+  # close_vs_sma30w is likewise uncoloured, for the duller reason that nobody has measured a
+  # threshold for it yet. Range on 2026-09-07: -13.3 to +75.6, median +6.4.
 
   net_debt_ebitda:  { high: 4 }             # veto territory
   fcf_yield:        { low: 2,   high: 8 }   # percent

@@ -91,6 +91,25 @@ Every weekly parameter depends on this, so it is pinned explicitly:
 - The **current partial week is stored** but rules and the dashboard read the **last completed week**, so no backtest can see the remainder of a week it is standing in.
 - **"Completed" is defined negatively, and deliberately: a week is complete when it is not the most recent week for that symbol.** We have no market calendar, so we cannot know a week has *ended*; what we do know is that only the newest week can still gain bars. That definition needs no calendar, is per-symbol (a name that stopped trading does not make every other name's latest week look finished), and handles holidays for free — **a holiday-shortened week is a normal week with fewer bars, not a gap.** The published `bars_in_week` lets a reader see a short week; `is_complete` is the flag readers filter on. The tempting wrong definition is `bars_in_week = 5`, which would silently drop every holiday week, and `scripts/verify_parameters.sql` has a check whose only job is to fail the day someone writes it.
 
+### How a weekly value attaches to a day
+
+The grid is keyed on days; weekly parameters are keyed on weeks. The join is pinned here because it
+is where a backtest gets silently corrupted:
+
+> **The weekly value shown on day *d* is the newest week that started strictly before the week
+> containing d** — `week_start < date_trunc('week', d)`.
+
+- **It cannot see the future.** Any week earlier than d's own week had certainly finished by d; d's
+  own week had not, and is excluded by construction. Hard constraint 5, as arithmetic.
+- **It does not consult `is_complete`.** That flag describes the data *as it stands now*, so a
+  reader standing on a past date would be asking a question only the present can answer. The date
+  comparison gives the same answer whenever it runs, which is what keeps a parameter a pure function
+  of (ticker, date).
+- **Weekly columns are therefore constant Monday to Friday** and step once, on the week boundary. A
+  weekly cell that changes mid-week is a bug, not a move.
+
+Decision 0032; asserted in `scripts/ci/check_formulas.sql` under the `as-of` section.
+
 ### Relative
 
 | Parameter | Definition |
