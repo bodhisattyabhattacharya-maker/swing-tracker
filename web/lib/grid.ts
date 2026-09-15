@@ -54,22 +54,40 @@ export interface Ticker {
   bellwether: boolean;
 }
 
+/**
+ * EVERY FIELD IS OPTIONAL, AND THAT IS THE POINT — not laziness about typing.
+ *
+ * This shape is not validated at runtime; it is an assertion about a JSON document fetched over
+ * HTTP from a view that deploys on a different schedule from this build. Declaring
+ * `hours_since_success: number | null` told TypeScript the field is ALWAYS THERE, which is exactly
+ * the guarantee two independent pipelines cannot give. On 2026-09-13 Vercel prerendered this page
+ * against a `grid_status` that did not yet have the field; it arrived as `undefined`, the render
+ * read that as "never", and the dashboard displayed "Last ingest: never · ok" while the pipeline
+ * was entirely healthy (INCIDENTS.md).
+ *
+ * With `?` the compiler forces every reader to decide what an absent field means, which is the only
+ * place that decision can be made honestly:
+ *
+ *   undefined  the field was not in the response. We know nothing. Never a verdict.
+ *   null       the view returned SQL NULL. A real fact - e.g. the ingest has never succeeded.
+ *   a value    the answer.
+ */
 export interface Status {
-  data_through: string | null;
-  symbols: number | null;
+  data_through?: string | null;
+  symbols?: number | null;
   /** Published as a fact, NOT as the verdict — a market holiday is not a failed pipeline. */
-  days_behind: number | null;
+  days_behind?: number | null;
   /** Hours since the daily ingest last completed successfully. null means it never has. */
-  hours_since_success: number | null;
-  last_success_at: string | null;
-  stale_after_hours: number | null;
+  hours_since_success?: number | null;
+  last_success_at?: string | null;
+  stale_after_hours?: number | null;
   /** The verdict, and it measures the PIPELINE. See the grid_status view header. */
-  is_stale: boolean | null;
+  is_stale?: boolean | null;
   /** The LAST run, which is a different question from the last GOOD run — showing both is what
    *  distinguishes "nothing has run" from "it ran and failed". */
-  last_run_at: string | null;
-  last_run_ok: boolean | null;
-  last_run_by: string | null;
+  last_run_at?: string | null;
+  last_run_ok?: boolean | null;
+  last_run_by?: string | null;
 }
 
 export interface Norm {

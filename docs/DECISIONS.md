@@ -602,3 +602,43 @@ this project. The weekly assertions surfaced it as MISSING rather than FAIL, bec
 migration runs before the fixture loads; the fix in `scripts/ci/run.sh` and the fix in production are
 the same fix, which is the useful part. The refresh job now names both matviews.
 
+## 0031 — 2026-09-15 — Reads retry, sends never; and absence of data is never reported as health
+
+**Decision:** the digest's three PostgREST reads go through `readWithRetry` (three attempts, 200 ms
+then 600 ms). If a read still fails it returns `null` rather than throwing, and the email is **sent
+anyway** with the gap named at the top. The Resend call is still never retried.
+
+**Why the asymmetry is the whole design.** `digest/index.ts` has said since it was written that it
+does not retry, because "retrying an email risks sending two, which is worse than sending none".
+That judgment was about the **send** and it stands. A PostgREST GET is idempotent — running it three
+times costs milliseconds and can produce nothing worse than the same rows twice. A Resend POST is
+not, and a duplicate digest in ten inboxes cannot be recalled. Conflating the two is what left the
+reads unprotected for as long as they were.
+
+**This is not a new pattern, it is one the digest missed.** CONSTRAINTS has carried since 2026-09-13
+that "every Supabase READ in the ingest retries once after 400 ms; writes are not retried", added
+after four flaky reads in one backfill session. The ingest was hardened; the digest, written later,
+was not. Worth noticing as a class of bug: **a lesson learned in one component does not propagate to
+the next one by itself.**
+
+**Why an incomplete email rather than no email.** Decision 0027 says an email that only arrives on
+interesting days cannot be told apart from a broken pipeline. A read failure was producing exactly
+that silence. So a partial digest, clearly labelled `INCOMPLETE` in the subject and naming what it
+could not read, is strictly better than nothing — and on 2026-09-14 two of the three reads had
+succeeded and were thrown away.
+**Rejected:** retrying the send (see above); suppressing the email on any read failure (the status
+quo, and the bug); retrying only errors that look transient — sorting transient from permanent by
+matching on a message string is guesswork that rots the first time a vendor rewords an error, and
+the cost is asymmetric, since retrying a permanent failure wastes two GETs while not retrying a
+transient one costs the whole email.
+
+**The same principle, applied to the dashboard in the same PR.** `Status` on the web side declared
+every field as present (`hours_since_success: number | null`), which is a guarantee two independently
+deployed pipelines cannot give. The fields are now optional, so the compiler forces every reader to
+separate three cases that were collapsing into one cheerful string: `undefined` (the field was not in
+the response — we know nothing), `null` (the view returned SQL NULL — a real fact), and a value. On
+2026-09-13 that collapse displayed **"Last ingest: never · ok"** on a perfectly healthy pipeline.
+
+**The one-sentence version of both halves: absence of evidence is not evidence of health.** An unread
+change list is not a quiet day, and a missing freshness field is not a fresh pipeline.
+

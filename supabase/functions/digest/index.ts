@@ -11,8 +11,14 @@
  *   - It does not send a normal-looking digest when the pipeline is behind. A cheerful "nothing
  *     crossed a norm today" computed from three-day-old data is a lie, and it is the most
  *     believable kind. Stale means the email leads with that and nothing else.
- *   - It does not retry. One send per scheduled run; a failure is recorded and the next run is
- *     tomorrow. Retrying an email risks sending two, which is worse than sending none.
+ *   - It does not retry THE SEND. One send per scheduled run; a failure is recorded and the next
+ *     run is tomorrow. Retrying an email risks sending two, which is worse than sending none.
+ *     Its READS are retried, which is a different decision entirely - see retry.ts for why.
+ *   - It does not go silent because a read failed. Added 2026-09-14, after the first scheduled run
+ *     sent nothing: one of three reads came back 401 from a PostgREST replica with a drifted clock,
+ *     and the throw discarded the two that had succeeded. Now the reads are retried, and whatever
+ *     survives is sent with the gap named at the top. A partial email beats an absent one, because
+ *     an email that does not arrive looks exactly like a quiet market. INCIDENTS.md, 2026-09-14.
  *
  * DRY RUN: `?send=0` renders and returns the email WITHOUT sending it. Use it every time before
  * changing anything about the content. Sending is irreversible - you cannot unsend to ten people -
@@ -30,6 +36,7 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "../_shared/auth.ts";
 import { type Change, renderDigest, type Standing, type Status } from "./render.ts";
+import { readWithRetry } from "./retry.ts";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -80,26 +87,39 @@ Deno.serve(async (req) => {
   );
 
   try {
-    const [{ data: st, error: stErr }, { data: ch, error: chErr }, { data: sd, error: sdErr }] =
-      await Promise.all([
-        sb.from("grid_status").select("*").single(),
-        sb.from("digest_changes").select("*").order("symbol"),
-        sb.from("digest_standing").select("*"),
-      ]);
-    if (stErr) throw new Error(`grid_status: ${stErr.message}`);
-    if (chErr) throw new Error(`digest_changes: ${chErr.message}`);
-    if (sdErr) throw new Error(`digest_standing: ${sdErr.message}`);
+    // Still parallel, so the retries cost one wall-clock delay rather than three. A read that
+    // exhausts its attempts returns null and names itself in `unavailable`; it no longer takes the
+    // other two down with it.
+    const [st, ch, sd] = await Promise.all([
+      readWithRetry<Status>(() => sb.from("grid_status").select("*").single()),
+      readWithRetry<Change[]>(() => sb.from("digest_changes").select("*").order("symbol")),
+      readWithRetry<Standing[]>(() => sb.from("digest_standing").select("*")),
+    ]);
 
-    const gridUrl = Deno.env.get("GRID_URL") ?? "https://swing-tracker-nu.vercel.app/";
-    const { subject, text } = renderDigest(
-      st as Status,
-      (ch ?? []) as Change[],
-      (sd ?? []) as Standing[],
-      gridUrl,
+    const reads = { grid_status: st, digest_changes: ch, digest_standing: sd };
+    const unavailable = Object.entries(reads).filter(([, r]) => r.failed).map(([n]) => n);
+    const readErrors = Object.fromEntries(
+      Object.entries(reads).filter(([, r]) => r.failed).map(([n, r]) => [n, r.error]),
+    );
+    // Logged even when every read succeeded first time: a run that needed two attempts is the early
+    // warning for the replica problem that caused this code to exist.
+    const readAttempts = Object.fromEntries(
+      Object.entries(reads).map(([n, r]) => [n, r.attempts]),
     );
 
+    const gridUrl = Deno.env.get("GRID_URL") ?? "https://swing-tracker-nu.vercel.app/";
+    const { subject, text } = renderDigest(st.data, ch.data, sd.data, gridUrl, unavailable);
+
     if (dryRun) {
-      return json({ ok: true, dry_run: true, subject, text, changes: (ch ?? []).length });
+      return json({
+        ok: true,
+        dry_run: true,
+        subject,
+        text,
+        changes: ch.data?.length ?? null,
+        unavailable,
+        read_attempts: readAttempts,
+      });
     }
 
     const to = (Deno.env.get("DIGEST_TO") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -110,20 +130,35 @@ Deno.serve(async (req) => {
 
     // Recorded in the same log as every other scheduled run. scope='digest' writes no `daily`
     // key, so it cannot be mistaken for evidence that prices arrived - see grid_status.
+    //
+    // `ok` answers exactly one question: did mail go out? A degraded email that reached the
+    // recipients is ok:true, with `unavailable` naming what was missing from it. Conflating "sent
+    // something partial" with "sent nothing" would blunt the one row that told the truth on
+    // 2026-09-14 when cron.job_run_details said `succeeded`.
     await sb.from("ingest_runs").insert({
       source: "resend",
       scope: "digest",
       triggered_by: url.searchParams.get("by") ?? "schedule",
       finished_at: new Date().toISOString(),
       ok: true,
-      detail: { digest: { subject, recipients: to.length, message_id: sent.id } },
+      detail: {
+        digest: {
+          subject,
+          recipients: to.length,
+          message_id: sent.id,
+          ...(unavailable.length ? { unavailable, read_errors: readErrors } : {}),
+          read_attempts: readAttempts,
+        },
+      },
     });
 
-    return json({ ok: true, subject, recipients: to.length, message_id: sent.id });
+    return json({ ok: true, subject, recipients: to.length, message_id: sent.id, unavailable });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    // Recorded even on failure, because a digest that silently stopped arriving is indistinguishable
-    // from a quiet market - which is the one thing this email exists to rule out.
+    // Reaching here now means the SEND failed, or something outside the read path did - a failed
+    // read degrades the email instead of landing here. Recorded either way, because a digest that
+    // silently stopped arriving is indistinguishable from a quiet market, which is the one thing
+    // this email exists to rule out.
     await sb.from("ingest_runs").insert({
       source: "resend",
       scope: "digest",

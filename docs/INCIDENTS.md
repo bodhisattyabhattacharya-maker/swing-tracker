@@ -192,3 +192,55 @@ merged PR that applied no migration, the `revoke` that revoked nothing, and the 
 prerendered against a schema that did not exist yet. The lesson has not changed: **verify the thing
 you wanted exists, not that the operation reported success.** `list_edge_functions` answered this
 in one call; the deploy log never would have.
+
+## 2026-09-14 — the first scheduled digest sent nothing, and cron called it a success
+
+**What happened:** the first fully automatic weeknight ran. The ingest fetched Monday's bars and
+succeeded (38 symbols, 35.9 s). The refresh rebuilt both matviews in 5.86 s. At 23:00 UTC the digest
+fired, failed, and **no email was sent** — on a night with ten real crossings to report, including
+META's daily RSI going above 70 and four names dropping below their "% off high" floor.
+
+`public.ingest_runs` recorded it honestly: `ok = false`,
+`{"digest": {"error": "digest_changes: JWT issued at future"}}`.
+
+`cron.job_run_details` recorded **`status = succeeded`**.
+
+**Cause: a single transient 401 from one PostgREST replica.** The digest issues three reads in
+`Promise.all`. The edge log shows all three leaving in the same millisecond, carrying the same
+service_role key:
+
+```
+23:00:01.002  GET /rest/v1/digest_changes    401
+23:00:01.002  GET /rest/v1/grid_status       200
+23:00:01.003  GET /rest/v1/digest_standing   200
+```
+
+Same key, same instant, two accepted and one rejected as future-dated. That is not a bad key and not
+our auth code — it is one node in a load-balanced fleet whose clock had drifted behind the key's
+`iat`. Across the seven hours around the run there were **144 PostgREST requests on that key and
+exactly one 401**; a second later the same client POSTed to `ingest_runs` and got a 201. The ingest
+half an hour earlier used the same env var for 78 calls without a single rejection.
+
+**The real defect is ours, and it is not the 401.** Any read error throws, the catch writes
+`ok = false`, and the function returns without sending. So a one-in-a-hundred-and-forty-four blip on
+*one* of three reads discarded the two that had succeeded and produced **silence** — which is the
+exact ambiguity the digest was built to remove. Decision 0027 says an email that simply stops
+arriving is indistinguishable from a quiet market, and the function already honours that for stale
+data by sending a short notice instead of nothing. It does not honour it for its own read failing.
+
+**Fix:** task #49 — a bounded retry around the three reads (they are idempotent GETs and cost
+nothing), and, if one still fails, send anyway with a "could not read X" line rather than sending
+nothing. Plus a test for the read-failure path, which does not currently exist.
+
+**What this cost:** Monday's ten crossings were never emailed. They are still in `digest_changes`,
+so re-running the function would send that digest — but tonight's scheduled run compares Tuesday
+against Monday, so without a deliberate re-send those ten crossings never reach the inbox at all.
+
+**The family it belongs to — and a new member of it.** Five previous entries here are a successful
+operation that changed nothing. This is the inverse and it is worse: **an operation that genuinely
+failed, reported as a success by the signal most people would check.** `cron.job_run_details` said
+`succeeded` because pg_net's `http_post` had queued the request, which is all that row has ever
+meant. The authority order written into `20260913183000_cron_daily.sql` — `ingest_runs` first, the
+freshness check second, `cron.job_run_details` last — was correct, and this is the night it paid for
+itself. Anyone who had checked the cron log would have concluded the pipeline was healthy.
+

@@ -86,19 +86,36 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 
 ## Current state
 
-Phase 1 (tracker) in progress. Foundation schema applied (`tickers`, `daily_bars`,
-`hourly_bars`, `ingest_runs`); the `ingest` edge function exists and is run by hand, now over
-Polygon + FRED (decision 0019), with a full verified daily backfill in place. The **daily**
-parameter layer exists as the `daily_features` matview, checked by
-`scripts/verify_parameters.sql`, and **pg_cron now runs the whole pipeline** — ingest at 22:30
-UTC and a concurrent matview refresh at 22:45, weekdays (decision 0022). There is no user-led
-refresh by design, so those two jobs are the only path: if they do not fire, the dashboard is
-stale and nobody can fix it from the page. A green `cron.job_run_details` row is **not** evidence
-of a good ingest — pg_net is fire-and-forget. Check `ingest_runs`, then the freshness check. `web/` now holds **the dashboard** at `/`, server-rendered with service_role over PostgREST so the
-browser never touches Postgres and RLS needs no read policy (decision 0025); the deployment check
-moved to `/status`. It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set in Vercel — the key
-**must not** carry a `NEXT_PUBLIC_` prefix, which Next would inline into the browser bundle. The pg_cron schedule,
-session-aligned hourly bars, weekly and market-context parameters, cross-sectional ranks, CI
-gating of the golden values, and the grid itself do not exist yet.
-`docs/FEATURES.md` is the authoritative list. Phase 2 (rule engine, alerts, backtesting) is
-specified, not started.
+Phase 1 (tracker) is **live and running unattended**: swing-tracker-nu.vercel.app.
+
+*This paragraph had drifted into contradicting itself — it announced the pg_cron schedule and then
+listed it as not existing. Rewritten 2026-09-15. `docs/FEATURES.md` remains the authoritative list;
+if this and FEATURES ever disagree again, FEATURES wins.*
+
+**Running on its own**, three pg_cron jobs, UTC, weekdays: ingest 22:30 → refresh 22:45 → digest
+23:00 (decisions 0022, 0028). The refresh rebuilds **both** matviews; any new matview must be added
+to that job in the migration that creates it. There is no user-led refresh by design, so the schedule
+is the only path — if it does not fire, the dashboard is stale and nobody can fix it from the page.
+
+**Built:** the full 5-year daily backfill over Polygon + FRED (decision 0019); the **daily** and
+**weekly** parameter layers (`daily_features`, `weekly_features`), with Wilder's recursion existing
+exactly once in `public.recursive_indicators` (decision 0030); norms, flags and `grid_cells`;
+pipeline-based staleness (0026); **the dashboard** at `/`, server-rendered with service_role over
+PostgREST so the browser never touches Postgres and RLS needs no read policy (0025), with the
+deployment check at `/status`; the **weekday email digest** (0027, 0028); and a **CI formula gate**
+comparing the SQL to an independent implementation at 1e-9 (0029).
+
+**Not built:** market context and relative strength, session-aligned hourly bars, sector-relative
+ranks, fundamentals from SEC XBRL, weekly columns on the grid, and the scale-out to ~200 tickers.
+Phase 2 (rule engine, alerts, backtesting) is specified, not started.
+
+**Two things that will bite you, both learned the hard way:**
+- A green `cron.job_run_details` row is **not** evidence of anything but a queued request — pg_net is
+  fire-and-forget. On 2026-09-14 it read `succeeded` for a digest that sent no email. Authority
+  order: `ingest_runs` → `grid_status` → `cron.job_run_details` last.
+- **Absence of evidence is not evidence of health** (decision 0031). An unread change list is not a
+  quiet day; a missing freshness field is not a fresh pipeline. Both of those shipped as cheerful
+  green text before they were caught.
+
+Vercel needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — the key **must not** carry a
+`NEXT_PUBLIC_` prefix, which Next would inline into the browser bundle.

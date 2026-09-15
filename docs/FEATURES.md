@@ -485,3 +485,31 @@ own newest week is older than another symbol's — correctly incomplete, wrongly
 history and a short week are different things. Now per-symbol.
 **By:** Bodhi + Claude
 
+## 2026-09-15 — The digest survives a bad read, and the dashboard stops guessing
+**What:** the weekday digest no longer goes silent when one of its reads fails, and the dashboard no
+longer reports a missing field as a healthy pipeline. Both are the same bug in two places, found a
+day apart.
+**How:** decision 0031. New `supabase/functions/digest/retry.ts` — `readWithRetry`, three attempts at
+200 ms and 600 ms, injectable `sleep` so it is testable without waiting. `index.ts` runs its three
+reads through it, still in parallel, and collects the failures into `unavailable` instead of throwing.
+`render.ts` now takes `Status | null`, `Change[] | null`, `Standing[] | null` and an `unavailable`
+list: **null means unknown, empty means nothing happened**, and the two must never render alike. On
+the web side, every field of `Status` became optional, which forced `page.tsx` to separate `undefined`
+from `null` — a new "Freshness could not be read" banner, checked *before* the stale banner because
+"no verdict is available" outranks a verdict.
+**Architecture impact:** the digest's `ok` in `ingest_runs` keeps a single meaning — did mail go out —
+with `unavailable` and `read_attempts` recorded beside it. `read_attempts` is logged even on a clean
+run, so a replica starting to misbehave shows up as twos before it costs an email.
+**Verified by:** 21 tests, `deno check` clean. Seven cover the retry loop, including the 2026-09-14
+failure reproduced exactly (one failure then success), a ceiling on attempts, a thrown error being
+retried rather than escaping, and `null` rather than `[]` on give-up. Six cover degraded rendering,
+the load-bearing one being *an unread change list NEVER renders as a quiet day*. **All six new render
+tests were run against the previous `render.ts` and all six failed**, while the eight pre-existing
+tests and a new "a healthy run is completely unchanged" test passed — so they encode the new intent
+rather than merely agreeing with the new code.
+**A real bug the type checker caught:** `readWithRetry` first typed its callback as returning
+`Promise`. A PostgREST builder is a *thenable* — it has `.then` but not `.catch`, so it does not
+satisfy `Promise`. It ran correctly under `deno test` and failed `deno check`, which is the CI step
+that would have blocked the merge. Now `PromiseLike`.
+**By:** Bodhi + Claude
+
