@@ -23,6 +23,7 @@ import {
   THEME_LABELS,
   type Cell,
   type Norm,
+  type Status,
 } from "../lib/grid";
 
 // One upstream read serves every viewer for this long. The data changes once a day, so this is
@@ -35,6 +36,33 @@ import {
 export const revalidate = 900;
 const _revalidateIsInSync: typeof revalidate = REVALIDATE_SECONDS;
 void _revalidateIsInSync;
+
+/**
+ * UNDEFINED IS NOT NULL, AND NEITHER OF THEM IS "OK".
+ *
+ * Three different things used to render as the same cheerful "never · ok":
+ *   null       the pipeline genuinely has never completed - a fact the view is reporting.
+ *   undefined  the FIELD WAS NOT THERE. The view this build renders against does not have it,
+ *              which on 2026-09-13 meant a page prerendered before its migration applied, showing
+ *              "never · ok" while the pipeline was perfectly healthy (INCIDENTS.md).
+ *   a number   the real age.
+ *
+ * The third of those is the only one that supports a verdict. `is_stale` being undefined is not
+ * evidence of freshness, so it must not print "ok" - the same mistake, in the same week, that made
+ * the digest treat an unread change list as a quiet day.
+ */
+function freshnessUnknown(status: Status | null): boolean {
+  return !!status && (status.hours_since_success === undefined || status.is_stale === undefined);
+}
+
+function freshness(status: Status | null): string {
+  if (!status) return "unknown";
+  if (freshnessUnknown(status)) return "unknown";
+  const age = typeof status.hours_since_success === "number"
+    ? `${Math.round(status.hours_since_success)}h ago`
+    : "never";
+  return `${age}${status.is_stale ? " · stale" : " · ok"}`;
+}
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -96,22 +124,28 @@ export default async function Grid() {
           </div>
           <div className="stat">
             <span className="stat-k">Last ingest</span>
-            <span className="stat-v">
-              {status?.hours_since_success === null || status?.hours_since_success === undefined
-                ? "never"
-                : `${Math.round(status.hours_since_success)}h ago`}
-              {status?.is_stale ? " · stale" : " · ok"}
-            </span>
+            <span className="stat-v">{freshness(status)}</span>
           </div>
         </div>
       </header>
 
-      {status?.is_stale ? (
+      {/* Order matters: "we could not read freshness" outranks "the data is stale", because the
+          second is a verdict and the first says no verdict is available. Testing stale first would
+          let an undefined is_stale fall through to the quiet no-banner branch. */}
+      {freshnessUnknown(status) ? (
+        <div className="banner stale">
+          <b>Freshness could not be read.</b> The page loaded, but the status view did not return
+          the fields that say when the pipeline last succeeded — most likely this build was rendered
+          against an older schema, as on 2026-09-13. The numbers below may be current or may not be;
+          this page cannot tell you which, and it will not guess. Corrects itself on the next
+          revalidation.
+        </div>
+      ) : status?.is_stale ? (
         <div className="banner stale">
           <b>
-            {status.hours_since_success === null
-              ? "The daily ingest has never completed successfully."
-              : `The daily ingest last completed ${Math.round(status.hours_since_success)} hours ago.`}
+            {typeof status.hours_since_success === "number"
+              ? `The daily ingest last completed ${Math.round(status.hours_since_success)} hours ago.`
+              : "The daily ingest has never completed successfully."}
           </b>{" "}
           It should run every weekday evening, and the schedule is the only way data moves — there
           is no refresh button. The numbers below are real; they are just not as current as they
