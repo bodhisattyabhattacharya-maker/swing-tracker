@@ -20,9 +20,12 @@ import {
   fetchGrid,
   formatNorm,
   formatValue,
+  MARKET_TILES,
+  rsAsOfNote,
   REVALIDATE_SECONDS,
   THEME_LABELS,
   type Cell,
+  type MarketCell,
   type Norm,
   type Status,
 } from "../lib/grid";
@@ -65,9 +68,17 @@ function freshness(status: Status | null): string {
   return `${age}${status.is_stale ? " · stale" : " · ok"}`;
 }
 
-/** The first column whose timeframe differs from the one before it — where the divider goes. */
-const groupStart =
-  COLUMNS.find((c, i) => i > 0 && c.timeframe !== COLUMNS[i - 1].timeframe)?.param ?? null;
+/**
+ * Every column that opens a new group gets the full-height rule to its left.
+ *
+ * This was a single `find` while there were two groups. With relative strength there are three, and
+ * a `find` would have drawn the daily/weekly divider and silently skipped the weekly/RS one — the
+ * kind of bug that looks like a style choice rather than a defect. A Set, so adding a group is
+ * still nothing to remember.
+ */
+const groupStarts = new Set(
+  COLUMNS.filter((c, i) => i > 0 && c.timeframe !== COLUMNS[i - 1].timeframe).map((c) => c.param),
+);
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -78,8 +89,66 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+/**
+ * The market block. Four numbers about the market rather than about a name, so it sits above the
+ * table instead of inside it.
+ *
+ * EACH TILE CARRIES ITS OWN DATE when that date is not the grid's, and says nothing when it is.
+ * VIX and SPX come from FRED, which publishes hours after the equities; between the evening ingest
+ * and the 11:00 catch-up they are a session behind, and on a day when one publishes and the other
+ * does not they are a session apart from EACH OTHER. One date over the block would be a claim the
+ * data does not support (decision 0034).
+ *
+ * The verdict is not computed here. It arrives from `market_cells`, which spells out the same CASE
+ * `grid_cells` does, and CI asserts the two agree — a colour rule implemented twice in two
+ * languages is one nobody notices going wrong.
+ */
+function MarketBlock(
+  { market, gridDate, error }: { market: MarketCell[]; gridDate: string | null; error: string | null },
+) {
+  if (error) {
+    return (
+      <div className="market">
+        <div className="market-err">
+          <b>The market block could not be read.</b> The grid below is unaffected and current.{" "}
+          <span className="err">{error}</span>
+        </div>
+      </div>
+    );
+  }
+  if (market.length === 0) return null;
+  const by = new Map<string, MarketCell>();
+  for (const m of market) if (m.param) by.set(m.param, m);
+
+  return (
+    <div className="market">
+      {MARKET_TILES.map((t) => {
+        const c = by.get(t.param);
+        const v = c?.verdict ?? null;
+        // `undefined` is not a verdict. It means the field was not in the response, which is the
+        // 2026-09-13 lesson: an absent field is not evidence of anything and must not colour.
+        const cls = v === "below" || v === "above" ? `tile mark ${v}` : "tile";
+        const asOf = c?.as_of ?? null;
+        return (
+          <div key={t.param} className={cls} title={t.hint}>
+            <span className="tile-k">{t.label}</span>
+            <span className="tile-v">
+              {formatValue(c?.value ?? null, t.digits, t.signed)}
+              {c?.value === null || c?.value === undefined ? "" : t.suffix}
+            </span>
+            <span className="tile-d">
+              {asOf && asOf !== gridDate ? `as of ${asOf}` : c?.has_norm === false ? "no norm" : "\u00a0"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default async function Grid() {
-  const { status, tickers, cells, norms, error } = await fetchGrid();
+  const { status, tickers, cells, norms, market, rs, rsAsOf, marketError, rsError, error } =
+    await fetchGrid();
 
   if (error) {
     return (
@@ -100,13 +169,29 @@ export default async function Grid() {
   // and generic - adding a parameter is one line in COLUMNS and one in the view's unpivot.
   const by = new Map<string, Cell>();
   for (const c of cells) by.set(`${c.symbol}|${c.param}`, c);
+  // Kept SEPARATE from `by` rather than merged into it. The two views are read at different dates,
+  // and one map would lose the only thing that records the difference.
+  const byRs = new Map<string, Cell>();
+  for (const c of rs) byRs.set(`${c.symbol}|${c.param}`, c);
   const normByParam = new Map<string, Norm>(norms.map((n) => [n.param, n]));
 
   let lastTheme: string | null = null;
   const perTheme = new Map<string, number>();
   for (const t of tickers) perTheme.set(t.theme, (perTheme.get(t.theme) ?? 0) + 1);
 
-  const judged = COLUMNS.filter((c) => normByParam.has(c.param)).length;
+  // "Rendered somewhere on this page" is now two places, not one: a grid column or a market tile.
+  // Counting only COLUMNS would have listed `vix` under "no column yet" on the same screen that
+  // displays it, which is the sort of small lie that makes a reader distrust the rest.
+  const shown = new Set<string>([
+    ...COLUMNS.map((c) => c.param),
+    ...MARKET_TILES.map((t) => t.param),
+  ]);
+  const judged = norms.filter((n) => shown.has(n.param)).length;
+  const rsNote = rsAsOfNote(status?.data_through ?? null, rsAsOf);
+  const labelFor = (param: string) =>
+    COLUMNS.find((c) => c.param === param)?.label ??
+      MARKET_TILES.find((t) => t.param === param)?.label ??
+      param;
 
   return (
     <main className="wide">
@@ -158,6 +243,23 @@ export default async function Grid() {
         </div>
       ) : null}
 
+      <MarketBlock
+        market={market}
+        gridDate={status?.data_through ?? null}
+        error={marketError}
+      />
+
+      {/* An unread RS column must not look like a column of names that all happen to have no
+          relative strength. Blank-because-unread and blank-because-null are different states and
+          the page says which — the same rule the digest got wrong on 2026-09-15. */}
+      {rsError ? (
+        <div className="banner stale">
+          <b>Relative strength could not be read.</b> That column is blank below for that reason,
+          not because the numbers are missing. Everything else on this page is current.{" "}
+          <span className="err">{rsError}</span>
+        </div>
+      ) : null}
+
       <div className="scroll">
         <table>
           {/* The rule down the left of the weekly block is drawn from the data, not typed in:
@@ -168,7 +270,7 @@ export default async function Grid() {
                 as of, so a reader is not left wondering why those columns sat still all week. */}
             <tr className="grp">
               <th className="sym" />
-              {columnGroups().map((g, i) => (
+              {columnGroups({ gridDate: status?.data_through ?? null, rsAsOf }).map((g, i) => (
                 <th key={`${g.timeframe}-${i}`} colSpan={g.span} className={g.timeframe}>
                   {g.label}
                 </th>
@@ -181,10 +283,13 @@ export default async function Grid() {
                 return (
                   <th
                     key={c.param}
-                    className={c.param === groupStart ? `${c.timeframe} grp-start` : c.timeframe}
+                    className={groupStarts.has(c.param) ? `${c.timeframe} grp-start` : c.timeframe}
                   >
                     {c.label}
                     {n ? <span className="norm">{formatNorm(n)}</span> : null}
+                    {c.source === "rs" && rsNote
+                      ? <span className="norm asof">{rsNote}</span>
+                      : null}
                   </th>
                 );
               })}
@@ -215,14 +320,14 @@ export default async function Grid() {
                       <span className="co">{t.name}</span>
                     </td>
                     {COLUMNS.map((c) => {
-                      const cell = by.get(`${t.symbol}|${c.param}`);
+                      const cell = (c.source === "rs" ? byRs : by).get(`${t.symbol}|${c.param}`);
                       const v = cell?.verdict ?? null;
                       const cls =
                         v === "below" || v === "above" ? `mark ${v}` : "unjudged";
                       return (
                         <td
                           key={c.param}
-                          className={c.param === groupStart ? `${cls} grp-start` : cls}
+                          className={groupStarts.has(c.param) ? `${cls} grp-start` : cls}
                         >
                           {formatValue(cell?.value ?? null, c.digits, c.signed)}
                           {cell?.suppressed_warmup ? <span className="warm" title="Inside its warm-up window — shown, never judged">*</span> : null}
@@ -259,10 +364,10 @@ export default async function Grid() {
           <h2>Norms in force</h2>
           <dl>
             {norms
-              .filter((n) => COLUMNS.some((c) => c.param === n.param))
+              .filter((n) => shown.has(n.param))
               .map((n) => (
                 <div key={n.param}>
-                  <dt>{COLUMNS.find((c) => c.param === n.param)?.label ?? n.param}</dt>
+                  <dt>{labelFor(n.param)}</dt>
                   <dd>{formatNorm(n)}</dd>
                 </div>
               ))}
@@ -276,13 +381,14 @@ export default async function Grid() {
           <h2>{norms.length - judged} norms with no column yet</h2>
           <p>
             {norms
-              .filter((n) => !COLUMNS.some((c) => c.param === n.param))
+              .filter((n) => !shown.has(n.param))
               .map((n) => n.param)
-              .join(", ") || "None — every norm has a parameter."}
+              .join(", ") || "None — every norm has something to judge."}
           </p>
           <p className="muted">
-            Weekly, market-context and fundamental parameters land in later passes. This list
-            shrinks as they do.
+            Fundamental parameters land in a later pass. This list shrinks as they do — and a norm
+            that <em>stays</em> here after its parameter ships usually means the two are spelled
+            differently, which colours nothing and says nothing.
           </p>
         </div>
       </div>

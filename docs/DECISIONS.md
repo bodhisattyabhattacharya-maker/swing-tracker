@@ -949,3 +949,53 @@ when RS reaches the grid. A number that RISES means a typo, which is exactly wha
 changes take effect at the **22:30 UTC run**, not when the PR merges. The same lag caught out the
 `close_vs_sma200w` deletion the day before.
 
+## 0039 — 2026-09-16 — The verdict is decided in SQL, three times, against one reference
+
+**Context:** relative strength and the market block reach the page. Neither lives in `grid_cells`,
+and both have norms, so both need a below/normal/above verdict. The obvious route is to compute it in
+TypeScript from the norms the page already fetches.
+
+**Decision: no.** Two new views — `rs_cells` and `market_cells` — publish the same cell shape
+`grid_cells` does, verdict included. The page renders colour; it never decides it.
+
+**Why not share one SQL function instead of copying the CASE three times.** A scalar function per
+cell is a per-row call the planner cannot see through, on views read at half a million rows — this
+week's outage was a planner problem and it is too soon to introduce another. So the CASE is written
+out three times, and `check_formulas.sql` asserts each of the three against ONE reference expression
+built from the columns each view publishes. Copies that are checked are fine; copies that are not are
+how a cell ends up the wrong colour, which nobody notices the way they notice a wrong number.
+
+**A blind spot the new check exposed in the old one.** DEFINITIONS says a value EQUAL to a bound is
+INSIDE the band — `<` and `>`, not `<=` and `>=`. Mutating `rs_cells` from `<` to `<=` passed every
+check. Measured why: **zero cells in any view sat exactly on a norm boundary**, in `grid_cells` too,
+so the two spellings were indistinguishable to the whole suite and always had been. The CI norms now
+carry one bound equal to an actual fixture value, and the mutation fails. That hole predates this
+work; this is the PR that found it.
+
+**Why RS and the market are separate views rather than more rows in `grid_cells`.**
+
+`relative_strength` publishes only on dates where SPX also has a bar, and FRED publishes hours after
+the equities — so most evenings its newest date is one session behind the grid's. Folding it in would
+mean an inner join (the whole grid loses its newest day every evening) or an as-of join (a value from
+an earlier session in a row labelled today, and the 441 ms → 8,826 ms band join of 0035 — the defect
+of the 2026-09-16 outage, re-introduced one migration after fixing it).
+
+`market_cells` is keyed on `d` alone, because the market is not a symbol. A fake symbol like `^MKT`
+would put it inside every per-symbol query, every breadth count and every `count(distinct symbol)`,
+and the one that forgot to exclude it would be wrong invisibly.
+
+**How the page shows a value from a different day, which is the user-facing half of this.** The RS
+column group carries `as of 2026-09-14` under its heading whenever that date is not the grid's, and
+nothing when they match — a date displayed every day stops being read. Each market tile carries its
+own as-of for the same reason, and they can differ from each other on a day when one FRED series
+publishes and another does not. This is 0034's rule (every borrowed value carries its own date)
+applied to rendering.
+
+**Rejected:** leaving the RS column blank until the 11:00 catch-up. Strictly honest, and empty
+exactly when someone is most likely to be looking at it. Showing the number and naming its session is
+equally honest and useful; **Bodhi chose this explicitly.**
+
+**Also rejected:** three RS columns. 63b and 252b are computed and published by `rs_cells`; the grid
+takes 126b only. The table is already fifteen columns and a parameter nobody has lived with yet does
+not get three of them. Each is one line in `web/lib/grid.ts` when it earns its place.
+

@@ -680,3 +680,46 @@ schedule, the deadline) and the three guards pass. With the policy changed to th
 blind to the other's failure mode, which is why both were run.
 **By:** Bodhi + Claude
 
+## 2026-09-16 — The market block and relative strength reach the page
+**What:** a four-tile strip above the grid — VIX, VIX term structure, S&P 500, breadth — and a
+sixteenth column, **vs SPX 126b**. Both were computed and verified in the database and shown nowhere.
+Each market tile carries its own as-of date when that date is not the grid's; the RS column group
+carries one under its heading for the same reason.
+**How:** decision 0039, migration `20260916140000`. Two new views, `rs_cells` and `market_cells`,
+publish the cell shape `grid_cells` already publishes, **verdict included** — the page renders colour
+and never decides it. `config/norms.yml` renames `vix_term_struct` to `term_structure`, the third
+norm this week that was named for an idea rather than for the parameter it judges and therefore
+coloured nothing.
+**Architecture impact:** three views now spell out the same below/normal/above CASE. That is
+deliberate — a scalar function would be a per-row call the planner cannot see through, days after a
+planner problem took the site down — and all three are asserted against a single reference expression
+in CI, so a copy cannot drift alone.
+
+The page also learned to fail in parts. A failed `market_cells` or `rs_cells` read now costs its own
+block and a line saying so; only the three reads the grid cannot render without can fail the page.
+**An unread block says it is unread — it never renders as an absence of data.**
+
+**Verified by:** `scripts/ci/run.sh` green — **74 formula checks, 7 new** — `next build` clean
+including its TypeScript pass, and the page rendered from a fixture of real 2026-09-15 production
+rows and read at 1280 / 1440 / 1680 / 1920 in both light and dark.
+
+**Three things that only showed up once it was on screen, all of them measured rather than guessed:**
+
+- The RS column was **off the right edge at every width**: the table needed 1726px inside a 1500px
+  frame. The frame is now 1800px and the group label short, which brings the table to 1534px — it
+  fits whole from 1680 up.
+- The RS group label was `white-space: nowrap` over a group of ONE column, so the label was setting
+  the column's width: "Relative strength — vs S&P 500, as of 2026-09-14" made it 350px with the
+  number marooned at the far right. The date moved to the column's own sub-line, where the norm
+  already sits.
+- The divider between column groups was found with a `find`, which returns the FIRST one. With a
+  third group it drew the daily/weekly rule and silently skipped weekly/RS — a defect that looks
+  like a style choice. Now a Set.
+
+**A blind spot this PR found in the existing gate, which is the part worth keeping.** DEFINITIONS
+says a value equal to a norm bound is INSIDE the band. Changing `<` to `<=` in a verdict passed every
+check in the suite. The reason, measured: **zero cells in any view sat exactly on a norm boundary** —
+so `<` and `<=` had always been indistinguishable to CI. A fixture norm now lands exactly on a real
+value, and the mutation fails two checks. That hole was older than this work.
+**By:** Bodhi + Claude
+
