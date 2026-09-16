@@ -66,11 +66,12 @@ next agent to the wrong file confidently.
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |
 | Where is RSI actually computed? | `public.recursive_indicators` — **once**, for every timeframe. `daily_recursive` and `weekly_features` are both callers. Do not add a second copy. |
 | Is this week finished? | `weekly_features.is_complete`, which means "not the newest week for this symbol". There is no market calendar and none is needed. |
-| Which week is a given day showing? | The newest week that started before that day's own week — `weekly_asof`, and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
+| Which week is a given day showing? | The newest week that started before that day's own week — `weekly_in_force` (`source_week_start` names it), and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
 | Why did a weekly cell not move all week? | Because a weekly bar has one value. It steps on the week boundary and nowhere else. |
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
+| Why is a read slow rather than wrong? | `docs/INCIDENTS.md` 2026-09-16 first. A join with no equality in it costs nothing on one date and is quadratic over the whole view; `scripts/ci/check_formulas.sql` section `shape` asserts the plan, because no value check can see this. |
 | Why is the data stale? | `public.ingest_runs` first, then `cron.job_run_details`. A green cron row only means the request was queued. |
 | Is this name beating the index? | `public.relative_strength` — 63/126/252 **trading bars**, percentage points. No row for the newest trading day until FRED publishes SPX; that blank is correct, and `index_status` says why. |
 | What is the market doing? | `select * from public.market_context order by d desc limit 1` — VIX, band, term structure, SPX, breadth. Read `vix_as_of` before believing `vix`: they differ by design for a few hours each evening. |

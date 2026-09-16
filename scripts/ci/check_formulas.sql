@@ -22,6 +22,31 @@
 -- than the 1e-3 used against the hand-read TradingView goldens, where the gap is a genuine
 -- vendor/rounding floor rather than accumulation.
 
+-- ---------------------------------------------------------------------------
+-- A helper for the `plan` checks at the bottom of this file, which assert the SHAPE of a query
+-- plan rather than a value. EXPLAIN cannot appear in a subquery, so it is wrapped.
+--
+-- `analyze false`: the assertion is structural. Timing a plan on a 200-bar fixture would prove
+-- nothing about production and would make the gate flaky on a busy CI machine. What it CAN prove,
+-- at any size, is that the planner found an equality to join on - and the outage of 2026-09-15 was
+-- caused precisely by there not being one.
+--
+-- Output is suppressed so this stays a file of check rows: CI counts the rows this file emits, and
+-- a stray CREATE FUNCTION tag would be counted as one.
+-- ---------------------------------------------------------------------------
+\o /dev/null
+create or replace function pg_temp.plan_of(q text) returns text
+language plpgsql as $fn$
+declare line text; out text := '';
+begin
+  for line in execute 'explain (analyze false, costs false) ' || q loop
+    out := out || line || E'\n';
+  end loop;
+  return out;
+end
+$fn$;
+\o
+
 with expected as (
   select e.d, e.param, e.expected,
          case e.param
@@ -482,12 +507,76 @@ degenerate as (
            'cron.job is readable by anyone who can read the database; it must store a lookup'
   ) t
 ),
+-- ---------------------------------------------------------------------------
+-- THE REGRESSION CLASS THAT CAUSED THE 2026-09-15 OUTAGE.
+--
+-- Every value check in this file passed on the day the dashboard and the digest both timed out,
+-- because the numbers were right - they just took seven seconds to arrive, against an eight-second
+-- statement timeout. A gate that only compares values cannot see that coming, and the fixture is
+-- far too small for a timing gate to mean anything.
+--
+-- So these assert SHAPE, which is size-independent and is what actually went wrong: a join with no
+-- equality in it (a "band join") has nothing to hash or merge on, so it pairs every row on one side
+-- against every row on the other. Filtered to one date that costs 20 ms; over the whole view it
+-- cost 7.2 s and removed 10.6 million rows by filter.
+--
+-- The first check is the invariant the equi-join REPLACING that band join depends on. If a symbol
+-- could have a daily bar in a week with no weekly row, "the row before this week" and "the newest
+-- week before this week" would stop being the same week, and the grid would silently show the
+-- wrong week rather than fail. It cannot happen today - weekly_bars groups the same daily_bars -
+-- but that is an argument, and this is a test.
+-- ---------------------------------------------------------------------------
+shape as (
+  select * from (
+    select 'shape'::text as section,
+           'every week with a daily bar has a weekly row'::text as check_name,
+           case when (select count(*) from (
+                        select distinct f.symbol, date_trunc('week', f.d)::date as wk
+                        from public.daily_features f) dw
+                      where not exists (
+                        select 1 from public.weekly_features w
+                        where w.symbol = dw.symbol and w.week_start = dw.wk)) = 0
+                then 'PASS' else 'FAIL' end as status,
+           '0'::text as expected_v,
+           (select count(*)::text from (
+              select distinct f.symbol, date_trunc('week', f.d)::date as wk
+              from public.daily_features f) dw
+             where not exists (
+               select 1 from public.weekly_features w
+               where w.symbol = dw.symbol and w.week_start = dw.wk)) as actual_v,
+           'a gap here would make grid_cells show the wrong week, silently - see 20260916060000'::text as note
+    union all
+    select 'shape', 'an unfiltered read of grid_cells needs no band join',
+           case when pg_temp.plan_of(
+                       'select max(d), count(distinct symbol) from public.grid_cells')
+                     not like '%Join Filter%'
+                then 'PASS' else 'FAIL' end,
+           'no Join Filter',
+           case when pg_temp.plan_of(
+                       'select max(d), count(distinct symbol) from public.grid_cells')
+                     not like '%Join Filter%'
+                then 'no Join Filter' else 'Join Filter present' end,
+           'this is the exact plan that timed out on 2026-09-15; an equality must be found, not a range'
+    union all
+    select 'shape', 'grid_status does not read the weekly layer at all',
+           case when pg_temp.plan_of('select * from public.grid_status')
+                     not like '%weekly%'
+                then 'PASS' else 'FAIL' end,
+           'no weekly scan',
+           case when pg_temp.plan_of('select * from public.grid_status')
+                     not like '%weekly%'
+                then 'no weekly scan' else 'weekly layer scanned' end,
+           'the banner asks for a date and a symbol count; the dashboard asks for it on every revalidation'
+  ) t
+),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
   union all
   select section, check_name, status, expected_v, actual_v, note from weekly_rows
   union all
   select section, check_name, status, expected_v, actual_v, note from degenerate
+  union all
+  select section, check_name, status, expected_v, actual_v, note from shape
 )
 select * from (
   select 0 as ord, * from all_rows

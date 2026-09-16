@@ -279,3 +279,76 @@ nothing. **Asserting on an exit code proves the run failed, not that it failed f
 intended**; the test now greps for the specific message the guard prints. This was the second vacuous
 negative test in one day — the first had a `create view ... already exists` abort standing in for a
 passing check (see the weekly as-of work, same date).
+
+## 2026-09-16 — the digest sent "date unknown", and the dashboard was one slow moment behind it
+
+**What happened:** the 23:00 digest of 2026-09-15 arrived as
+`Swing Tracker — INCOMPLETE digest, date unknown`. It arrived at all only because the retry work of
+the day before (#47) held the send open:
+
+```
+unavailable   ["grid_status", "digest_standing"]
+read_errors   both "canceling statement due to statement timeout"
+read_attempts grid_status 3, digest_changes 1, digest_standing 3
+```
+
+Three attempts each, all three timed out, and the digest correctly reported what it could not read
+instead of inventing a quiet day. Measured on production the next morning:
+
+| | |
+|---|---|
+| `select * from grid_status` | **6,490 ms** |
+| `select max(d), count(distinct symbol) from grid_cells` | **7,201 ms**, 593,262 rows |
+| the plan | `Rows Removed by Join Filter: 10,641,781` |
+
+against a PostgREST statement timeout of about 8 s. The dashboard calls `grid_status` on **every ISR
+revalidation**, so the page was sitting the same distance from the same failure and nobody had
+noticed.
+
+**Cause:** the weekly join added by `20260915060000` is a **band join** — `week_start < W and
+(next_week_start is null or next_week_start >= W)`. There is no equality in it, so the planner has
+nothing to hash or merge on and pairs every daily bar against every weekly row per symbol. Filtered
+to a single date a predicate cuts the left side to 36 rows first and it costs about 20 ms, which is
+the shape every test and every manual check of that PR used. Unfiltered — which is exactly what an
+aggregate over the whole view does — it is quadratic in each symbol's history, and it gets worse
+every week the data grows.
+
+**Why this one is different from the other ten entries here:** nothing was wrong. Every number the
+view produced was correct, and every value check in the gate passed on the night both reads failed.
+The failure was entirely in **how long the right answer took**, which is a class the whole test
+suite was blind to.
+
+**And the part worth writing down.** This exact hazard was identified, measured at **8,826 ms**, and
+written into decision 0035 as the stated reason relative strength ships with no as-of layer — on
+2026-09-15, the day **after** this band join shipped, by the same hands, without anyone going back to
+check the code that already contained it. The trap was documented by the person who had already
+walked into it. Finding a hazard is not the same as checking whether you have already shipped it;
+the habit that follows is to grep for the pattern in what already exists at the moment you name it,
+not only to avoid it in what comes next.
+
+**Fix:** `20260916060000_grid_equijoin.sql`. The as-of rule is unchanged and is now expressed as an
+equality — `weekly_in_force` carries each week's predecessor's values, so a daily row joins on its
+own week and lands on `weekly_features_pk`. `grid_status` and `digest_standing` stop aggregating
+`grid_cells` to learn a date and a symbol count that `daily_features` answers from an index.
+
+| | before | after |
+|---|---|---|
+| `select max(d), count(distinct symbol) from grid_cells` | 3,141 ms | 528 ms |
+| `select * from grid_status` | 3,192 ms | **23 ms** |
+| `select count(*) from digest_standing` | 3,124 ms | **9 ms** |
+
+(CI sandbox, same 40-symbol / 965-day / 539,600-cell shape as production; the sandbox is faster than
+production, so read the ratios.)
+
+**The guard, since a value gate could not have caught this.** `check_formulas.sql` gains a `shape`
+section that asserts the **plan**, not a timing: an unfiltered read of `grid_cells` must contain no
+`Join Filter`, `grid_status` must not touch the weekly layer at all, and every week holding a daily
+bar must hold a weekly row — the invariant the equi-join rests on. Structural assertions work at
+fixture size; a timing assertion on 200 bars would prove nothing and would flake.
+
+**Verified by breaking it, and by the specific message rather than the exit code.** With the
+2026-09-15 band join and the old `grid_status` pasted back, the two plan checks fail with
+`Join Filter present` and `weekly layer scanned` while all 65 other checks still pass, and the gate's
+own counter reports 2. Inserting a daily bar in a week with no weekly row makes the third check fail
+with `1`. Row-for-row on the fixture, old and new `grid_cells` are identical: 8,744 rows each,
+`except all` empty in both directions.

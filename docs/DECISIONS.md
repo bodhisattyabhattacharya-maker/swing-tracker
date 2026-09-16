@@ -823,3 +823,53 @@ untrustworthy. `rs_252b` stays null for a name's first year — the honest answe
 before this decision. 126 bars is *about* six months and is not six months, and a column named for
 one while computing the other is the labelling failure decision 0019 refused for ^SOX. The columns
 here are named by bars; **the norm gets renamed when the grid column lands**, not quietly matched to.
+
+## 0036 — 2026-09-16 — The as-of week is resolved once, as an equality, not searched per row
+
+**Context:** the band join of 0032 timed out the digest and very nearly the dashboard (INCIDENTS
+2026-09-16). The rule it implements is not in question — hard constraint 5, *the weekly value shown
+on day d comes from the newest week that started strictly before the week containing d* — only where
+that lookup happens.
+
+**Decision:** resolve it **once per weekly row**, not once per daily row. `weekly_in_force` carries,
+for each `(symbol, week)`, the values of the *previous* weekly bar plus `source_week_start` naming
+which week they came from. A daily row then joins on `w.week = date_trunc('week', d)`, which is an
+equality on `weekly_features_pk`.
+
+**Why this is the same set of rows and not merely a similar one.** The two agree exactly as long as
+every week holding a daily bar also holds a weekly row, because then "the row before this week" *is*
+"the newest week before this week". That holds by construction — `weekly_bars` groups the same
+`daily_bars` that `daily_features` is built from — but "holds by construction" is how silent
+corruption gets in a year later, so it is a CI assertion rather than an argument. Confirmed
+empirically too: on the fixture, old and new `grid_cells` are identical row for row, 8,744 each,
+`except all` empty both ways, and the existing as-of checks (a correlated `max()` re-derivation, the
+source week having ended before the day it is shown, constant within its week, nothing before a
+symbol's first week) all still pass.
+
+**The first week of a symbol still produces no weekly cells.** That is a `source_week_start is not
+null` filter, and it is the one place where getting the equivalence wrong would show up as *extra
+rows* rather than as a slow query. A row of nulls would have been wrong: null means "we have the week
+and the number is unknown", absent means "there is no such week".
+
+**A second decision, smaller and worth stating separately:** `grid_status` and `digest_standing` no
+longer read `grid_cells` to learn the newest date and the symbol count. They read `daily_features`
+with the same `active and not is_index` predicate, which is identical by definition — `grid_cells`'
+daily branch *is* that join, and its weekly branch is built from the same rows, so it can add neither
+a symbol nor a later date. The equi-join alone would have taken the banner from 3.1 s to 528 ms;
+this takes it to 23 ms, and stops its cost scaling with the number of **parameters** rather than the
+number of symbols. At 200 tickers that is the difference between ~2.5 s and no change.
+
+**Rejected:** an index or a matview over `grid_cells`. Both treat a plan defect as a volume problem,
+and a matview would put the grid a refresh behind the data for no reason. Also rejected: patching the
+three current call sites, which leaves the next unfiltered read — a backtest, step 10's 200 tickers —
+to find the same wall.
+
+**What this costs:** `weekly_asof` is gone, replaced by a view of a different shape under a different
+name. `asof` described a lookup; nothing looks anything up now. It was referenced only by
+`grid_cells` and two doc lines.
+
+**The standing lesson, recorded because it is about process rather than SQL:** this hazard was
+measured at 8,826 ms and written into 0035 the day *after* the band join shipped, by the same hands,
+without checking the code that already had it. **Naming a hazard is the moment to grep for it in what
+already exists**, not only to avoid it in what comes next.
+
