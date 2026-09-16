@@ -27,6 +27,12 @@ const assertThrows = (fn: () => unknown, includes: string) =>
 import { isScope, planLimit, RateLimitError, SCOPES, universeFor } from "./provider.ts";
 import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
+import {
+  DEFAULT_ATTEMPTS,
+  DEFAULT_DELAYS_MS,
+  fetchWithRetry,
+  type RetryInfo,
+} from "./http.ts";
 import { parseWatchlist } from "./watchlist.ts";
 import { parseNorms } from "./norms.ts";
 import { callerAllowed, jwtRole } from "../_shared/auth.ts";
@@ -286,6 +292,191 @@ Deno.test("a missing key fails before any request is made", async () => {
     caught = e;
   }
   assertEquals((caught as Error).message.includes("POLYGON_API_KEY"), true);
+});
+
+// ---------------------------------------------------------------------------
+// Vendor fetch retry (http.ts)
+//
+// Closes the gap recorded in CONSTRAINTS.md on 2026-09-15: Supabase reads were retried, vendor
+// fetches were not, so one transient 502 lost that symbol until the next night.
+//
+// Which of these fail against the code as it was before http.ts existed, and which are guards that
+// passed then and must keep passing - stated because the difference is the whole value of the set:
+//
+//   NEW BEHAVIOUR (all failed before): a 502 then a 200 succeeds; a transport error then a 200
+//   succeeds; a persistent 5xx gives up after exactly DEFAULT_ATTEMPTS; the pause schedule is the
+//   documented one; the deadline refuses an attempt that cannot finish in time.
+//
+//   MUST NOT CHANGE (passed before, and would still pass if the policy were wrong in the most
+//   tempting way): 4xx is never retried, 429 is never retried and still becomes a RateLimitError,
+//   and a 200 carrying an error body is never retried.
+// ---------------------------------------------------------------------------
+
+/** Each entry is the outcome of one call: a Response to return, or an Error to throw. */
+function withFetchSequence<T>(
+  outcomes: Array<Response | Error>,
+  fn: (calls: () => number) => Promise<T>,
+): Promise<T> {
+  const real = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = (() => {
+    const o = outcomes[Math.min(n, outcomes.length - 1)];
+    n++;
+    return o instanceof Error ? Promise.reject(o) : Promise.resolve(o.clone());
+  }) as typeof fetch;
+  return fn(() => n).finally(() => {
+    globalThis.fetch = real;
+  });
+}
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const OK_AGGS = { status: "OK", results: [{ t: 1757649600000, o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }] };
+
+/** Records the pauses instead of taking them, so the schedule is asserted rather than waited for. */
+function fakeSleep() {
+  const slept: number[] = [];
+  return { slept, sleep: (ms: number) => { slept.push(ms); return Promise.resolve(); } };
+}
+
+Deno.test("a 502 is retried and the next attempt's bars are used", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  const { slept, sleep } = fakeSleep();
+  const r = await withFetchSequence(
+    [json({ error: "bad gateway" }, 502), json(OK_AGGS)],
+    async (calls) => {
+      const res = await fetchWithRetry("https://example.test/aggs", {}, { sleep, onRetry: () => {} });
+      assertEquals(calls(), 2, "the 502 must be asked again");
+      return res;
+    },
+  );
+  assertEquals(r.status, 200);
+  assertEquals(slept, [DEFAULT_DELAYS_MS[0]], "one pause, the documented first delay");
+});
+
+Deno.test("a transport failure is retried - a dropped connection says nothing about the request", async () => {
+  const { sleep } = fakeSleep();
+  await withFetchSequence(
+    [new TypeError("error sending request: connection reset by peer"), json(OK_AGGS)],
+    async (calls) => {
+      const res = await fetchWithRetry("https://example.test/aggs", {}, { sleep, onRetry: () => {} });
+      assertEquals(res.status, 200);
+      assertEquals(calls(), 2);
+    },
+  );
+});
+
+Deno.test("a persistent 5xx gives up after exactly DEFAULT_ATTEMPTS, on the documented schedule", async () => {
+  const { slept, sleep } = fakeSleep();
+  const reasons: RetryInfo[] = [];
+  await withFetchSequence([json({ error: "upstream" }, 503)], async (calls) => {
+    let caught: unknown = null;
+    try {
+      await fetchWithRetry("https://example.test/aggs", {}, {
+        sleep,
+        onRetry: (i) => reasons.push(i),
+      });
+    } catch (e) {
+      caught = e;
+    }
+    assertEquals(caught instanceof Error, true);
+    assertEquals((caught as Error).message.includes("503"), true, "the last failure is what surfaces");
+    assertEquals(calls(), DEFAULT_ATTEMPTS);
+  });
+  assertEquals(slept, DEFAULT_DELAYS_MS, "pauses grow, and there is one fewer than attempts");
+  assertEquals(reasons.map((r) => r.reason), ["server", "server"]);
+  assertEquals(reasons.map((r) => r.status), [503, 503]);
+});
+
+Deno.test("4xx is NEVER retried - a wrong question does not become right on the second ask", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  await withFetchSequence([json({ error: "unauthorized" }, 401)], async (calls) => {
+    let caught: unknown = null;
+    try {
+      await polygon.daily("MU", "incremental");
+    } catch (e) {
+      caught = e;
+    }
+    assertEquals((caught as Error).message.includes("key rejected"), true);
+    assertEquals(calls(), 1, "one call, or a bad key costs three times as long to report");
+  });
+});
+
+Deno.test("429 is NEVER retried and still aborts the run - retrying a rate limit is how Yahoo blocked us", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  await withFetchSequence([new Response("slow down", { status: 429 })], async (calls) => {
+    let caught: unknown = null;
+    try {
+      await polygon.daily("MU", "incremental");
+    } catch (e) {
+      caught = e;
+    }
+    assertEquals(caught instanceof RateLimitError, true);
+    assertEquals(calls(), 1);
+  });
+});
+
+Deno.test("an error body arriving with HTTP 200 is not retried - it is an answer, not a fault", async () => {
+  Deno.env.set("POLYGON_API_KEY", "test-key");
+  await withFetchSequence([json({ status: "NOT_AUTHORIZED", results: null })], async (calls) => {
+    let caught: unknown = null;
+    try {
+      await polygon.daily("MU", "incremental");
+    } catch (e) {
+      caught = e;
+    }
+    assertEquals((caught as Error).message.includes("NOT_AUTHORIZED"), true);
+    assertEquals(calls(), 1);
+  });
+});
+
+Deno.test("the deadline refuses an attempt that could not finish in time", async () => {
+  // Every attempt "takes" the full per-attempt timeout. With a 45 s deadline the third attempt
+  // would end at 61 s, so it is never started - the policy the header describes.
+  let clock = 0;
+  const { sleep } = fakeSleep();
+  const infos: RetryInfo[] = [];
+  await withFetchSequence(
+    [new DOMException("Signal timed out.", "TimeoutError")],
+    async (calls) => {
+      let caught: unknown = null;
+      try {
+        await fetchWithRetry("https://example.test/aggs", {}, {
+          sleep: (ms) => { clock += ms; return sleep(ms); },
+          now: () => { const t = clock; clock += 20_000; return t; },
+          onRetry: (i) => infos.push(i),
+        });
+      } catch (e) {
+        caught = e;
+      }
+      assertEquals(caught instanceof Error, true);
+      assertEquals(calls(), 2, "two attempts, not three - the third cannot fit the deadline");
+    },
+  );
+  assertEquals(infos.length, 2);
+  assertEquals(infos[1].detail.includes("no time left"), true, "and it says why it stopped");
+});
+
+Deno.test("FRED's retry label carries the series id and never the url, which holds the api key", async () => {
+  Deno.env.set("FRED_API_KEY", "secret-key-value");
+  const labels: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...a: unknown[]) => { labels.push(a.map(String).join(" ")); };
+  try {
+    await withFetchSequence(
+      [json({ error_message: "x" }, 500), json({ observations: [] })],
+      async () => {
+        // Default onRetry logs; the point of this test is what that line contains.
+        await fred.daily("^VIX", "incremental");
+      },
+    );
+  } finally {
+    console.warn = realWarn;
+  }
+  assertEquals(labels.length, 1);
+  assertEquals(labels[0].includes("VIXCLS"), true);
+  assertEquals(labels[0].includes("secret-key-value"), false, "a retry log must never print the key");
 });
 
 // ---------------------------------------------------------------------------
