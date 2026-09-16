@@ -999,3 +999,64 @@ equally honest and useful; **Bodhi chose this explicitly.**
 takes 126b only. The table is already fifteen columns and a parameter nobody has lived with yet does
 not get three of them. Each is one line in `web/lib/grid.ts` when it earns its place.
 
+## 0040 — 2026-09-16 — The seven fundamentals are defined; the eighth is not a fundamental
+
+**Context:** `DEFINITIONS.md` §7 listed eight fundamentals as "still open — each needs a decision
+before launch", and step 8 (sector ranks) is blocked behind them. Defining them *before* writing the
+code is the point: a formula settled by whatever the implementation happened to do is not a decision,
+it is an accident that becomes permanent.
+
+**Decided:** the full table is in `DEFINITIONS.md` §7. The reasoning for each is there rather than
+here, because that is the file an implementer reads. What belongs in this log is the four calls that
+were genuinely open and the one structural finding.
+
+**Diluted EPS, and a negative trailing P/E is NULL.** A negative P/E is not a small P/E; in a sorted
+column it would rank as the cheapest name on the grid. `pe_applicable = false` ships beside it so the
+blank reads as *loss-making* rather than *missing* — the null-vs-undefined distinction of 0031, now
+for the third time.
+
+**Operating leases are debt, in the leverage ratio AND in enterprise value.** Post-ASC 842 they are on
+the balance sheet and contractually owed. The cost is a leverage number higher than the pre-2019
+convention most screeners use — which §5 already states as the expected condition, and is the same
+trade the GAAP-over-non-GAAP choice makes. **The two ratios move together by construction**: counting
+leases as debt in one and not the other would be indefensible, so EV/Sales inherits the definition
+rather than restating it.
+
+**Capex includes capitalised software.** PP&E alone overstates free cash flow for the software-heavy
+mega-caps, a large slice of this watchlist. The column reports which components were found rather than
+silently summing what happens to exist, because not every filer reports the tag.
+
+**Quarterly YoY revenue growth, not TTM.** Nearly forced rather than chosen: `rev_acceleration`
+already has a norm, acceleration is the change in the growth rate, and a TTM series smooths out
+exactly the signal it exists to show.
+
+**The structural finding: analyst target gap is not a fundamental and never was.** It is not a GAAP
+concept, not in XBRL, not in FRED — **no source in our data plane carries it.** PROPOSAL already
+classed it as a *searched column*; §7 listing it beside seven SEC-derived parameters implied a
+symmetry that does not exist, and that is the mistake this entry corrects.
+
+The stronger objection is not availability. Every other number on the grid is a fact about a company
+or its price; a consensus target is a fact about **what a group of analysts said** — the only column
+whose meaning would depend on someone else's judgment, in a product whose first line is *a tracker,
+not an advisor*. **Deferred to a later version** (Bodhi), as a searched column with its own freshness
+rule.
+
+**Two things deliberately NOT decided here, because deciding them from memory would be worse than
+leaving them open.**
+
+- **Tag availability across the 36 filers.** Tag coverage varies by filer and by year. A fundamental
+  that silently goes null for six names is worse than one never built. Measurable with one
+  `net.http_get` against SEC companyfacts.
+- **The effective-tax-rate clamp band in ROIC.** Several of these names have had quarters with tax
+  benefits, where an unclamped rate goes negative and flips NOPAT's sign. **No band is written into
+  §7**, because a number invented at a desk would be obeyed forever. Until it comes from real filings
+  the ROIC definition is incomplete and the parameter is not implementable — stated plainly in §7
+  rather than papered over with a round number.
+
+**Rejected:** matching what consumer apps show. §5 settles it — they buy adjusted vendor data, we
+compute from filings, and no amount of care closes the gap. Chasing a number we structurally cannot
+reproduce is worse than publishing a defensible one and saying where it differs.
+
+**What this unblocks:** step 8, sector-relative ranks, which are percentiles of FCF yield and gross
+margin **within a theme** and therefore could not be defined while FCF yield was not.
+

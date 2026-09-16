@@ -44,6 +44,12 @@ Evidence and dates in `docs/CONSTRAINTS.md`; formulas in `docs/DEFINITIONS.md`.
 - **Every change has a paper trail.** What you changed decides what else you must update —
   the matrix is in `docs/HYGIENE.md` and CI enforces the parts it can. One issue per change,
   branch `<issue>-<slug>`, never commit to `main`.
+- **The PR body is `.github/pull_request_template.md`, filled in — not prose.** Open that file
+  and use it verbatim: What and why, **`Closes #<issue>`**, blast radius, hygiene ticks, evidence,
+  secrets. The commit format is in `docs/HYGIENE.md` §"Commit format": `<type>: <subject>` and a
+  `Closes #<issue>` line. Both existed from the start and were ignored for eight PRs on
+  2026-09-16, which is why those issues had to be closed by hand. A handover that hands over
+  well-written prose instead of the template is still wrong.
 - **Code is read by strangers.** The next session has no memory of writing it. Comment the
   *why*, never the *what*; every migration and function opens with a purpose header.
   See `docs/CODE_STYLE.md`.

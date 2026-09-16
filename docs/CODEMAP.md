@@ -61,6 +61,8 @@ next agent to the wrong file confidently.
 |---|---|
 | How does a price get into the database? | `supabase/functions/ingest/index.ts` header, then the latest row in `ingest_runs` |
 | How is this number computed? | `docs/DEFINITIONS.md`, then the SQL view named after it |
+| How will a fundamental be computed, before any of it exists? | `docs/DEFINITIONS.md` §7 — settled 2026-09-16, decision 0040, and binding on the implementation. ROIC is the exception and says so: its tax-rate clamp is not measured yet, so it is not implementable. |
+| Why is analyst target gap not with the other fundamentals? | Because no source in our data plane has it, and it is an opinion rather than a measurement. It is a **searched column**, deferred to a later version. |
 | Why is this cell coloured? | `config/norms.yml` |
 | Which tickers, and why that peer group? | `config/watchlist.yml` (`theme` vs `tag`) |
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |

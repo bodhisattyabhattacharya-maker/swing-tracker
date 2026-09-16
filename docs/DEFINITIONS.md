@@ -351,17 +351,90 @@ Two things this establishes beyond "the numbers still work":
 
 ---
 
-## 7. Still open — fundamentals
+## 7. Fundamentals — settled
 
-Not settled. Each needs a decision before launch:
+Settled 2026-09-16, decision 0040. **Nothing here is built yet**; this is the contract the
+implementation has to meet, written before the code so the code cannot quietly decide it.
 
-| Parameter | The choice to make |
-|---|---|
-| Trailing P/E | GAAP vs non-GAAP earnings; basic vs diluted share count. **Largest divergence from consumer apps.** |
-| Net debt / EBITDA | EBITDA is not a GAAP measure. Pick a construction and write it down. |
-| ROIC | At least five accepted definitions of invested capital. |
-| FCF yield | Whether capex includes capitalised software and leases; market cap vs enterprise value denominator. |
-| EV / Sales | Whether enterprise value includes operating lease liabilities. |
-| Revenue growth | Trailing twelve months vs quarterly YoY; as-reported vs restated. |
-| Share count change | Basic vs diluted vs cover-page shares outstanding. |
-| Analyst target gap | Mean vs median target; which analyst set. |
+**The principle that decides most of them** is §5 above: *we compute from GAAP filings via SEC XBRL,
+and we cannot match a consumer app that buys adjusted vendor data.* Wherever the choice was "the
+number Robinhood shows" against "the number the filing supports", **the filing wins and the column
+carries the divergence**. That settled four of the seven on its own.
+
+**The second principle is hard constraint 4:** SEC XBRL is stamped with filing dates and is therefore
+genuinely point-in-time. Using restated figures, or a vendor's cleaned series, throws that away and
+with it the backtesting property decision 0002 exists to protect.
+
+| Parameter | Definition | Null when |
+|---|---|---|
+| **Trailing P/E** | `price / Σ(last four quarters' diluted EPS)`. **GAAP, diluted.** | TTM EPS ≤ 0 — see below |
+| **Net debt / EBITDA** | `net debt / TTM EBITDA`, where `EBITDA = OperatingIncomeLoss + DepreciationDepletionAndAmortization` and `net debt = short-term debt + long-term debt + operating lease liabilities − cash and equivalents − short-term investments` | EBITDA ≤ 0 |
+| **ROIC** | `NOPAT / (total debt + total equity − cash)`, where `NOPAT = OperatingIncomeLoss × (1 − effective tax rate)` and the effective rate is `IncomeTaxExpenseBenefit / pre-tax income`, **clamped** | pre-tax income ≤ 0, or invested capital ≤ 0 |
+| **FCF yield** | `(CFO − capex) / market cap`, where `capex = payments to acquire PP&E + capitalised software` | market cap unavailable |
+| **EV / Sales** | `EV / TTM revenue`, where `EV = market cap + total debt (leases included) − cash − short-term investments` | revenue = 0 |
+| **Revenue growth** | **Quarterly** revenue, year-over-year, **as reported**. `rev_acceleration` is the change in that growth rate. | no year-ago quarter filed |
+| **Share count change** | Year-over-year % change in `dei:EntityCommonStockSharesOutstanding` — the **cover-page** count. Negative is buyback, positive is dilution. | no year-ago filing |
+
+### The four choices that were genuinely open, and what was chosen
+
+**Diluted, not basic, EPS.** Diluted is a required GAAP line, it is the conservative reading, and it
+is what "earnings per share" means without qualification. Basic flatters any company with meaningful
+stock compensation, which is most of this watchlist.
+
+**A negative P/E is null, not a small number.** A negative P/E is not cheap, it is meaningless, and in
+a sorted column it would rank as the cheapest thing on the grid. A `pe_applicable = false` flag ships
+beside it so a blank reads as *loss-making* rather than *missing data* — the same distinction
+decision 0031 is about. **Null ≠ zero ≠ undefined**, again.
+
+**Operating leases count as debt — in BOTH the leverage ratio and EV.** Post-ASC 842 they are on the
+balance sheet and contractually owed, and rating agencies treat them as debt. Excluding them
+understates obligations most for exactly the names where leverage matters — leased fabs, leased data
+centres. The cost is that our leverage reads higher than the pre-2019 convention most screeners still
+use, which §5 already says is the expected state. **There is no defensible way to count leases as debt
+in one ratio and not the other**, so the two move together by construction, not by convention.
+
+**Capex includes capitalised software.** PP&E alone overstates free cash flow for MSFT, GOOGL, META and
+AMZN, who capitalise meaningful software — a large slice of this watchlist. The column reports **which
+components were found** rather than silently summing whatever happens to exist, because the software
+tag is not filed by everyone.
+
+**Quarterly YoY revenue growth, not TTM.** It updates four times a year instead of being smeared
+across four, and it is close to forced: `rev_acceleration` already has a norm, acceleration is the
+change in the growth rate, and a TTM series smooths out exactly the signal it exists to show. TTM can
+become a second column later if quarterly proves noisy.
+
+### The two that were not really forks
+
+**ROIC uses the simple construction** — `NOPAT / (debt + equity − cash)`. There are at least five
+accepted definitions of invested capital; capitalising R&D, adjusting for goodwill and using average
+rather than ending capital each have a real argument and each add a step that has to be explained
+forever. Pick the recognisable one, state it on the column, and note that ROIC is definition-sensitive.
+
+**EBITDA is `OperatingIncomeLoss + D&A`**, not `NetIncome + Interest + Taxes + D&A`. The literal
+expansion of the acronym drags in investment gains and one-off charges, which make a leverage ratio
+jump for reasons that have nothing to do with leverage.
+
+### Analyst target gap is NOT here, and is not an SEC fundamental
+
+It was the eighth row of this table. It is not a GAAP concept, not in XBRL, and not in FRED — **no
+source in our data plane carries it.** PROPOSAL §"Valuation" already classes it as a **searched
+column**, collected by web search rather than computed, and that is where it belongs; listing it
+beside seven SEC-derived parameters implied a symmetry that does not exist.
+
+The stronger objection is not cost. Every other number on this grid is a fact about a company or its
+price. A consensus target is a fact about **what a group of analysts said** — the only column whose
+meaning depends on someone else's judgment, in a product that is explicitly *a tracker, not an
+advisor*. **Deferred to a later version** (Bodhi, 2026-09-16), as a searched column with its own
+freshness rule, not as a fundamental.
+
+### Before any of this is implemented — two things to measure, not assume
+
+1. **Whether all 36 filers report these tags consistently**, and in which years. Tag availability
+   varies by filer; a fundamental that silently goes null for six of the watchlist is worse than one
+   that was never built. Checkable with one `net.http_get` against SEC companyfacts from the SQL
+   editor, which is this project's established pattern for exactly this question.
+2. **The effective-tax-rate clamp band in ROIC.** Several of these names have had quarters with tax
+   benefits, where an unclamped rate goes negative and flips NOPAT's sign. **The band is deliberately
+   not written above**, because a sensible one needs looking at real filings and a number invented
+   here would be obeyed forever. Until it is measured from filings, this definition is incomplete and
+   ROIC is not implementable.
