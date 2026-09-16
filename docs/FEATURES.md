@@ -628,3 +628,33 @@ null passes every check anyone writes about it.** At 300 bars the 252-bar lookba
 18 rows exercise it.
 **By:** Bodhi + Claude
 
+## 2026-09-16 — The grid answers in milliseconds again
+**What:** no visible change. The dashboard banner and the nightly digest stop timing out; every
+number, column and colour is identical.
+**How:** decision 0036, migration `20260916060000`. The weekly as-of lookup becomes an equality —
+`weekly_in_force` resolves each week's source week once, so a daily row joins on its own week instead
+of searching a range. `grid_status` and `digest_standing` read `daily_features` for the newest date
+and the symbol count rather than aggregating every cell to find them. `weekly_asof` is dropped.
+**Architecture impact:** the project now has a class of defect it tests for by **plan shape** rather
+than by value. `check_formulas.sql` gains a `shape` section: an unfiltered read of `grid_cells` must
+contain no `Join Filter`, `grid_status` must not touch the weekly layer, and every week with a daily
+bar must have a weekly row. Structural assertions hold at fixture size, where a timing assertion
+would prove nothing and flake.
+
+| | before | after |
+|---|---|---|
+| `select max(d), count(distinct symbol) from grid_cells` | 3,141 ms | 528 ms |
+| `select * from grid_status` | 3,192 ms | **23 ms** |
+| `select count(*) from digest_standing` | 3,124 ms | **9 ms** |
+| `select count(*) from grid_cells` | 3,124 ms | 240 ms |
+
+**Verified by:** `scripts/ci/run.sh` green — 67 formula checks, all passing, three of them new — and
+old vs new `grid_cells` identical row for row on the fixture (8,744 each, `except all` empty both
+ways).
+**The negative test, which is the one that counts:** with the 2026-09-15 band join and the old
+`grid_status` pasted back, the two new plan checks fail with `Join Filter present` and `weekly layer
+scanned` — the specific messages, not merely a non-zero exit — while all 65 other checks pass and the
+gate's counter reports 2. A daily bar inserted into a week with no weekly row makes the third fail
+with `1`.
+**By:** Bodhi + Claude
+
