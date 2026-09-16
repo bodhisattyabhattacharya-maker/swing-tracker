@@ -873,3 +873,79 @@ measured at 8,826 ms and written into 0035 the day *after* the band join shipped
 without checking the code that already had it. **Naming a hazard is the moment to grep for it in what
 already exists**, not only to avoid it in what comes next.
 
+## 0037 — 2026-09-16 — Vendor fetches retry transport faults and 5xx, never a 4xx, under a wall clock
+
+**Context:** `index.ts` has retried SUPABASE reads since the first backfill. Nothing retried the
+VENDOR, so a single transient 502 from Polygon lost that symbol for the night — the per-symbol catch
+records it, the loop moves on, and the bar arrives 24 hours later. Recorded as a verified gap in
+CONSTRAINTS.md on 2026-09-15.
+
+**Decision:** one policy, in `http.ts`, used by both providers.
+
+| | |
+|---|---|
+| retried | transport failures — reset, DNS blip, TLS hiccup, per-attempt timeout |
+| retried | HTTP 5xx |
+| never | **every 4xx**, 429 included |
+| never | a 2xx carrying an error body |
+
+**The 4xx line is the whole decision and it is not a detail.** A 401 is a wrong key, a 403 is a plan
+that does not cover this, a 404 is a ticker that does not exist; the request will never start being
+valid, so a retry buys the same error three times slower. And 429 is the tempting exception that must
+stay refused: **retrying a rate limit is exactly what got Supabase's egress IP blocked by Yahoo for
+four and a half hours and cost us an entire provider** (decision 0019). 429 means stop, the caller
+turns it into a `RateLimitError` and abandons the run deliberately, and nothing in the retry layer may
+soften that.
+
+**A 200 with an error body is an answer, not a fault.** Polygon's `status: NOT_AUTHORIZED` and FRED's
+`error_message` both arrive as HTTP 200. The retry wraps the fetch, not the parse, so these are never
+re-asked — the mapping functions reject them as they always did. Re-asking would mean putting a wrong
+question twice.
+
+**The deadline, which is the part that is easy to get wrong.** The edge function has a 150 s wall
+clock and a run that hits it loses every per-symbol error it had collected — that is how the first
+live attempt became an unexplainable 504. Three attempts at a 20 s timeout is 60 s spent on ONE
+symbol: a third of the budget for a thirty-sixth of the work. So an attempt is started only if it can
+time out and still be inside a 45 s per-symbol deadline. **A symbol whose attempts all hang gets 2; a
+symbol getting fast 502s gets all 3.** That asymmetry is the intent — cheap failures are worth
+retrying harder than expensive ones — not a rounding artefact.
+
+**Rejected:** retrying writes, for the reason `retryRead` already gives — an upsert that may have
+partially applied must not be blindly repeated. Rejected too: a global retry budget shared across
+symbols, which makes one symbol's behaviour depend on the alphabetical position of another.
+
+**Verified by breaking it, twice, because a retry test that only runs against the new code proves
+nothing.** With `DEFAULT_ATTEMPTS = 1`, the five new-behaviour tests fail and the three guards pass.
+With the policy changed to the tempting wrong one — retry 4xx as well — the guards fail, *including
+the 429 test that predates this work*, which is the outcome that matters most.
+
+## 0038 — 2026-09-16 — Two norms retuned on measurement: rsi_weekly widened, the RS norm renamed
+
+**`rsi_weekly` 45/65 → 40/70.** Measured over the whole stored history: at 45/65 it flagged **45.5%
+of judged cells**, against 12.0% for its daily sibling. A colour on nearly half of what a column shows
+is background, not signal.
+
+The cause was structural rather than a bad number — the band was 20 points wide where the daily one
+is 40, and weekly RSI spends most of its life in a trend rather than oscillating around 50. **It was
+not the `close_vs_sma200w` failure of 0032**, and the difference is worth keeping straight: that one
+was 96% one-sided, a band no name could get inside, and the answer was deletion. This one was 15.5%
+below / 30.0% above — genuinely two-sided, genuinely separating, just too narrow. 40/70 targets about
+a quarter instead of a half. The last 90 days already read 29% at the old band, so the all-history
+figure was inflated by earlier periods and the change is a smaller move than 45.5% suggests.
+
+**`rs_vs_spx_6m` → `rs_vs_spx_126b`.** 0035 named this mismatch and deliberately left it, saying the
+norm gets renamed when the grid column lands. It is renamed now instead, one step early: the old key
+matched no parameter and judged nothing, the new key judges nothing until the column lands, and doing
+it here means the column PR is not carrying an unrelated rename. 126 trading bars is *about* six
+months and is not six months; a norm named for one while judging the other is the labelling failure
+0019 refused for ^SOX.
+
+**What to watch after the next `scope=all` run:** `norms_without_parameter` in
+`verify_parameters.sql` stays at **12** across this change — one key out, one key in. It falls to 11
+when RS reaches the grid. A number that RISES means a typo, which is exactly what that check is for.
+
+**Norms reach the grid through the ingest, not through the merge.** The sync runs on `tickers` and
+`all` scopes only; the 11:00 index catch-up is `scope=indices` and does not touch norms. So these two
+changes take effect at the **22:30 UTC run**, not when the PR merges. The same lag caught out the
+`close_vs_sma200w` deletion the day before.
+

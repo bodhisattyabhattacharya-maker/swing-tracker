@@ -11,7 +11,16 @@
 
 norms:
   rsi_daily:        { low: 30,  high: 70 }
-  rsi_weekly:       { low: 45,  high: 65 }
+  # Widened from 45/65 on 2026-09-16, on measurement rather than taste. At 45/65 it flagged
+  # **45.5% of judged cells** over the whole stored history against 12.0% for its daily sibling -
+  # a colour on nearly half of what the column shows, which reads as background rather than signal.
+  #
+  # The cause was structural, not a bad number: the band was 20 points wide where the daily one is
+  # 40, and weekly RSI spends most of its life in a trend rather than oscillating around 50. It was
+  # NOT the close_vs_sma200w failure below - that one was 96% one-sided, a band no name could get
+  # inside. This was 15.5% below / 30.0% above, genuinely two-sided and genuinely separating, just
+  # too narrow. 40/70 targets roughly a quarter instead of a half.
+  rsi_weekly:       { low: 40,  high: 70 }
   rsi_hourly:       { low: 30,  high: 70 }
 
   # Renamed from pct_off_ath on 2026-09-13. The parameter is `pct_off_high_stored` because the
@@ -42,7 +51,13 @@ norms:
   rev_acceleration: { low: 0 }              # decelerating growth
   gross_margin_trend: { low: 0 }            # falling over four quarters
 
-  rs_vs_spx_6m:     { low: 0 }              # lagging the market
+  # Renamed from rs_vs_spx_6m on 2026-09-16, closing the mismatch decision 0035 left open
+  # deliberately. 126 trading bars is ABOUT six months and is not six months; a norm named for one
+  # while judging the other is the labelling failure decision 0019 refused for ^SOX. Norms match
+  # parameters BY NAME, so the old key judged nothing at all - the sync deletes that row and
+  # inserts this one. `norms_without_parameter` in verify_parameters.sql stays at 12 across this
+  # change: one key out, one key in. It falls to 11 when the column reaches the grid.
+  rs_vs_spx_126b:   { low: 0 }              # lagging the market
   # rs_vs_sox_6m removed in decision 0019 - no free source for the PHLX Semiconductor Index.
   # Restore this line and the parameter together if we ever pay for index data.
 

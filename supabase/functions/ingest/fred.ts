@@ -25,14 +25,14 @@
  */
 
 import { type BarProvider, type DailyBar, type HourlyBar, type Range, RateLimitError } from "./provider.ts";
+import { fetchWithRetry } from "./http.ts";
 
 export const FRED_SOURCE = "fred";
 
 const HOST = "https://api.stlouisfed.org";
 const MIN_INTERVAL_MS = 1_000;
 
-/** See polygon.ts: an unanswered request must become an error, not a killed run. */
-const REQUEST_TIMEOUT_MS = 20_000;
+/** Timeout, retry policy and the per-symbol wall clock all live in http.ts - see that header. */
 
 /**
  * Watchlist symbol -> FRED series id.
@@ -129,10 +129,10 @@ export const fred: BarProvider = {
 
     // FRED takes the key as a query parameter; it has no header form.
     const url = `${observationsUrl(seriesId, range)}&api_key=${encodeURIComponent(key)}`;
-    const r = await fetch(url, {
+    const r = await fetchWithRetry(url, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+      // The label carries the SERIES ID, not the url - the url has the api_key in it.
+    }, { label: `${FRED_SOURCE}/${symbol} (${seriesId})` });
     if (r.status === 429) throw new RateLimitError(FRED_SOURCE, symbol);
     if (r.status === 400) {
       // FRED returns 400 for a bad key or a bad series id, with the reason in the body.

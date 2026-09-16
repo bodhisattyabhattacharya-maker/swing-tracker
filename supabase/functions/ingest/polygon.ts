@@ -48,6 +48,7 @@
  */
 
 import { type BarProvider, type DailyBar, type HourlyBar, type Range, RateLimitError } from "./provider.ts";
+import { fetchWithRetry } from "./http.ts";
 
 export const POLYGON_SOURCE = "polygon-aggs";
 
@@ -78,12 +79,13 @@ const FULL_DAYS = 1800;
 const INCREMENTAL_DAYS = 35;
 
 /**
- * Per-request timeout. Without one, a single unanswered request hangs until the edge function's
- * 150 s wall clock kills the whole run, taking every symbol's error with it - which is exactly
- * what happened on the first live attempt. 20 s is generous for a 2-year daily payload; if a
- * request needs longer than that, something is wrong and we want it recorded, not waited on.
+ * The per-request timeout, the retry policy and the wall clock one symbol may spend all live in
+ * http.ts now, so a transient 502 costs a pause rather than the night's bar. This file kept its own
+ * 20 s constant until 2026-09-16; the reasoning moved with it and has not changed.
+ *
+ * NOTE for anyone adding a status check below: http.ts retries 5xx and transport failures ONLY. It
+ * hands back every 4xx untouched, 429 included, so the three cases below behave exactly as they did.
  */
-const REQUEST_TIMEOUT_MS = 20_000;
 
 /** The fields we read from an aggregate bar. Everything else in the response is ignored. */
 interface Agg {
@@ -197,10 +199,9 @@ export const polygon: BarProvider = {
     const key = Deno.env.get("POLYGON_API_KEY");
     if (!key) throw new Error("POLYGON_API_KEY is not set on the function");
 
-    const r = await fetch(aggsUrl(symbol, range), {
+    const r = await fetchWithRetry(aggsUrl(symbol, range), {
       headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+    }, { label: `${POLYGON_SOURCE}/${symbol}` });
     if (r.status === 429) throw new RateLimitError(POLYGON_SOURCE, symbol);
     if (r.status === 401 || r.status === 403) {
       throw new Error(`${symbol}: HTTP ${r.status} - key rejected or plan does not cover this`);

@@ -658,3 +658,25 @@ gate's counter reports 2. A daily bar inserted into a week with no weekly row ma
 with `1`.
 **By:** Bodhi + Claude
 
+## 2026-09-16 — A transient vendor error costs a pause, not the night's bar
+**What:** the ingest now retries the vendor, not only Supabase. A 502 or a dropped connection from
+Polygon or FRED is asked again instead of losing that symbol until the next scheduled run. Two norms
+change with it: `rsi_weekly` widens to 40/70 and the RS norm is renamed `rs_vs_spx_126b`.
+**How:** decisions 0037 and 0038. New `supabase/functions/ingest/http.ts` holds one policy for both
+providers — retry transport faults and 5xx, **never any 4xx**, under a 45 s per-symbol wall clock so
+one sick symbol cannot eat the function's 150 s budget. The per-attempt timeout moved there from the
+two providers; their status handling is untouched.
+**Architecture impact:** 429 stays un-retried and still aborts the run. That is not an oversight to
+tidy up later — retrying a rate limit is what got our egress IP blocked by Yahoo and cost us a whole
+provider (decision 0019). Anyone tempted to "just retry everything" should read 0037 first. Norms
+reach the grid through the 22:30 ingest, not through the merge, so the two norm changes land that
+evening.
+**Verified by:** `deno test --allow-env` — **55 tests, all passing**, 8 of them new — and
+`deno check` clean on every file.
+**The negative test, which is the one that counts, done twice.** With `DEFAULT_ATTEMPTS = 1` the five
+new-behaviour tests fail (a 502 then a 200, a transport fault then a 200, the give-up count, the pause
+schedule, the deadline) and the three guards pass. With the policy changed to the tempting wrong one
+— retry 4xx too — the guards fail, **including the 429 test that predates this work**. Each set is
+blind to the other's failure mode, which is why both were run.
+**By:** Bodhi + Claude
+

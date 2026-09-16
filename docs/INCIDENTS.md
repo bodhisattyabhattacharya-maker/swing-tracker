@@ -352,3 +352,20 @@ fixture size; a timing assertion on 200 bars would prove nothing and would flake
 own counter reports 2. Inserting a daily bar in a week with no weekly row makes the third check fail
 with `1`. Row-for-row on the fixture, old and new `grid_cells` are identical: 8,744 rows each,
 `except all` empty in both directions.
+
+**Verified on production after the merge**, which is the measurement that counts — same database, same
+593,262 rows, same 36 symbols:
+
+| | before (2026-09-16 morning) | after |
+|---|---|---|
+| `select * from grid_status` | 6,490 ms | **8.7 ms** |
+| `select count(*) from digest_standing` | timed out at ~8,000 ms | **12.6 ms** |
+| `max(d), count(distinct symbol)` over `grid_cells` | 7,201 ms | **758 ms** |
+| `Rows Removed by Join Filter` on that plan | 10,641,781 | **none — it is a `Merge Cond` now** |
+
+`grid_cells` returns **593,262 rows before and after**: row-count equivalence on real data, not only on
+the fixture. The three as-of assertions re-run against production over the whole view come back
+0 / 0 / 0 — no cell disagrees with an independent correlated lookup of the newest week starting before
+its own week, no cell is sourced from a bar on or after the day it is shown, and no week holding a
+daily bar lacks a weekly row. Ten daily params and four weekly params, unchanged.
+

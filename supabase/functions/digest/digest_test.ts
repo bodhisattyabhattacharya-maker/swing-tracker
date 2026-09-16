@@ -121,8 +121,8 @@ Deno.test("parameters are named as the dashboard names them", () => {
 Deno.test("an unmapped parameter falls back to its raw name rather than vanishing", () => {
   // Twelve norms still have no column. When one arrives before its label does, the digest must
   // show something rather than an empty gap.
-  const { text } = renderDigest(FRESH, [change({ param: "rs_vs_spx_6m" })], STANDING, URL_);
-  assert.match(text, /rs_vs_spx_6m/);
+  const { text } = renderDigest(FRESH, [change({ param: "rs_vs_spx_126b" })], STANDING, URL_);
+  assert.match(text, /rs_vs_spx_126b/);
 });
 
 Deno.test("a null value renders as a dash, not as NaN or zero", () => {

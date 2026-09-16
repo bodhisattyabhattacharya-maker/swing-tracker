@@ -55,7 +55,8 @@ insert into public.norms (param, low, high) values
   -- The two weekly norms that config/norms.yml actually sets, so the weekly colouring path is
   -- exercised rather than merely present. close_vs_sma200w and close_vs_sma30w are deliberately
   -- absent here for the same reason they are absent there - see config/norms.yml.
-  ('rsi_weekly', 45, 65),
+  -- 40/70 since 2026-09-16 (decision 0038); at 45/65 it coloured 45.5% of judged cells.
+  ('rsi_weekly', 40, 70),
   ('close_vs_ema21w', -5, 20)
 on conflict (param) do update set low = excluded.low, high = excluded.high;
 insert into public.flags (key, value) values ('pipeline_stale_after_hours', '30'::jsonb)
