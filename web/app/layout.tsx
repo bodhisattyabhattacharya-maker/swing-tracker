@@ -20,6 +20,9 @@ export const metadata = {
   description: "Watchlist tracker — the same parameters on every name, coloured against norms we set.",
 };
 
+// NOTE: CSS below is a template literal. A backtick inside it ENDS THE STRING, and the error you
+// get is "Expected a semicolon" pointing at a line of prose, which reads like anything but the
+// cause. Write .class-name in comments here, never `.class-name`. Cost twice on 2026-09-16.
 const CSS = `
   :root {
     --paper:      #f6f8f7;
@@ -90,7 +93,16 @@ const CSS = `
     -webkit-font-smoothing: antialiased;
   }
   main { max-width: 860px; margin: 0 auto; padding-block: 48px 72px; padding-inline: 20px; }
-  main.wide { max-width: 1500px; padding-block: 28px 64px; }
+  /* Widened from 1500px on 2026-09-16, when relative strength made it sixteen columns.
+     MEASURED, not guessed: the table needs 1726px, and at 1500 the newest column was the one
+     permanently past the right edge — a feature nobody would find. 1800 fits the whole table on a
+     1920 screen (measured: 1726px of table inside a 1760px container, 34px to spare, so a longer
+     company name than any on the list today still fits). Narrower than that it scrolls, with the
+     symbol column pinned, which
+     is the behaviour this table has always had and the reason the page body never scrolls
+     sideways. Density is the point of this page (decision 0005); the answer to more columns is a
+     wider frame, not smaller type. */
+  main.wide { max-width: 1800px; padding-block: 28px 64px; }
 
   h1 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif; font-weight: 700;
        font-size: clamp(26px, 5vw, 38px); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
@@ -111,6 +123,34 @@ const CSS = `
   .banner { margin-top: 18px; padding: 11px 14px; border-radius: 3px; font-size: 13.5px;
             border-left: 3px solid var(--warn); background: var(--warn-bg); color: var(--ink); }
   .banner b { font-weight: 600; }
+
+  /* THE MARKET BLOCK. A strip of four tiles above the grid, because these are facts about the
+     market rather than about any name and putting them in the table would imply otherwise.
+
+     Tiles use the SAME --below/--above tokens as grid cells and the same 2.5px left rule, so a
+     coloured tile and a coloured cell mean the same thing without a second legend. The .tile-d line is
+     reserved even when empty (a non-breaking space) so the row of tiles does not change height
+     when one of them starts carrying a date. */
+  .market { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1px; margin-top: 20px; background: var(--rule); border: 1px solid var(--rule);
+            border-radius: 5px; overflow: hidden; box-shadow: var(--shadow); }
+  .tile { background: var(--surface); padding: 11px 14px 9px; display: flex;
+          flex-direction: column; gap: 1px; position: relative; }
+  .tile.mark::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px; }
+  .tile.below { background: var(--below-bg); color: var(--below); }
+  .tile.above { background: var(--above-bg); color: var(--above); }
+  .tile.below::before { background: var(--below); }
+  .tile.above::before { background: var(--above); }
+  .tile-k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+            letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .tile.mark .tile-k { color: inherit; opacity: .8; }
+  .tile-v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 19px;
+            font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .tile-d { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--ink-faint);
+            min-height: 14px; }
+  .tile.mark .tile-d { color: inherit; opacity: .75; }
+  .market-err { grid-column: 1 / -1; background: var(--surface); padding: 11px 14px;
+                font-size: 13px; border-left: 3px solid var(--warn); }
 
   .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
            padding: 20px 22px; margin-top: 22px; box-shadow: var(--shadow); }
@@ -133,6 +173,26 @@ const CSS = `
              white-space: nowrap; }
   thead th.sym { text-align: left; left: 0; z-index: 4; }
 
+  /* WHERE THE LEFTOVER WIDTH GOES — and why this table is NOT width:100%.
+
+     It was, and on a screen wider than the columns need the browser handed every spare pixel to
+     the LAST column. Since 2026-09-16 that is relative strength: one column stretched to ~350px
+     with its number marooned at the right edge and a gulf between it and the weekly block, which
+     read as a layout bug and hid the fact that the two groups are adjacent.
+
+     The fix is width:100% on the SYMBOL column, which makes that the cell the surplus is handed
+     to. Every numeric column keeps its natural width, the three groups stay adjacent, the table
+     still fills the frame (so band rows and hover highlights run its full width), and the slack
+     lands on the company names — the only cells that can use it.
+
+     Two things tried and rejected, both recorded because each looked right in isolation:
+       width:max-content     stops the table at its natural width and leaves an empty strip inside
+                             the container's border where the striped rows should run.
+       + min-width:max-content on top of width:100%, with the symbol column at width:100% — the
+                             three constraints are circular and the symbol column resolved to
+                             998,612px. Measured, not theorised. */
+  .scroll table th.sym, .scroll table td.sym { width: 100%; }
+
   /* TWO HEADER ROWS. The group row pins at the top and the label row pins directly beneath it.
      A sticky element cannot measure its sibling, so the label row's offset is the group row's own
      fixed height, written as a literal. The two numbers must move together, which is why they sit
@@ -146,6 +206,10 @@ const CSS = `
   /* The daily/weekly divider. One rule, full height, so the eye can tell at a glance which side of
      it a number lives on - "vs 21 EMA" appears on both and means different things. */
   thead th.grp-start, tbody td.grp-start { border-left: 1.5px solid var(--rule); }
+  /* The as-of line under the RS heading. Same slot as a norm, distinguished by weight rather than
+     colour so it does not read as a warning: RS being a session behind is the normal evening state,
+     not a fault. */
+  thead th .norm.asof { font-style: italic; }
   thead th .norm { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
                    letter-spacing: 0; text-transform: none; color: var(--ink-faint);
                    font-weight: 400; margin-top: 2px; }

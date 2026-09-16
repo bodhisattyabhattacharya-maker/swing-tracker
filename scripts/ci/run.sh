@@ -57,7 +57,31 @@ insert into public.norms (param, low, high) values
   -- absent here for the same reason they are absent there - see config/norms.yml.
   -- 40/70 since 2026-09-16 (decision 0038); at 45/65 it coloured 45.5% of judged cells.
   ('rsi_weekly', 40, 70),
-  ('close_vs_ema21w', -5, 20)
+  ('close_vs_ema21w', -5, 20),
+  -- The RS norm, so rs_cells' verdict path is EXERCISED rather than merely present. Without this
+  -- row every rs_cells verdict is null through the `no norm` arm and the parity check below it
+  -- passes vacuously - which is exactly what it did on the first run of this file.
+  ('rs_vs_spx_126b', 0, null),
+  -- CI-ONLY, and deliberately NOT in config/norms.yml. rs_vs_spx_126b's real norm is one-sided at
+  -- 0, and every fixture value is below it - so with that norm alone the verdict parity check
+  -- exercised the `below` arm and the `no norm` arm and NOTHING ELSE. `normal` and `above` went
+  -- untested, which is half a check. The fixture's rs_63b runs -7.59 .. -6.08, so this band puts
+  -- values on both sides of it and inside it, and all three arms fire.
+  ('rs_vs_spx_63b', -7, -6.5),
+  -- CI-ONLY, and the bound is an EXACT fixture value rather than a round number. Until this row
+  -- existed, NO cell in either view sat exactly on a norm boundary - measured, 0 of them - so `<`
+  -- and `<=` produced identical output and the verdict checks could not tell them apart. Verified:
+  -- changing rs_cells' `<` to `<=` passed every check before this line was added and fails after.
+  -- If the fixture series is ever regenerated this number must be regenerated with it; the
+  -- 'a value exactly on a norm bound is inside it' check fails loudly if it stops matching.
+  ('rs_vs_spx_252b', -29.75206611570247, null),
+  -- The two market norms config/norms.yml actually sets, so market_cells' verdict path is exercised
+  -- rather than merely present. Without these, every market_cells verdict is null through the
+  -- `no norm` arm and the parity check above passes vacuously - which is what it did on its first
+  -- run. The fixture's VIX sweeps 9 .. 87 so all three arms fire, and its VIX3M dips below VIX on
+  -- one date in seven, so term_structure is negative as well as positive.
+  ('vix', 16, 30),
+  ('term_structure', 0, null)
 on conflict (param) do update set low = excluded.low, high = excluded.high;
 insert into public.flags (key, value) values ('pipeline_stale_after_hours', '30'::jsonb)
 on conflict (key) do update set value = excluded.value;

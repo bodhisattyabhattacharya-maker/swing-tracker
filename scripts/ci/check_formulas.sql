@@ -558,6 +558,115 @@ shape as (
                 then 'no Join Filter' else 'Join Filter present' end,
            'this is the exact plan that timed out on 2026-09-15; an equality must be found, not a range'
     union all
+    -- ---------------------------------------------------------------------------
+    -- TWO COPIES OF THE VERDICT RULE, AND THE CHECK THAT KEEPS THEM EQUAL.
+    --
+    -- rs_cells (20260916140000) repeats grid_cells' below/normal/above CASE rather than sharing it,
+    -- because a scalar function per cell is a per-row call the planner cannot see through. A copied
+    -- rule that decides what COLOUR a cell is will drift, and nobody notices a wrong colour the way
+    -- they notice a wrong number - so both are asserted against one reference expression written
+    -- here, from the columns each view publishes. If either CASE changes, one of these fails.
+    -- ---------------------------------------------------------------------------
+    select 'shape', 'grid_cells verdicts match an independent re-derivation',
+           case when (select count(*) from public.grid_cells c
+                      where c.verdict is distinct from (
+                        case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                             when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                             when c.norm_high is not null and c.value > c.norm_high then 'above'
+                             else 'normal' end)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.grid_cells c
+             where c.verdict is distinct from (
+               case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                    when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                    when c.norm_high is not null and c.value > c.norm_high then 'above'
+                    else 'normal' end)),
+           'the reference is deliberately the same shape for both views - drift in either shows up here'
+    union all
+    select 'shape', 'rs_cells verdicts match the SAME re-derivation, so the two cannot drift',
+           case when (select count(*) from public.rs_cells c
+                      where c.verdict is distinct from (
+                        case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                             when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                             when c.norm_high is not null and c.value > c.norm_high then 'above'
+                             else 'normal' end)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.rs_cells c
+             where c.verdict is distinct from (
+               case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                    when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                    when c.norm_high is not null and c.value > c.norm_high then 'above'
+                    else 'normal' end)),
+           'RS has no warm-up, so suppressed_warmup is always false here - the arm is inert, not absent'
+    union all
+    -- The boundary itself. DEFINITIONS says a value EQUAL to a bound is inside the band - `<` and
+    -- `>`, not `<=` and `>=` - and until the CI norms carried a bound equal to an actual fixture
+    -- value, zero cells in either view sat on a boundary (measured: 0), so the two spellings were
+    -- indistinguishable to every check here. This is the row that tells them apart.
+    select 'shape', 'a value exactly on a norm bound is inside the band, not outside it',
+           case when (select count(*) from public.rs_cells c
+                      where c.value is not null and c.has_norm
+                        and (c.value = c.norm_low or c.value = c.norm_high)
+                        and c.verdict is distinct from 'normal') = 0
+                    and (select count(*) from public.rs_cells c
+                         where c.value is not null and c.has_norm
+                           and (c.value = c.norm_low or c.value = c.norm_high)) > 0
+                then 'PASS' else 'FAIL' end,
+           '>=1 boundary cell, 0 misjudged',
+           (select count(*)::text from public.rs_cells c
+             where c.value is not null and c.has_norm
+               and (c.value = c.norm_low or c.value = c.norm_high))
+             || ' boundary cells, '
+             || (select count(*)::text from public.rs_cells c
+                  where c.value is not null and c.has_norm
+                    and (c.value = c.norm_low or c.value = c.norm_high)
+                    and c.verdict is distinct from 'normal')
+             || ' misjudged',
+           'the second clause is the point: zero boundary cells means this check proved nothing'
+    union all
+    select 'shape', 'market_cells verdicts match the SAME re-derivation - third copy, same rule',
+           case when (select count(*) from public.market_cells c
+                      where c.verdict is distinct from (
+                        case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                             when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                             when c.norm_high is not null and c.value > c.norm_high then 'above'
+                             else 'normal' end)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_cells c
+             where c.verdict is distinct from (
+               case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                    when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                    when c.norm_high is not null and c.value > c.norm_high then 'above'
+                    else 'normal' end)),
+           'grid_cells, rs_cells and market_cells each spell this CASE out; all three answer to one reference'
+    union all
+    select 'shape', 'every market_cells value carries an as_of no later than its own day',
+           case when (select count(*) from public.market_cells
+                      where as_of is not null and as_of > d) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.market_cells where as_of is not null and as_of > d),
+           'an as_of after the day it is shown on is look-ahead - the market block borrows, never predicts'
+    union all
+    select 'shape', 'rs_cells never warm-up-suppresses, because RS has no seed to decay',
+           case when (select count(*) from public.rs_cells where suppressed_warmup) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.rs_cells where suppressed_warmup),
+           'a true here would mean someone gave RS a warm-up floor without giving it a seed'
+    union all
+    select 'shape', 'rs_cells publishes no date the equities have not reached',
+           case when (select count(*) from public.rs_cells c
+                      where c.d > (select max(d) from public.daily_features)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.rs_cells c
+             where c.d > (select max(d) from public.daily_features)),
+           'RS lags the grid by design; it must never LEAD it, which would mean an SPX bar from the future'
+    union all
     select 'shape', 'grid_status does not read the weekly layer at all',
            case when pg_temp.plan_of('select * from public.grid_status')
                      not like '%weekly%'

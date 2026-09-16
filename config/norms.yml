@@ -62,7 +62,11 @@ norms:
   # Restore this line and the parameter together if we ever pay for index data.
 
   vix:              { low: 16,  high: 30 }  # hedge zone / scaling zone
-  vix_term_struct:  { low: 0 }              # backwardation
+  # Renamed from vix_term_struct on 2026-09-16 - the THIRD norm this week named for an idea rather
+  # than for the parameter it judges, after rs_vs_spx_6m and close_vs_sma200w. `market_context`
+  # publishes the column as `term_structure`; norms join BY NAME, so the old key judged nothing at
+  # all and the market block would have shipped with this number permanently uncoloured.
+  term_structure:   { low: 0 }              # backwardation
 
 # Factual states — NOT judgments. Rendered with an icon and a label, never colour alone.
 flags:
