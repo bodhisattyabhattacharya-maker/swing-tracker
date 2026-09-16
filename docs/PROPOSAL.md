@@ -365,6 +365,12 @@ Two notes. The long-history series and the daily series were checked against eac
 
 Definitions that materially change the number and are **still open**:
 
+> **Status, 2026-09-16:** every row below is now settled and this table is kept as the
+> statement of *what varied*, not of what is open. The technicals were settled in
+> `docs/DEFINITIONS.md` §§1–3 and are verified against TradingView goldens; the seven
+> fundamentals were settled in §7 (decision 0040). **Analyst target gap left this list
+> entirely** — it is not in SEC XBRL and is a searched column, not a computed fundamental.
+
 | Parameter | What varies |
 |---|---|
 | RSI (all three timeframes) | Wilder smoothing vs a simple average of gains and losses. TradingView uses Wilder. Also which price feeds it — close vs HLC3. |

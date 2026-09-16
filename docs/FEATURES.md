@@ -723,3 +723,24 @@ so `<` and `<=` had always been indistinguishable to CI. A fixture norm now land
 value, and the mutation fails two checks. That hole was older than this work.
 **By:** Bodhi + Claude
 
+## 2026-09-16 — The seven fundamental definitions are settled (docs only)
+**What:** no code. `docs/DEFINITIONS.md` §7 goes from "still open — each needs a decision before
+launch" to seven settled definitions with the formula, the tags and the null rule for each. Analyst
+target gap leaves the table: it is not in SEC XBRL and is a searched column, not a fundamental.
+**How:** decision 0040. Four calls were genuinely open — diluted EPS with a null on negative TTM
+earnings, operating leases counted as debt in **both** the leverage ratio and EV, capex including
+capitalised software, and quarterly YoY revenue growth rather than TTM. Two were not real forks and
+took the recognisable construction with the definition stated on the column.
+**Architecture impact:** the contract is written before the code, so the implementation cannot quietly
+decide a formula by whatever it happens to do. It also unblocks **step 8** — sector-relative ranks are
+percentiles of FCF yield and gross margin within a theme, and could not be defined while FCF yield
+was not.
+**Two things deliberately left open, in writing:** tag availability across the 36 filers, and the
+effective-tax-rate clamp band in ROIC. **No band is written into §7** — a number invented at a desk
+would be obeyed forever, so §7 says ROIC is not implementable until the band comes from real filings.
+Saying "we do not know this yet" in the spec is the point of the spec.
+**Verified by:** nothing executable — this PR changes no code. `scripts/ci/run.sh` still green
+(74 formula checks), unchanged from the previous merge, which is the honest claim: this is a
+docs-only change and CI can only confirm it broke nothing.
+**By:** Bodhi + Claude
+
