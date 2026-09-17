@@ -45,6 +45,18 @@ begin
   return out;
 end
 $fn$;
+
+-- Row count of any relation by name. Used by the "no matview is empty" check, which has to be
+-- generic: naming the matviews here would mean remembering to add the next one, and forgetting is
+-- precisely the failure it exists to catch.
+create or replace function pg_temp.rows_in(rel text) returns bigint
+language plpgsql as $fn2$
+declare n bigint;
+begin
+  execute 'select count(*) from ' || rel into n;
+  return n;
+end
+$fn2$;
 \o
 
 with expected as (
@@ -633,6 +645,238 @@ shape as (
     -- history it would fall out of breadth because it is INELIGIBLE, not because it is a fund,
     -- and removing `not t.is_fund` from the view would not fail anything here.
     -- ---------------------------------------------------------------------------
+    -- ---------------------------------------------------------------------------
+    -- THE FIVE DERIVED TECHNICALS (20260917120000). Each is re-derived here from the columns
+    -- daily_features publishes, independently of how daily_signals computes it.
+    --
+    -- The first check is the non-vacuity guard: a fixture with no crossing would let every cross
+    -- assertion below pass over an empty set.
+    -- ---------------------------------------------------------------------------
+    -- Per cross type, and it has to be. The first version said `50_200 = 0 OR 21_50 = 0`, which the
+    -- fixture satisfied entirely through 21/50 crossings while 50/200 had one per symbol - so the
+    -- guard reported the checks were covered when half of them were not.
+    select 'signals', 'the fixture contains crossings of EACH kind, so neither check is empty',
+           case when (select count(*) from public.daily_signals where cross_50_200_bars = 0) > 0
+                 and (select count(*) from public.daily_signals where cross_21_50_bars  = 0) > 0
+                then 'PASS' else 'FAIL' end,
+           'both > 0',
+           (select count(*)::text from public.daily_signals where cross_50_200_bars = 0)
+             || ' golden/death, ' ||
+           (select count(*)::text from public.daily_signals where cross_21_50_bars = 0) || ' bull/bear',
+           'an OR here lets one well-covered cross vouch for one that is not covered at all'
+    union all
+    select 'signals', 'ma_stack matches an independent re-derivation from the four inputs',
+           case when (select count(*) from public.daily_signals s
+                      join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+                      where s.ma_stack is distinct from (
+                        case
+                          when f.close is null or f.ema21_daily is null
+                            or f.sma50 is null or f.sma200 is null then null
+                          when f.close > f.ema21_daily and f.ema21_daily > f.sma50
+                            and f.sma50 > f.sma200 then 'Full bull'
+                          when f.close < f.ema21_daily and f.ema21_daily < f.sma50
+                            and f.sma50 < f.sma200 then 'Full bear'
+                          else 'Mixed' end)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.daily_signals s
+             join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+            where s.ma_stack is distinct from (
+              case
+                when f.close is null or f.ema21_daily is null
+                  or f.sma50 is null or f.sma200 is null then null
+                when f.close > f.ema21_daily and f.ema21_daily > f.sma50
+                  and f.sma50 > f.sma200 then 'Full bull'
+                when f.close < f.ema21_daily and f.ema21_daily < f.sma50
+                  and f.sma50 < f.sma200 then 'Full bear'
+                else 'Mixed' end)),
+           'a strict chain both ways; anything else is Mixed, which is most rows and is not a fault'
+    union all
+    select 'signals', 'cross direction always agrees with the CURRENT ordering of the averages',
+           case when (select count(*) from public.daily_signals s
+                      join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+                      where s.cross_50_200 is distinct from (
+                        case when f.sma50 is null or f.sma200 is null then null
+                             when f.sma50 > f.sma200 then 'Golden' else 'Death' end)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.daily_signals s
+             join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+            where s.cross_50_200 is distinct from (
+              case when f.sma50 is null or f.sma200 is null then null
+                   when f.sma50 > f.sma200 then 'Golden' else 'Death' end)),
+           'if sma50 is above sma200 the last cross WAS golden; a carried direction could disagree'
+    union all
+    -- The arithmetic, in two halves and over BOTH crosses.
+    --
+    -- This was one check with a `prev_bars is not null` guard, and the guard silently excluded the
+    -- only rows that mattered: the fixture has exactly ONE 50/200 crossing per symbol, and on that
+    -- bar there is no previous bars-since, so the reset-to-zero rule was never tested. An
+    -- off-by-one mutation (`bar_no - last + 1`) passed the entire gate. It also only ever looked at
+    -- 50/200; the 21/50 cross was untested. Both are fixed by asking the question directly.
+    select 'signals', 'bars-since is exactly 0 on every bar where the label changed',
+           case when (select count(*) from (
+                        select c.*, lag(c.label) over w as prev_label
+                        from public.signal_cells c
+                        where c.param in ('cross_50_200','cross_21_50')
+                        window w as (partition by c.symbol, c.param order by c.d)) x
+                      where x.prev_label is not null and x.label is distinct from x.prev_label
+                        and x.value is distinct from 0) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select c.*, lag(c.label) over w as prev_label
+              from public.signal_cells c
+              where c.param in ('cross_50_200','cross_21_50')
+              window w as (partition by c.symbol, c.param order by c.d)) x
+             where x.prev_label is not null and x.label is distinct from x.prev_label
+               and x.value is distinct from 0),
+           'the crossing bar is day zero; an off-by-one here shows as 1 and nowhere else'
+    union all
+    select 'signals', 'and advances by exactly 1 on every bar where it did not',
+           case when (select count(*) from (
+                        select c.*, lag(c.label) over w as prev_label,
+                               lag(c.value) over w as prev_value
+                        from public.signal_cells c
+                        where c.param in ('cross_50_200','cross_21_50')
+                        window w as (partition by c.symbol, c.param order by c.d)) x
+                      where x.prev_label is not null and x.label is not distinct from x.prev_label
+                        and x.prev_value is not null
+                        and x.value is distinct from x.prev_value + 1) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select c.*, lag(c.label) over w as prev_label, lag(c.value) over w as prev_value
+              from public.signal_cells c
+              where c.param in ('cross_50_200','cross_21_50')
+              window w as (partition by c.symbol, c.param order by c.d)) x
+             where x.prev_label is not null and x.label is not distinct from x.prev_label
+               and x.prev_value is not null
+               and x.value is distinct from x.prev_value + 1),
+           'BARS not calendar days, so a weekend must not advance it - decision 0035''s rule again'
+    union all
+    select 'signals', 'a null bars-since means NO cross in stored history, never a long time ago',
+           case when (select count(*) from public.daily_signals s
+                      where s.cross_50_200_bars is null
+                        and exists (select 1 from public.daily_signals p
+                                    where p.symbol = s.symbol and p.d < s.d
+                                      and p.cross_50_200 is distinct from s.cross_50_200
+                                      and p.cross_50_200 is not null)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.daily_signals s
+             where s.cross_50_200_bars is null
+               and exists (select 1 from public.daily_signals p
+                           where p.symbol = s.symbol and p.d < s.d
+                             and p.cross_50_200 is distinct from s.cross_50_200
+                             and p.cross_50_200 is not null)),
+           'null here must mean the averages never swapped in the window we hold, not that we lost the event'
+    union all
+    select 'signals', 'both slopes match a fresh five-bar re-derivation',
+           case when (select count(*) from (
+                        select s.symbol, s.d, s.sma50_slope, s.sma200_slope,
+                               100.0 * (f.sma50  / nullif(lag(f.sma50, 5)  over w, 0) - 1) as ref50,
+                               100.0 * (f.sma200 / nullif(lag(f.sma200, 5) over w, 0) - 1) as ref200
+                        from public.daily_signals s
+                        join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+                        window w as (partition by f.symbol order by f.d)) x
+                      where x.sma50_slope  is distinct from x.ref50
+                         or x.sma200_slope is distinct from x.ref200) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from (
+              select s.symbol, s.d, s.sma50_slope, s.sma200_slope,
+                     100.0 * (f.sma50  / nullif(lag(f.sma50, 5)  over w, 0) - 1) as ref50,
+                     100.0 * (f.sma200 / nullif(lag(f.sma200, 5) over w, 0) - 1) as ref200
+              from public.daily_signals s
+              join public.daily_features f on f.symbol = s.symbol and f.d = s.d
+              window w as (partition by f.symbol order by f.d)) x
+             where x.sma50_slope  is distinct from x.ref50
+                or x.sma200_slope is distinct from x.ref200),
+           'five TRADING BARS, and the change in the AVERAGE rather than in price'
+    union all
+    select 'signals', 'every label has a tone - the mapping is total, not mostly total',
+           case when (select count(*) from public.signal_cells
+                      where label is not null and tone is null) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.signal_cells where label is not null and tone is null),
+           'a sixth signal added without a tone must fail the build, not render an unstyled cell'
+    union all
+    select 'signals', 'tone is not a norm verdict - nothing in norms can reach signal_cells',
+           case when (select count(*) from public.signal_cells c
+                      join public.norms n on n.param = c.param) = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.signal_cells c
+             join public.norms n on n.param = c.param),
+           'if a norm key ever matched a signal param, editing norms.yml would silently restyle a chip'
+    union all
+    select 'shape', 'an unfiltered read of signal_cells needs no band join either',
+           case when pg_temp.plan_of(
+                       'select count(*), max(d) from public.signal_cells')
+                     not like '%Join Filter%'
+                then 'PASS' else 'FAIL' end,
+           'no Join Filter',
+           case when pg_temp.plan_of(
+                       'select count(*), max(d) from public.signal_cells')
+                     not like '%Join Filter%'
+                then 'no Join Filter' else 'Join Filter present' end,
+           'the 2026-09-16 outage class, checked on the newest view rather than only the old one'
+    union all
+    select 'shape', 'one date of daily_signals is an index scan, which is why it is a matview',
+           case when pg_temp.plan_of(
+                       'select * from public.daily_signals where d = (select max(d) from public.daily_signals)')
+                     like '%Index%'
+                then 'PASS' else 'FAIL' end,
+           'index scan',
+           case when pg_temp.plan_of(
+                       'select * from public.daily_signals where d = (select max(d) from public.daily_signals)')
+                     like '%Index%'
+                then 'index scan' else 'sequential scan' end,
+           'as a plain view the window would recompute the whole history on every dashboard load'
+    union all
+    -- ---------------------------------------------------------------------------
+    -- A MATVIEW NOTHING REFRESHED. This project has now shipped that twice.
+    --
+    -- A materialized view is populated once, at CREATE time - which in CI is before the fixture
+    -- loads, and in production is before any data exists. weekly_features shipped frozen in
+    -- 20260914010000 and CI caught it; daily_signals shipped frozen in 20260917120000 and CI went
+    -- GREEN, because every check that would have noticed was a check about something else.
+    --
+    -- So this one is generic. It asks pg_matviews what exists rather than naming them, because
+    -- naming them means remembering to add the next one, and forgetting is the whole failure.
+    -- ---------------------------------------------------------------------------
+    select 'matviews', 'every materialized view has rows - none shipped frozen at create time',
+           case when (select count(*) from pg_matviews
+                      where schemaname = 'public'
+                        and pg_temp.rows_in(format('%I.%I', schemaname, matviewname)) = 0) = 0
+                then 'PASS' else 'FAIL' end,
+           '0 empty',
+           coalesce((select string_agg(matviewname, ', ' order by matviewname) from pg_matviews
+                      where schemaname = 'public'
+                        and pg_temp.rows_in(format('%I.%I', schemaname, matviewname)) = 0),
+                    'none empty'),
+           'an empty matview means run.sh (and probably the cron job) does not refresh it'
+    union all
+    select 'matviews', 'and the refresh job names every one of them',
+           case when (select count(*) from pg_matviews m
+                      where m.schemaname = 'public'
+                        and not exists (
+                          select 1 from cron.job j
+                          where j.jobname = 'swing-refresh-features'
+                            and j.command like '%' || m.matviewname || '%')) = 0
+                then 'PASS' else 'FAIL' end,
+           '0 unrefreshed',
+           coalesce((select string_agg(m.matviewname, ', ' order by m.matviewname) from pg_matviews m
+                      where m.schemaname = 'public'
+                        and not exists (
+                          select 1 from cron.job j
+                          where j.jobname = 'swing-refresh-features'
+                            and j.command like '%' || m.matviewname || '%')),
+                    'all named'),
+           'CI refreshing it by hand hides a production matview that nothing updates - 20260914010000'
+    union all
     select 'funds', 'the fixture fund is breadth-ELIGIBLE, so excluding it actually costs something',
            case when (select count(*) from public.daily_features
                       where symbol = 'FUND' and sma200 is not null) > 0

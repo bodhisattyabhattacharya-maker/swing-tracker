@@ -94,6 +94,10 @@ values ('fixture', 'all', 'ci', now(), true, '{"daily":{"written":1}}'::jsonb);
 -- weekly one was MISSING from that job until these assertions found it (20260914010000).
 refresh materialized view public.daily_features;
 refresh materialized view public.weekly_features;
+-- daily_signals reads daily_features, so it is refreshed AFTER it - unlike the two above, which
+-- are siblings. Added 2026-09-17, and the gate went green with this matview entirely empty before
+-- it was; the `no matview is empty` check below is the guard that stops the next one doing that.
+refresh materialized view public.daily_signals;
 SQL
 
 # Both scripts return one row per check, with the status in a column. CI's only job is to insist
