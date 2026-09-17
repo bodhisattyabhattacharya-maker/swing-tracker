@@ -626,6 +626,63 @@ shape as (
              || ' misjudged',
            'the second clause is the point: zero boundary cells means this check proved nothing'
     union all
+    -- ---------------------------------------------------------------------------
+    -- FUNDS: a row on the grid, absent from breadth. Two exclusions, two flags (20260917060000).
+    --
+    -- The first check is what stops the other two being vacuous. If the fixture's fund had no
+    -- history it would fall out of breadth because it is INELIGIBLE, not because it is a fund,
+    -- and removing `not t.is_fund` from the view would not fail anything here.
+    -- ---------------------------------------------------------------------------
+    select 'funds', 'the fixture fund is breadth-ELIGIBLE, so excluding it actually costs something',
+           case when (select count(*) from public.daily_features
+                      where symbol = 'FUND' and sma200 is not null) > 0
+                then 'PASS' else 'FAIL' end,
+           '>0',
+           (select count(*)::text from public.daily_features
+             where symbol = 'FUND' and sma200 is not null),
+           'a fund with no sma200 would leave breadth for the wrong reason and prove nothing below'
+    union all
+    -- Asserts over EVERY date rather than one. The first version picked `max(d) from
+    -- market_context`, which is a date the INDEX series reaches and the companies do not - so it
+    -- found zero funds there and failed, correctly. Picking a date is a way to be wrong; comparing
+    -- the whole series is not.
+    select 'funds', 'on every date, breadth_tracked is the company count - funds are not in it',
+           case when (select count(*) from public.market_context m
+                      where m.breadth_tracked is distinct from (
+                        select count(*) from public.daily_features f
+                        join public.tickers t on t.symbol = f.symbol
+                        where t.active and not t.is_index and not t.is_fund and f.d = m.d)) = 0
+                then 'PASS' else 'FAIL' end,
+           '0 dates disagreeing',
+           (select count(*)::text from public.market_context m
+             where m.breadth_tracked is distinct from (
+               select count(*) from public.daily_features f
+               join public.tickers t on t.symbol = f.symbol
+               where t.active and not t.is_index and not t.is_fund and f.d = m.d)) || ' disagree',
+           'in production breadth_tracked is 43 companies, never the 53 rows the grid shows'
+    union all
+    select 'funds', 'and the fund has feature rows on dates breadth covers, so that costs something',
+           case when (select count(*) from public.daily_features f
+                      join public.tickers t on t.symbol = f.symbol
+                      join public.market_context m on m.d = f.d
+                      where t.active and t.is_fund and f.sma200 is not null) > 0
+                then 'PASS' else 'FAIL' end,
+           '>0 eligible fund-days inside the breadth window',
+           (select count(*)::text from public.daily_features f
+             join public.tickers t on t.symbol = f.symbol
+             join public.market_context m on m.d = f.d
+            where t.active and t.is_fund and f.sma200 is not null),
+           'zero here means the check above is comparing a number to itself and proving nothing'
+    union all
+    select 'funds', 'a fund IS a grid row - that is the whole difference from an index',
+           case when (select count(*) from public.grid_cells where symbol = 'FUND') > 0
+                 and (select count(*) from public.grid_cells where symbol = '^IDX') = 0
+                then 'PASS' else 'FAIL' end,
+           'fund on the grid, index off it',
+           (select count(*)::text from public.grid_cells where symbol = 'FUND') || ' fund cells, ' ||
+           (select count(*)::text from public.grid_cells where symbol = '^IDX') || ' index cells',
+           'overloading is_index to mean fund would delete ten rows from the grid, silently'
+    union all
     select 'shape', 'market_cells verdicts match the SAME re-derivation - third copy, same rule',
            case when (select count(*) from public.market_cells c
                       where c.verdict is distinct from (

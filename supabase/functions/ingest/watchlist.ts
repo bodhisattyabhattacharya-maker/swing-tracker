@@ -13,6 +13,12 @@
  * Indices carry theme "index" and rankable=false. "index" is not a declared theme in the yml -
  * that block is for tradeable peer groups - and the CI check only validates ticker themes, so
  * this is consistent. `is_index` is what the grid filters on; `theme` is just non-null.
+ *
+ * `is_fund` IS NOT `is_index`, and conflating them would be the easy mistake. An index is context
+ * and never appears as a row; an ETF is a row like any other, with real price parameters. What a
+ * fund lacks is an income statement - so every fundamental is legitimately NOT APPLICABLE rather
+ * than missing, and it is excluded from watchlist breadth, where a basket of our own names would
+ * double-count them. Two different exclusions, two different flags.
  */
 
 import { parse } from "npm:yaml@2";
@@ -26,13 +32,17 @@ export interface TickerRow {
   bellwether: boolean;
   rankable: boolean;
   is_index: boolean;
+  /** An ETF. Trades and charts like a stock; has no financial statements. Never true for an index. */
+  is_fund: boolean;
   active: boolean;
   source: string;
 }
 
 interface WatchlistYaml {
   themes?: Record<string, { label?: string; rankable?: boolean; note?: string }>;
-  tickers?: Array<{ symbol: string; name: string; theme: string; tag?: string; bellwether?: boolean }>;
+  tickers?: Array<
+    { symbol: string; name: string; theme: string; tag?: string; bellwether?: boolean; fund?: boolean }
+  >;
   indices?: Array<{ symbol: string; name: string }>;
 }
 
@@ -61,6 +71,9 @@ export function parseWatchlist(text: string, source = "config/watchlist.yml"): T
       // the whole peer group (watchlist.yml header).
       rankable: theme.rankable ?? true,
       is_index: false,
+      // Per-ENTRY, not per-theme. Deriving this from `theme === "etfs"` would work today and break
+      // silently the day a fund is filed under another theme.
+      is_fund: t.fund ?? false,
       active: true,
       source,
     });
@@ -75,6 +88,7 @@ export function parseWatchlist(text: string, source = "config/watchlist.yml"): T
       bellwether: false,
       rankable: false,
       is_index: true,
+      is_fund: false,
       active: true,
       source,
     });

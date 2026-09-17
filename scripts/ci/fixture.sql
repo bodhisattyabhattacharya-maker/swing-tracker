@@ -30,6 +30,14 @@ insert into public.tickers (symbol, name, theme, active, is_index) values
   ('^VIX3M', 'VIX3M Fixture',    'index',   true, true),
   ('^GSPC',  'SPX Fixture',      'index',   true, true);
 
+-- A FUND, added 2026-09-17. It carries is_fund = true and, below, a full copy of SYNTH's bars -
+-- which matters: a fund with no history would be excluded from breadth for the wrong reason and
+-- the exclusion would pass while testing nothing. This one is fully eligible (200+ bars, sma200
+-- not null) and must STILL be absent from breadth, while remaining present on the grid.
+insert into public.tickers (symbol, name, theme, active, is_index, is_fund) values
+  ('FUND', 'Fund Fixture', 'fixture', true, false, true);
+
+
 insert into public.daily_bars (symbol, d, open, high, low, close, volume, source) values
   ('SYNTH','2021-01-04',98.4904,98.852,98.1712,98.4904,1661245,'fixture'),
   ('SYNTH','2021-01-05',99.747,100.4636,99.7306,99.747,1576208,'fixture'),
@@ -353,6 +361,14 @@ insert into public.daily_bars (symbol, d, open, high, low, close, volume, source
   ('SYNTH','2022-03-25',162.285,162.8345,160.7551,162.285,1883476,'fixture');
 
 -- Degenerate companions. FLAT has no movement at all (RSI undefined, not 50); SHORT sits below
+-- FUND's bars are a COPY OF SYNTH's, taken here rather than beside the ticker insert - which is
+-- where they were first written, before SYNTH had any bars, so the copy took zero rows and the
+-- fund silently had no history at all. A fund with no history leaves breadth because it is
+-- INELIGIBLE, not because it is a fund, and the exclusion would have passed while testing nothing.
+insert into public.daily_bars (symbol, d, open, high, low, close, volume, source)
+select 'FUND', d, open, high, low, close, volume, 'fixture'
+from public.daily_bars where symbol = 'SYNTH';
+
 -- every warm-up window; ^IDX is close-only, the shape FRED delivers.
 insert into public.daily_bars (symbol, d, open, high, low, close, volume, source)
   select 'FLAT', date '2024-01-01' + g, 50, 50, 50, 50, 1000, 'fixture' from generate_series(0,299) g;

@@ -65,12 +65,14 @@ next agent to the wrong file confidently.
 | Why is analyst target gap not with the other fundamentals? | Because no source in our data plane has it, and it is an opinion rather than a measurement. It is a **searched column**, deferred to a later version. |
 | Why is this cell coloured? | `config/norms.yml` |
 | Which tickers, and why that peer group? | `config/watchlist.yml` (`theme` vs `tag`) |
+| Why is this row's P/E blank? | It may be an **ETF** — `tickers.is_fund`. A fund has no income statement, so a fundamental is not-applicable, not missing (decision 0041). Not the same flag as `is_index`, which keeps a series off the grid entirely. |
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |
 | Where is RSI actually computed? | `public.recursive_indicators` — **once**, for every timeframe. `daily_recursive` and `weekly_features` are both callers. Do not add a second copy. |
 | Is this week finished? | `weekly_features.is_complete`, which means "not the newest week for this symbol". There is no market calendar and none is needed. |
 | Which week is a given day showing? | The newest week that started before that day's own week — `weekly_in_force` (`source_week_start` names it), and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
 | Why did a weekly cell not move all week? | Because a weekly bar has one value. It steps on the week boundary and nowhere else. |
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
+| Can we even compute a fundamental for all 36 names? | `scripts/probe_sec_tags.sql` — paste it into the SQL editor, one STEP at a time. Asks SEC which tags each filer actually reports, rather than assuming. Not run by CI: it makes outbound requests. |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
 | Why is a read slow rather than wrong? | `docs/INCIDENTS.md` 2026-09-16 first. A join with no equality in it costs nothing on one date and is quadratic over the whole view; `scripts/ci/check_formulas.sql` section `shape` asserts the plan, because no value check can see this. |
