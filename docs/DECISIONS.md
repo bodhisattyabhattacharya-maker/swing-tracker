@@ -1106,3 +1106,56 @@ first attempt rewrote it from memory and got `index_days_behind` wrong — a tra
 became a date subtraction — which would have silently changed a documented definition while reading
 as a formatting change. A 160-line view with five load-bearing guards is not something to retype.
 
+## 0042 — 2026-09-17 — The derived technicals are a matview, and a tone is not a verdict
+
+**Context:** the UI spec's Technicals preset opens with five columns that are not measurements of
+price but statements about the moving averages: the stack ordering, two crosses with the time since
+each, and both slopes. Every input has been in `daily_features` since 20260913064000.
+
+**Not bought.** The vendor sells SMA, EMA, MACD and RSI endpoints and none of these five is among
+them — an indicator endpoint returns the average, and every column here is a statement *about* the
+averages. Buying the inputs we already compute, and giving up the 1e-9 gate that proves our RSI
+matches an independent implementation of Wilder's, would be a poor trade for a file this size.
+Where those endpoints could earn their place is as a **second opinion** on our numbers, which is a
+different job from being the source.
+
+**A matview, not a view, and this is the 2026-09-16 lesson arriving one step earlier.** Every column
+needs a window over the symbol's whole history — the slope looks back a week, "bars since the last
+cross" looks back as far as the last cross. **A filter cannot pass through a window function.**
+`where d = today` on a view does not become an index lookup; Postgres computes the window over the
+entire history and discards almost all of it. The dashboard reads one date per revalidation, so that
+is the whole history re-scanned per page load — the shape of the band join that took the site down,
+reached by a different route. `daily_signals_pk` makes the one-date read an index scan, and CI
+asserts that plan rather than trusting it.
+
+**Cross direction is read from the CURRENT ordering, not from a carried event.** If SMA50 is above
+SMA200 today then the last cross was necessarily a Golden one. Not a shortcut — the same fact, and
+it deletes an entire class of bug where a carried direction and the present ordering disagree.
+
+**Bars, not calendar days.** "Golden 88d" is 88 trading bars. Decision 0035's rule, for its reason:
+a calendar interval spans a different number of sessions depending on where the weekends fall.
+
+**Slope is a five-bar change in the AVERAGE**, `100 × (sma[t]/sma[t−5] − 1)`. The change in the
+average, not in price — a 50-day average moving +0.6% in a week is a statement about the trend of
+the trend. **Direction is the sign with no dead zone:** −0.04% reads "Falling" and displays −0.0%/wk.
+A "Flat" band would mean choosing a width, and every width is arbitrary; `Flat` is emitted only for
+exactly zero, which a synthetic series produces and a real one does not.
+
+**`tone` is not a norm verdict, and keeping them apart is load-bearing.** A verdict says *"this
+value is outside a threshold you set"* and comes from `norms`. A tone says *"this category reads
+bullish"* and comes from the label. The spec renders them with the same colours deliberately;
+conflating them in the DATA would mean a norms sync could silently restyle a chip. CI asserts that
+no norm key ever matches a signal param, and that the label → tone mapping is total.
+
+**The stack inherits the EMA's warm-up; the crosses and slopes do not.** An EMA is partly its seed
+until it decays (hard constraint 8), so an ordering depending on it is untrustworthy for that
+window. An SMA is exact the moment its window fills — there is nothing to decay, so a cross between
+two SMAs has no seed state at all.
+
+**A guard added because this project has now shipped the same failure twice.** `weekly_features`
+shipped in 20260914010000 with nothing refreshing it; `daily_signals` shipped here with nothing
+refreshing it, and **the gate went green with the matview entirely empty**. Two generic checks now
+ask `pg_matviews` what exists rather than naming anything: no matview may be empty, and
+`swing-refresh-features` must name every one. Naming them would mean remembering to add the next,
+and forgetting is the whole failure.
+

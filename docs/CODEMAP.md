@@ -68,6 +68,8 @@ next agent to the wrong file confidently.
 | Why is this row's P/E blank? | It may be an **ETF** — `tickers.is_fund`. A fund has no income statement, so a fundamental is not-applicable, not missing (decision 0041). Not the same flag as `is_index`, which keeps a series off the grid entirely. |
 | Why is this value blank? | Warm-up floor (`DEFINITIONS.md` §4), or a non-rankable theme |
 | Where is RSI actually computed? | `public.recursive_indicators` — **once**, for every timeframe. `daily_recursive` and `weekly_features` are both callers. Do not add a second copy. |
+| What do the moving averages say about each other? | `public.daily_signals` — stack, both crosses with bars since, both slopes. A matview: a date filter cannot pass through a window function, so a view would re-scan every history per page load (decision 0042). |
+| Why is a chip coloured, when it has no norm? | `signal_cells.tone`, derived from the label rather than from a threshold. A tone is not a verdict, and nothing in `config/norms.yml` can reach it. |
 | Is this week finished? | `weekly_features.is_complete`, which means "not the newest week for this symbol". There is no market calendar and none is needed. |
 | Which week is a given day showing? | The newest week that started before that day's own week — `weekly_in_force` (`source_week_start` names it), and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
 | Why did a weekly cell not move all week? | Because a weekly bar has one value. It steps on the week boundary and nowhere else. |

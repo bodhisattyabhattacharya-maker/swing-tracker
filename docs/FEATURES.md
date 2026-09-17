@@ -776,3 +776,38 @@ failed correctly on the fixture. The check now compares the whole series against
 date picked at all.
 **By:** Bodhi + Claude
 
+## 2026-09-17 — The moving averages start saying what they mean
+**What:** five Technicals columns, derived from data the database has held since day three — MA
+stack (Full bull / Full bear / Mixed), the SMA50×SMA200 and EMA21×SMA50 crosses each with **trading
+bars** since, and both MA slopes as percent per week.
+**How:** decision 0042, migration `20260917120000`. New matview `daily_signals` and view
+`signal_cells`. No ingest change, no vendor, no new data — `close`, `ema21_daily`, `sma50` and
+`sma200` were already there; what the spec wanted was what they say about each other.
+**Architecture impact:** a **matview, not a view**, because a filter cannot pass through a window
+function — `where d = today` on a view would recompute every symbol's whole history per page load.
+And a new kind of cell: `signal_cells` publishes a categorical **label** plus an optional number and
+a **tone**, where every other cell view publishes a number and a norm verdict. A tone comes from the
+label, not from `config/norms.yml`, and CI asserts no norm key can ever reach a signal param —
+otherwise editing a threshold could silently restyle a chip.
+**Verified by:** `scripts/ci/run.sh` green at **91 checks, 13 new**; `deno test` 57 passing.
+**Mutation-tested four ways, all four caught by the right check:** off-by-one on bars-since for each
+cross, slope lookback of 4 bars instead of 5, and the stack loosened from `>` to `>=`.
+
+**Two things went wrong first, and both are the point of the entry.**
+
+**The gate went green with the new matview entirely empty.** A matview is populated once at create
+time — in CI, before the fixture loads — and `run.sh` did not refresh it. This is the
+`weekly_features` failure of 20260914010000 repeating, an hour after the warning about it was
+written into this migration's own header. The fix is not the missing refresh line: two **generic**
+checks now ask `pg_matviews` what exists rather than naming anything, so the next matview added
+without a refresh fails the build by name. Verified against a throwaway empty matview.
+
+**And the bars-since check was blind to the bug it existed to catch.** It guarded on `prev_bars is
+not null`, which excluded exactly the rows that mattered — the fixture has one 50×200 crossing per
+symbol, so on that bar there is no previous value and the row was skipped. An off-by-one passed the
+whole gate. The non-vacuity guard did not help either: it asked whether *either* cross had events,
+and 21×50 had six per symbol, so it vouched for coverage that did not exist. Both rewritten — the
+reset rule is asserted directly with no guard, both crosses are checked, and non-vacuity is per
+cross type.
+**By:** Bodhi + Claude
+
