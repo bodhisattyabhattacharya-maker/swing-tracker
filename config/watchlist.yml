@@ -8,6 +8,12 @@
 #
 # A theme marked `rankable: false` returns NULL for sector-relative ranks. That is deliberate:
 # a null is honest, a rank computed across non-comparable companies is not.
+#
+# `fund: true` marks an ETF. It is a property of the SECURITY, not of its theme - a fund has no
+# income statement, so every fundamental is legitimately not-applicable rather than missing, and it
+# is excluded from watchlist breadth because a basket of our own names would double-count them.
+# Deliberately NOT derived from `theme: etfs`: the day a fund lands in another theme, a theme-based
+# test would silently start treating it as an operating company.
 
 themes:
   memory-storage:
@@ -33,10 +39,18 @@ themes:
   mega-cap-tech:
     label: "Mega-cap tech"
     rankable: true
+  saas:
+    label: "SaaS"
+    rankable: true
+    note: "Subscription software. Comparable gross margins and a shared multiple regime, which is what makes a rank mean something here."
   diversified:
     label: "Diversified bellwethers"
     rankable: false
     note: "Not a peer group. Ranking a bank's FCF yield against a health insurer's is meaningless. Held for market context, not comparison."
+  etfs:
+    label: "ETFs"
+    rankable: false
+    note: "Funds, not companies. Rank suppressed because there is nothing to rank - no income statement, no FCF yield, no margin. Held as price context beside the names they contain."
 
 tickers:
   # --- memory & storage ---
@@ -49,7 +63,7 @@ tickers:
   - { symbol: AVGO,  name: Broadcom,               theme: ai-silicon,         tag: ai-networking,     bellwether: true }
   - { symbol: AMD,   name: Advanced Micro Devices, theme: ai-silicon,         tag: ai-compute }
   - { symbol: MRVL,  name: Marvell Technology,     theme: ai-silicon,         tag: custom-silicon }
-  - { symbol: CRDO,  name: Credo Technology,       theme: ai-silicon,         tag: ai-connectivity }
+  - { symbol: INTC,  name: Intel,                  theme: ai-silicon,         tag: foundry-turnaround }
   - { symbol: ALAB,  name: Astera Labs,            theme: ai-silicon,         tag: ai-connectivity }
   # --- semi equipment ---
   - { symbol: ASML,  name: ASML Holding,           theme: semi-equipment,     tag: litho,             bellwether: true }
@@ -58,7 +72,7 @@ tickers:
   - { symbol: KLAC,  name: KLA Corporation,        theme: semi-equipment,     tag: process-control }
   # --- foundry, analog & IP (rank suppressed) ---
   - { symbol: TSM,   name: Taiwan Semiconductor,   theme: foundry-analog-ip,  tag: foundry,           bellwether: true }
-  - { symbol: INTC,  name: Intel,                  theme: foundry-analog-ip,  tag: foundry-turnaround }
+  - { symbol: CRDO,  name: Credo Technology,       theme: foundry-analog-ip,  tag: ai-connectivity }
   - { symbol: TXN,   name: Texas Instruments,      theme: foundry-analog-ip,  tag: analog }
   - { symbol: QCOM,  name: Qualcomm,               theme: foundry-analog-ip,  tag: edge-ai }
   - { symbol: ARM,   name: Arm Holdings,           theme: foundry-analog-ip,  tag: ip-licensing }
@@ -74,6 +88,14 @@ tickers:
   - { symbol: AMZN,  name: Amazon,                 theme: mega-cap-tech,      tag: cloud-retail,      bellwether: true }
   - { symbol: META,  name: Meta Platforms,         theme: mega-cap-tech,      tag: ai-capex,          bellwether: true }
   - { symbol: TSLA,  name: Tesla,                  theme: mega-cap-tech,      tag: ev-autonomy }
+  # --- SaaS ---
+  - { symbol: CRM,   name: Salesforce,             theme: saas,               tag: crm-ai,            bellwether: true }
+  - { symbol: NOW,   name: ServiceNow,             theme: saas,               tag: workflow-ai }
+  - { symbol: ADBE,  name: Adobe,                  theme: saas,               tag: creative-ai }
+  - { symbol: INTU,  name: Intuit,                 theme: saas,               tag: smb-fintech }
+  - { symbol: SHOP,  name: Shopify,                theme: saas,               tag: commerce }
+  - { symbol: DDOG,  name: Datadog,                theme: saas,               tag: observability }
+  - { symbol: SNOW,  name: Snowflake,              theme: saas,               tag: data-cloud }
   # --- diversified bellwethers (rank suppressed) ---
   - { symbol: JPM,   name: JPMorgan Chase,         theme: diversified,        tag: financials,        bellwether: true }
   - { symbol: WMT,   name: Walmart,                theme: diversified,        tag: consumer-staples,  bellwether: true }
@@ -82,6 +104,18 @@ tickers:
   - { symbol: GE,    name: GE Aerospace,           theme: diversified,        tag: aerospace }
   - { symbol: XOM,   name: Exxon Mobil,            theme: diversified,        tag: energy,            bellwether: true }
   - { symbol: UNH,   name: UnitedHealth,           theme: diversified,        tag: healthcare }
+
+  # --- ETFs (rank suppressed; `fund: true` is what stops them being read as companies) ---
+  - { symbol: SPY,   name: SPDR S&P 500,           theme: etfs,               tag: broad-market,      bellwether: true, fund: true }
+  - { symbol: QQQ,   name: Invesco QQQ,            theme: etfs,               tag: nasdaq-100,        fund: true }
+  - { symbol: DIA,   name: SPDR Dow Jones,         theme: etfs,               tag: dow-30,            fund: true }
+  - { symbol: IWM,   name: iShares Russell 2000,   theme: etfs,               tag: small-cap,         fund: true }
+  - { symbol: SMH,   name: VanEck Semiconductor,   theme: etfs,               tag: semis,             fund: true }
+  - { symbol: XLK,   name: Technology Select,      theme: etfs,               tag: sector-tech,       fund: true }
+  - { symbol: XLF,   name: Financial Select,       theme: etfs,               tag: sector-financials, fund: true }
+  - { symbol: XLE,   name: Energy Select,          theme: etfs,               tag: sector-energy,     fund: true }
+  - { symbol: XLV,   name: Health Care Select,     theme: etfs,               tag: sector-health,     fund: true }
+  - { symbol: XLY,   name: Consumer Discretionary, theme: etfs,               tag: sector-discr,      fund: true }
 
 # Context only - never traded, excluded from the watchlist grid.
 #

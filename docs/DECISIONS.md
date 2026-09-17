@@ -1060,3 +1060,49 @@ reproduce is worse than publishing a defensible one and saying where it differs.
 **What this unblocks:** step 8, sector-relative ranks, which are percentiles of FCF yield and gross
 margin **within a theme** and therefore could not be defined while FCF yield was not.
 
+## 0041 — 2026-09-17 — An ETF is a row, an index is context: two exclusions, two flags
+
+**Context:** the UI specification tracks **43 companies and 10 ETFs**, up from 36 companies. The
+ETFs raise a question the project has not had to answer: what is a security that trades, charts and
+oscillates exactly like a stock, and has no income statement?
+
+**Decision: a second boolean, `tickers.is_fund`, and not a second meaning for `is_index`.**
+
+| | |
+|---|---|
+| `is_index` | **Context.** ^VIX, ^VIX3M, ^GSPC. Never a grid row, never ranked, never in breadth. Its whole job is to be the thing other numbers are measured against. |
+| `is_fund` | **A row.** SPY, QQQ, XLE trade, have OHLCV, an RSI and a 200-day average, and belong on the grid beside the names they contain. What they lack is an income statement — so every fundamental is legitimately **not-applicable** rather than missing, which the spec renders as its own state. |
+
+Overloading `is_index` would have been one line shorter and would have removed ten rows from the
+grid, silently, which is the entire feature.
+
+**Set per ENTRY, not per theme.** `fund: true` sits on the ticker in `config/watchlist.yml`, not on
+the `etfs` theme. Deriving it from `theme = 'etfs'` works today and fails the day a fund is filed
+under another theme — a sector ETF in `diversified`, say — at which point it would quietly be read
+as an operating company. There is a CI check that fails on exactly that derivation.
+
+**Breadth counts companies only, and that is the one behavioural change.** Breadth is *"how many of
+our names are above their own 200-day average"*. An ETF is a basket of those same names: SMH holds
+most of the semiconductor block, SPY and QQQ hold the mega-caps. Counting them weights names
+already counted, by an amount that depends on fund composition we do not track — so the number would
+stop meaning what DEFINITIONS §Market says and would drift as those funds rebalance.
+`breadth_tracked` therefore reads **43**, not the 53 rows on the grid, and that field exists
+precisely so a reader can check whether breadth covers what they think it does.
+
+**`index_days_behind` deliberately does NOT exclude funds.** It measures the **calendar** — which
+dates the market was open — not the universe. Funds trade the same sessions, so excluding them
+cannot change the answer, and narrowing it would make the query say something it does not mean.
+
+**Two theme moves, from the spec:** INTC → `ai-silicon`, CRDO → `foundry-analog-ip`. This changes
+sector-relative ranks for both themes once those exist, since ranks are percentiles within a theme.
+
+**A new rankable theme, `saas`** (CRM, NOW, ADBE, INTU, SHOP, DDOG, SNOW). Comparable gross margins
+and a shared multiple regime, which is what makes a rank mean anything. `etfs` is `rankable: false`
+for the blunter reason that there is nothing to rank.
+
+**How the view was changed, which is a process note worth keeping.** `market_context` was edited by
+**substituting one predicate into the 20260915130000 body programmatically**, not by retyping it. A
+first attempt rewrote it from memory and got `index_days_behind` wrong — a trading-day subquery
+became a date subtraction — which would have silently changed a documented definition while reading
+as a formatting change. A 160-line view with five load-bearing guards is not something to retype.
+

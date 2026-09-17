@@ -744,3 +744,35 @@ Saying "we do not know this yet" in the spec is the point of the spec.
 docs-only change and CI can only confirm it broke nothing.
 **By:** Bodhi + Claude
 
+## 2026-09-17 — The universe becomes 43 companies and 10 ETFs
+**What:** 36 tickers → 53. A new **SaaS** theme (CRM, NOW, ADBE, INTU, SHOP, DDOG, SNOW) and ten
+**ETFs** (SPY, QQQ, DIA, IWM, SMH, XLK, XLF, XLE, XLV, XLY), plus two theme moves from the UI
+spec: INTC → AI silicon, CRDO → Foundry/analog/IP.
+**How:** decision 0041, migration `20260917060000`. New `tickers.is_fund`, set per entry in
+`config/watchlist.yml` with `fund: true`. Funds leave watchlist breadth; nothing else changes.
+**Architecture impact:** the project now distinguishes **two kinds of exclusion**. An index is
+context and is never a row; a fund is a row whose fundamentals are not-applicable rather than
+missing. Reusing `is_index` for both would have deleted ten rows from the grid without a word.
+`breadth_tracked` now reads **43**, not 53 — read it as the answer to "does breadth cover what I
+think it covers".
+
+**Expect `tickers_without_features` to FAIL against production for about two nights.** Seventeen
+new symbols have no bars, and the automatic full catch-up is capped at 15 symbols per run
+(`DEFAULT_LIMIT_FULL` in `provider.ts`), so it takes two nightly runs to backfill them. That check
+is a real invariant and it will be correctly unhappy until then. It is not a CI failure — CI runs
+against the fixture — and it self-heals; if it is still failing on the third morning, something
+else is wrong.
+
+**Verified by:** `scripts/ci/run.sh` green at **78 formula checks, 4 new**, plus `deno test`
+57 passing and `deno check` clean.
+**The negative tests, both of them the design rather than the code.** Put funds back into breadth:
+the all-dates check fails with `320 disagree`. Set the fixture fund's `is_index = true` — the
+tempting overload this decision exists to refuse: the grid-row check fails with `0 fund cells`.
+**And two of my own checks were wrong before they were right**, which is the part worth recording:
+the fund's bars were copied beside the ticker insert, before the source symbol had any, so it had no
+history and left breadth for being *ineligible* rather than for being a fund; and the first breadth
+assertion compared a **per-date** `breadth_tracked` against a **universe-wide** ticker count, which
+failed correctly on the fixture. The check now compares the whole series against itself and needs no
+date picked at all.
+**By:** Bodhi + Claude
+

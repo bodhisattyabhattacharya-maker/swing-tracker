@@ -126,7 +126,7 @@ Decision 0032; asserted in `scripts/ci/check_formulas.sql` under the `as-of` sec
 | **VIX level** | `^VIX` close. |
 | **VIX regime band** | Fixed bands, not percentiles: `< 16` / `16–30` / `30–50` / `50–80` / `> 80`. |
 | **VIX term structure** | `VIX3M / VIX − 1`, as a percentage. Positive = contango (normal), negative = backwardation (stress priced as persistent). |
-| **Watchlist breadth** | Share of active non-index tickers whose close is above their own daily SMA(200), as a percentage. Names without 200 bars are excluded from both numerator and denominator. **Null, not 0%, when nobody is eligible** — 199 of 1,236 stored dates, all early history. `breadth_eligible` is published alongside, because 0% of 2 names and 0% of 36 are different facts. |
+| **Watchlist breadth** | Share of active **company** tickers — non-index **and non-fund** — whose close is above their own daily SMA(200), as a percentage. An ETF is a basket of names already counted, so including one would weight them twice by an amount that depends on fund composition we do not track (decision 0041); `breadth_tracked` publishes the universe size, 43 rather than the 53 rows on the grid. Names without 200 bars are excluded from both numerator and denominator. **Null, not 0%, when nobody is eligible** — 199 of 1,236 stored dates, all early history. `breadth_eligible` is published alongside, because 0% of 2 names and 0% of 36 are different facts. |
 
 ### How the market block is dated
 
@@ -431,8 +431,16 @@ freshness rule, not as a fundamental.
 
 1. **Whether all 36 filers report these tags consistently**, and in which years. Tag availability
    varies by filer; a fundamental that silently goes null for six of the watchlist is worse than one
-   that was never built. Checkable with one `net.http_get` against SEC companyfacts from the SQL
-   editor, which is this project's established pattern for exactly this question.
+   that was never built. **`scripts/probe_sec_tags.sql` asks SEC directly** — paste it into the SQL
+   editor a STEP at a time. It runs on a six-name sample first and prints the payload sizes, because
+   pulling 36 `companyfacts` documents into `net._http_response` unmeasured is how a small instance
+   fills up.
+
+   Three things it expects to find, **written down before it was run so the result can contradict
+   them**: that TSM, ASML and ARM report no `us-gaap` facts at all (foreign private issuers filing
+   20-F under IFRS — 8% of the watchlist, and the foundry and lithography core of it); that the
+   capitalised-software tag differs by filer, which is why §7 #4 names no tag; and that SNDK lacks
+   four quarters of history. **None of these is a finding yet.**
 2. **The effective-tax-rate clamp band in ROIC.** Several of these names have had quarters with tax
    benefits, where an unclamped rate goes negative and flips NOPAT's sign. **The band is deliberately
    not written above**, because a sensible one needs looking at real filings and a number invented

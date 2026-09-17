@@ -487,9 +487,11 @@ const WATCHLIST_YML = `
 themes:
   memory-storage: { label: "Memory", rankable: true }
   diversified:    { label: "Diversified", rankable: false }
+  etfs:           { label: "ETFs", rankable: false }
 tickers:
   - { symbol: MU,  name: Micron, theme: memory-storage, tag: hbm, bellwether: true }
   - { symbol: JPM, name: JPMorgan, theme: diversified }
+  - { symbol: SPY, name: SPDR S&P 500, theme: etfs, fund: true }
 indices:
   - { symbol: "^VIX", name: VIX }
 `;
@@ -497,7 +499,9 @@ indices:
 Deno.test("parseWatchlist: rankable comes from the theme, indices are flagged and unrankable", () => {
   const rows = parseWatchlist(WATCHLIST_YML);
   const by = Object.fromEntries(rows.map((r) => [r.symbol, r]));
-  assertEquals(rows.length, 3);
+  // 2 companies + 1 fund + 1 index. The fund counts as a row; the index is a row in `tickers`
+  // but never on the grid - see the is_fund/is_index test below.
+  assertEquals(rows.length, 4);
   assertEquals(by.MU.rankable, true);
   assertEquals(by.MU.bellwether, true);
   assertEquals(by.JPM.rankable, false, "diversified is rankable: false in the yml");
@@ -505,6 +509,37 @@ Deno.test("parseWatchlist: rankable comes from the theme, indices are flagged an
   assertEquals(by["^VIX"].is_index, true);
   assertEquals(by["^VIX"].rankable, false);
   assertEquals(by["^VIX"].theme, "index");
+});
+
+Deno.test("parseWatchlist: a fund is a ROW, an index is not - two different exclusions", () => {
+  const rows = parseWatchlist(WATCHLIST_YML);
+  const spy = rows.find((r) => r.symbol === "SPY")!;
+  const vix = rows.find((r) => r.symbol === "^VIX")!;
+  const mu = rows.find((r) => r.symbol === "MU")!;
+
+  // The whole point of the second flag: SPY is on the grid, ^VIX never is.
+  assertEquals([spy.is_fund, spy.is_index], [true, false]);
+  assertEquals([vix.is_fund, vix.is_index], [false, true]);
+  assertEquals([mu.is_fund, mu.is_index], [false, false]);
+
+  // A fund keeps a real theme and a real name - it is not a degenerate index row.
+  assertEquals(spy.theme, "etfs");
+  assertEquals(spy.rankable, false, "etfs theme is rankable: false - there is nothing to rank");
+});
+
+Deno.test("parseWatchlist reads `fund` per ENTRY, not from the theme name", () => {
+  // A fund filed under a non-etfs theme must still be a fund. Deriving is_fund from
+  // `theme === "etfs"` passes the test above and fails this one.
+  const yml = `
+themes:
+  diversified: { label: "Diversified", rankable: false }
+tickers:
+  - { symbol: XLE, name: Energy Select, theme: diversified, fund: true }
+  - { symbol: XOM, name: Exxon, theme: diversified }
+`;
+  const rows = parseWatchlist(yml);
+  assertEquals(rows.find((r) => r.symbol === "XLE")!.is_fund, true);
+  assertEquals(rows.find((r) => r.symbol === "XOM")!.is_fund, false);
 });
 
 Deno.test("parseWatchlist rejects an undeclared theme instead of defaulting", () => {
