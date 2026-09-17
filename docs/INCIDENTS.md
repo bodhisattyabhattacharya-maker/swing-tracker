@@ -369,3 +369,36 @@ the fixture. The three as-of assertions re-run against production over the whole
 its own week, no cell is sourced from a bar on or after the day it is shown, and no week holding a
 daily bar lacks a weekly row. Ten daily params and four weekly params, unchanged.
 
+## 2026-09-17 — a check that cries wolf: the norms row rose on a successful release
+
+**What happened:** the morning after #62 merged, `norms_without_parameter` in
+`scripts/verify_parameters.sql` read **9**, up from 6. Its own note says *"a number that RISES means
+a typo or a rename"*. Nothing was renamed and nothing was typo'd: `rs_vs_spx_126b`, `vix` and
+`term_structure` had all shipped correctly the evening before and were on the page.
+
+**Cause:** the check counted norms with no matching row **in `grid_cells`**. #62 put three parameters
+in the two sibling cell views, `rs_cells` and `market_cells`, which the check had never heard of. So
+the row's alarm condition fired on the release that fixed the thing it was asking about.
+
+**Why this is worth an entry rather than a one-line fix in silence.** No user saw anything wrong; the
+page was correct all night. The damage is to the only detector watching for a renamed norm — and this
+project has now had **three** norms that judged nothing because their name did not match a parameter
+(`pct_off_ath`, `rs_vs_spx_6m`, `vix_term_struct`). This row is what is supposed to catch the fourth.
+A detector that fires on good news is one people learn to skip, which is the same failure as the
+staleness banner that cries wolf on a market holiday (20260913200000) — stated there as *"a banner
+that lies once gets ignored forever"*. It applies to the verify script just as much.
+
+**Also wrong: the prediction in the handoff.** `claude/swing-tracker-handoff-2026-09-16.md` said to
+expect **11**. That number was reasoned from the old counting rule and was never going to be right
+under either rule. Predicting a number from a definition you are about to change is how a wrong
+expectation gets written down as a fact.
+
+**Fix:** the check now counts a norm as unmatched only when it appears in **none** of `grid_cells`,
+`rs_cells` and `market_cells`. Production reads **6** — `fcf_yield`, `gross_margin_trend`,
+`net_debt_ebitda`, `rev_acceleration`, `rev_growth_yoy`, `rsi_hourly` — which is exactly the set of
+parameters that genuinely are not built.
+
+**The thing to remember when the next cell view lands:** this check has to learn about it, or it
+over-reports again. There is no way to derive the list of cell views automatically without guessing
+at names, so it is three explicit `not exists` clauses and a note saying to add the fourth.
+

@@ -267,11 +267,20 @@ counts as (
     -- Indices are market context, never grid rows.
     (select count(*) from public.grid_cells c
       join public.tickers t on t.symbol = c.symbol where t.is_index or not t.active)       as index_or_inactive_in_grid,
-    -- Informational: a norm whose parameter does not exist yet. Expected to be 12 today and to
-    -- FALL as the weekly, market and fundamental layers land. It cannot be an error - the
-    -- parameters genuinely are not built - but a number that rises means a typo or a rename.
+    -- Informational: a norm whose parameter does not exist ANYWHERE yet. It cannot be an error -
+    -- the parameters genuinely are not built - but a number that RISES means a typo or a rename,
+    -- and that is the whole reason the row is here.
+    --
+    -- IT MUST COUNT ALL THREE CELL VIEWS, and that is what this row got wrong for one day. It
+    -- looked only at grid_cells, so when `rs_vs_spx_126b`, `vix` and `term_structure` shipped in
+    -- rs_cells and market_cells (20260916140000) the count went UP, from 6 to 9, for three
+    -- parameters that were on the page and working. A check whose alarm condition fires on a
+    -- successful release is a check people learn to ignore - which is the one thing an
+    -- informational row cannot afford, since nothing else is watching for a renamed norm.
     (select count(*) from public.norms n
-      where not exists (select 1 from public.grid_cells c where c.param = n.param))         as norms_without_parameter
+      where not exists (select 1 from public.grid_cells   c where c.param = n.param)
+        and not exists (select 1 from public.rs_cells     r where r.param = n.param)
+        and not exists (select 1 from public.market_cells m where m.param = n.param))       as norms_without_parameter
 ),
 invariant_rows as (
   select * from (
@@ -442,7 +451,7 @@ invariant_rows as (
     union all
     select 'info', 'norms with no parameter built yet',
            'PASS', '(informational)', norms_without_parameter::text,
-           'expected 12 on 2026-09-13 and should FALL as layers land; a RISE means a typo or rename' from counts
+           'counts all three cell views; 6 on 2026-09-17, should FALL as layers land, and a RISE means a typo or rename' from counts
   ) t
 ),
 all_rows as (
