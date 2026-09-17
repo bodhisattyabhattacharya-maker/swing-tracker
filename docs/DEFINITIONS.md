@@ -110,6 +110,22 @@ is where a backtest gets silently corrupted:
 
 Decision 0032; asserted in `scripts/ci/check_formulas.sql` under the `as-of` section.
 
+### Moving-average signals
+
+Derived from `daily_features`, not from price directly. All five live in `daily_signals`; see
+decision 0042 and migration `20260917120000`.
+
+| Parameter | Definition |
+|---|---|
+| **MA stack** | `Full bull` when `close > EMA21 > SMA50 > SMA200`; `Full bear` on the exact reverse; `Mixed` otherwise. Mixed is most rows and is not a fault state. Carries `ema21_seed_ok` — an ordering is only as trustworthy as the EMA inside it. |
+| **SMA50 × SMA200 cross** | `Golden` when SMA50 is above SMA200, `Death` when below — **read from the current ordering**, since if SMA50 is above today the last cross was necessarily Golden. Accompanied by **trading bars** since the crossing, 0 on the crossing bar itself. **Null means no cross in stored history**, which is not the same as a long time ago. |
+| **EMA21 × SMA50 cross** | `Bull` / `Bear`, same construction, same bars-since rule. Turns over far more often than 50×200. |
+| **SMA50 slope** | `100 × (SMA50[t] / SMA50[t−5] − 1)` — the change in the **average** over five trading bars, as a percentage per week. Direction is the sign with no dead zone: −0.04% is `Falling`, displayed −0.0%/wk. `Flat` only for exactly zero. |
+| **SMA200 slope** | Same, on the 200-day average. |
+
+Ordering comparisons are strict `>`. Exact equality between two averages is not a third state; it
+is a measure-zero event that would otherwise fork every comparison, and it reads as "not above".
+
 ### Relative
 
 | Parameter | Definition |
