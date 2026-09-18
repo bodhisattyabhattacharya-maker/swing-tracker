@@ -1379,3 +1379,63 @@ store's. Materialising everything costs the same refresh and leaves the window t
 number indistinguishable from a 20-day average. The count is published so the page can refuse to
 draw the first nineteen points — hard constraint 8 in a new place, and worse than the original,
 because a line has no way to say it is provisional.
+
+## 0048 — 2026-09-18 — The cell history needs no view, and the first API route is an allowlist
+
+**Context:** the cell detail sheet promised a five-year history and said so in the UI. The approved
+plan budgeted a `grid_cell_history` view keyed `(symbol, param, d)` for it.
+
+**That view does not need to exist, and the measurement is why.** `grid_cells` filtered by symbol
+**and** param is already an indexed read — the predicate pushes into `daily_features_pk` and
+`weekly_features_pk`:
+
+```
+grid_cells  where symbol='NVDA' and param='rsi_daily'   8.491 ms   shared hit=234   1,239 rows
+rs_cells    where symbol='NVDA' and param='rs_vs_spx_126b'  8.692 ms  shared hit=87  1,238 rows
+```
+
+So the history is a bounded read of a view that already exists. **Both filters are mandatory** —
+either alone is a different plan entirely, which is the same sentence the 2026-09-16 band join and
+decision 0042 both end on. That constraint is now enforced by code rather than remembered: the only
+caller is a route handler that cannot express a query without both.
+
+**The first server endpoint in this app, and the only one that reads on demand.** Everything else is
+a server component: it reads at render time, ISR caches the result, and no URL a visitor can type
+reaches PostgREST. The sheet is a client component and cannot hold the service_role key, so the
+browser has to be able to ask. That makes `/api/cell-history` the one place in a PUBLIC repo where
+request input and a full-access credential meet.
+
+What keeps it from being a database proxy, in the order it matters:
+
+1. `param` is checked against an allowlist **derived from `COLUMNS`** — not a regex, not an escape,
+   a membership test against the catalogue the grid already renders from. A parameter the dashboard
+   does not display cannot be requested.
+2. The same allowlist decides which view is read. The request cannot name a table.
+3. `select` is a fixed string per view; request input never reaches it.
+4. `symbol` must match a ticker shape **and** exist in `tickers`, active and not an index. Shape
+   first so nothing odd enters a URL, existence second so the endpoint cannot enumerate what we do
+   or do not track.
+5. `limit` is a constant. There is no page parameter to walk.
+6. Upstream error bodies are logged, never returned. A PostgREST error can quote the failing SQL,
+   which on a public deployment is free schema disclosure.
+
+`check_web_boundary.sh` rule 5 enforces 1 and 3 mechanically: a route handler that reads
+`SERVICE_ROLE` must call `validateRequest`, and must not put a request value on a line with a query.
+Negative-tested by removing the validator and by splicing `q.get("cols")` into the select — each
+fails naming the file and the line.
+
+**Rejected: a Server Action.** Same security surface with less of it visible — the allowlist would
+live inside a function whose call sites are generated, and the CI rule above could not be written as
+a grep over one file.
+
+**Rejected: prefetching history with the page.** 53 securities × 19 live params × 1,239 sessions is
+about 1.2 million points for a panel that opens one cell at a time.
+
+**Rejected: a materialised `grid_cell_history`.** ~917,000 rows duplicating `daily_features` and a
+fourth matview to refresh, to replace an 8.5 ms indexed read. This is the plan being wrong in the
+cheap direction, and worth recording as such: the plan assumed the cost without measuring it, and
+the measurement deleted the work.
+
+**The history line is never coloured by verdict.** The line is five years of a value; a verdict is
+about today. Painting the past with today's threshold would state the norm as a fact about history,
+and norms get retuned — decision 0038 moved `rsi_weekly` from 45/65 to 40/70.

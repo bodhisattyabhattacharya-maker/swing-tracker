@@ -24,6 +24,11 @@
 #      line of English prose, which reads as a mystery rather than a typo. It has now cost this
 #      project three builds (2026-09-16 twice, 2026-09-17 once), each time in a comment explaining
 #      a CSS class in `backticks`. A guard comment above the literal did not stop the third.
+#   5. Every route handler that reads the service_role key must pass its input through
+#      `validateRequest` from lib/cell-history, and must not put a request value on the same line
+#      as a PostgREST URL or a fetch. /api/cell-history is the only place in this app where request
+#      input and a full-access credential meet; the allowlist is what keeps it from being a
+#      database proxy, and an allowlist that can be bypassed by adding one line is not one.
 #
 # Deliberately a grep and not a lint plugin: this needs to be readable by someone who has never
 # seen the project, and to keep working when the toolchain changes.
@@ -112,6 +117,37 @@ if [ -f "$layout" ]; then
   else
     echo "    ok: no backtick inside the CSS template literal"
   fi
+fi
+
+# 5. Route handlers that hold the key must validate, and must not splice request input into a URL.
+routes=$(find "$web/app" -name 'route.ts' -o -name 'route.tsx' 2>/dev/null | sort)
+if [ -z "$routes" ]; then
+  echo "    no route handlers"
+else
+  for r in $routes; do
+    rel="${r#"$web"/}"
+    if ! grep -q 'SERVICE_ROLE' "$r"; then
+      echo "    ok: $rel holds no credential"
+      continue
+    fi
+    if ! grep -q 'validateRequest(' "$r"; then
+      echo "    FAILED: $rel reads SERVICE_ROLE but never calls validateRequest()."
+      echo "            Request input must go through the allowlist in lib/cell-history.ts before"
+      echo "            it can reach a query. This repo is public and that key is full-access."
+      fail=1
+      continue
+    fi
+    # A request value on the same line as a query URL or a fetch. The realistic regression is
+    # someone appending &select=\${q.get("cols")} or &limit=\${q.get("n")} to a working read.
+    spliced=$(grep -nE '(searchParams|\bq)\.get\(' "$r" | grep -E 'rest/v1|fetch\(|select=|order=|limit=' || true)
+    if [ -n "$spliced" ]; then
+      echo "    FAILED: $rel puts a request value into a query line."
+      printf '%s\n' "$spliced" | sed 's/^/            /'
+      fail=1
+    else
+      echo "    ok: $rel validates its input and splices none of it into a query"
+    fi
+  done
 fi
 
 if [ "$fail" -ne 0 ]; then

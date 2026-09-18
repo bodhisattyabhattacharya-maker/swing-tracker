@@ -26,6 +26,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CellHistoryChart from "./CellHistoryChart";
+import { HISTORY_PARAMS } from "../lib/cell-history";
 import {
   COLOURED,
   type CellLike,
@@ -503,13 +505,26 @@ function CellSheet(
         <p className="why">{reason[state]}</p>
         {col.hint ? <p className="why muted">{col.hint}</p> : null}
 
-        <p className="note">
-          {/* No backticks in UI copy. They are not markdown here — they render as literal
-              backticks, which looks like a template that failed to interpolate. */}
-          Five-year history for this cell is not wired yet. It arrives with the{" "}
-          <code>grid_cell_history</code> view; an empty chart frame here would read as a loading
-          failure rather than as work not done.
-        </p>
+        {/* HISTORY, for a live column only. A planned column has no rows anywhere, and an empty
+            frame under it would read as "this security has no history" rather than as "nobody
+            does" - the distinction the cell-state model exists to keep. */}
+        {col.status === "live" && HISTORY_PARAMS.has(col.param)
+          ? (
+            <CellHistoryChart
+              symbol={symbol}
+              param={col.param}
+              digits={col.digits}
+              suffix={col.suffix}
+              norm={norm}
+            />
+          )
+          : (
+            <p className="note">
+              No history for this column: it is {col.status === "planned"
+                ? "designed and not built, so no security has a value for it"
+                : "read from a view that does not keep a series"}.
+            </p>
+          )}
       </div>
     </div>
   );
