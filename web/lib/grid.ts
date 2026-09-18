@@ -146,6 +146,21 @@ export interface MarketCell {
   has_norm?: boolean;
 }
 
+/** One row of `market_history`. Mirrors lib/market-history.ts's MarketRow, optional for the same
+ *  reason every field of Status is: it is a JSON document from a view on its own deploy schedule. */
+export interface MarketHistoryRow {
+  d?: string;
+  vix?: number | null;
+  vix_band?: string | null;
+  vix3m?: number | null;
+  term_structure?: number | null;
+  spx_close?: number | null;
+  breadth_pct?: number | null;
+  breadth_tracked?: number | null;
+  vix_ma20?: number | null;
+  vix_ma20_bars?: number | null;
+}
+
 export interface GridData {
   status: Status | null;
   tickers: Ticker[];
@@ -159,6 +174,9 @@ export interface GridData {
   signals: SignalCell[];
   /** The date `rs` is from. Null when RS could not be read or has no rows at all. */
   rsAsOf: string | null;
+  /** Six months of market series for the history charts. Additive — a failure costs its own panel. */
+  history: MarketHistoryRow[];
+  historyError: string | null;
   /**
    * WHY THESE ARE SEPARATE FROM `error` AND NOT FOLDED INTO IT.
    *
@@ -237,6 +255,8 @@ export async function fetchGrid(): Promise<GridData> {
     rs: [],
     signals: [],
     rsAsOf: null,
+    history: [],
+    historyError: null,
     marketError: null,
     rsError: null,
     signalsError: null,
@@ -264,7 +284,7 @@ export async function fetchGrid(): Promise<GridData> {
     // The three reads the grid cannot render without, and the two it can. Both groups go out
     // together - they are independent reads against the same host - but only the first group can
     // fail the page.
-    const [tickers, cells, norms, market, rsLatest, signals] = await Promise.all([
+    const [tickers, cells, norms, market, rsLatest, signals, history] = await Promise.all([
       get<Ticker[]>(
         "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether,is_fund,rankable&order=theme.asc,symbol.asc",
         cfg,
@@ -288,6 +308,18 @@ export async function fetchGrid(): Promise<GridData> {
         `signal_cells?d=eq.${status.data_through}&select=symbol,param,label,value,tone,seed_ok`,
         cfg,
       ),
+      // SIX MONTHS, NEWEST FIRST, THEN REVERSED HERE.
+      //
+      // `order=d.desc&limit=126` is an index scan on market_history_pk that stops after 126 rows.
+      // The alternatives both cost more for nothing: `order=d.asc&limit=126` returns the OLDEST 126
+      // rows of a five-year series, and a `d=gte.` filter needs a date this code would have to
+      // compute from a calendar - and 126 TRADING bars is not six calendar months (decision 0035).
+      // Charts need ascending order, so the reversal happens once, below, rather than in SQL.
+      tryGet<MarketHistoryRow[]>(
+        "market_history?select=d,vix,vix_band,vix3m,term_structure,spx_close,breadth_pct," +
+          "breadth_tracked,vix_ma20,vix_ma20_bars&order=d.desc&limit=126",
+        cfg,
+      ),
     ]);
 
     const rsAsOf = rsLatest.data?.[0]?.d ?? null;
@@ -306,6 +338,11 @@ export async function fetchGrid(): Promise<GridData> {
       market: market.data ?? [],
       rs: rs.data ?? [],
       signals: signals.data ?? [],
+      // Reversed to ascending, which is what every chart wants. `slice()` first because the array
+      // came from JSON.parse and reversing in place would be fine today and a trap the first time
+      // anything else reads it.
+      history: (history.data ?? []).slice().reverse(),
+      historyError: history.error,
       rsAsOf,
       marketError: market.error,
       // An empty RS read with no error is a real state - the view genuinely has no rows - and must

@@ -1299,3 +1299,83 @@ when work does not fit, and `ingest_runs.detail.daily.deferred` recorded the ele
 all along. The defect was that nothing read that field — not that the field was wrong. So `ok`
 keeps meaning "the run did what it could and said what it skipped", and the new checks answer the
 different question of whether the skipping ever stops.
+
+## 0046 — 2026-09-18 — Lightweight Charts, and the palette is read off the page
+
+**Context:** nothing in `web/package.json` drew anything. The market-history charts need one, the
+Deep Dive's candlestick strip needs one, and the cell-detail sheet's five-year history needs one —
+so this is the dependency three phases hang off, not a convenience for four charts.
+
+**Chosen: TradingView's Lightweight Charts, `^5.2.1`, Apache-2.0.** Measured, not recalled: the
+gzipped runtime is **60.6 KB** (`gzip -c dist/lightweight-charts.production.mjs | wc -c` → 60617).
+An earlier note in this session said 5.0.8 and ~45 KB, from a stale npm page; those numbers were
+wrong and these are the ones.
+
+Three reasons, in the order they mattered:
+
+1. **Its time axis is made of sessions, not calendar days.** Weekends and holidays leave no gap.
+   This project has already paid twice for that distinction — decision 0035 ("bars, not calendar
+   days") and the term-structure defect of 0034 — and a chart that quietly draws a calendar axis is
+   exactly the sort of plausible wrongness that gets an INCIDENTS entry here.
+2. **Candlesticks, MA overlays and a crosshair are primitives.** Recharts has no candlestick; you
+   compose one from custom shapes and own it forever.
+3. **Canvas.** The Deep Dive is ~53 stock columns, each a candlestick chart plus three gauges plus
+   sparklines — tens of thousands of SVG nodes. This is the constraint that eliminates both
+   alternatives at Phase 3d, which is why it was decided now, on four simple charts, rather than
+   discovered there.
+
+**Rejected: Recharts.** Heaviest of the three, no candlestick primitive, and a general BI library
+where this needs a financial one.
+
+**Rejected: hand-rolled inline SVG.** Genuinely the best answer for *these four charts* — no
+dependency, server-rendered, no client JS — and the worst answer for everything after them. That is
+the trap: it would have looked correct for two weeks.
+
+**The palette is read off the page, not typed into the chart options.** Canvas cannot resolve a CSS
+custom property, so every colour must be handed over as a literal — and literals mean a second
+palette, which is how a chart ends up a different ochre from the cell beside it and silently wrong
+in dark mode. `web/lib/chart-theme.ts` probes `getComputedStyle` once per mount and re-probes on
+`prefers-color-scheme` **and** on a `data-theme` attribute. It throws if a token resolves empty,
+because a chart colour read as `""` draws nothing rather than erroring.
+
+**No theme toggle** (Bodhi, 2026-09-18). The page keeps following the OS; the switch is a v2 item.
+Wiring both triggers now cost four lines and means the toggle needs no change here.
+
+**One threshold is duplicated, and it is pinned rather than trusted.** `VIX_BAND` in
+`web/lib/market-history.ts` repeats the `vix` norm from `config/norms.yml`, because the chart must
+draw the band and the page does not fetch norms for the market block. Three norms in this repo have
+already judged nothing because a name or number drifted, so a test reads that file as text and
+asserts the pair against `parseNorms(config/norms.yml)`. Negative-tested two ways.
+
+## 0047 — 2026-09-18 — market_history is a matview, and the reason was measured
+
+**Context:** the four charts need six months of the market block's series with a 20-bar VIX average.
+
+**My first reasoning was wrong and is worth recording as such.** It was: `market_context` is one row
+per date, 1,239 of them, so a plain view with a window function costs nothing. `market_context` is
+itself a **view**. Scanning it re-aggregates 71,575 `daily_features` rows for watchlist breadth and
+performs three correlated index lookups per date — 3,717 in total. Measured on production:
+
+```
+Execution Time: 143.962 ms     Buffers: shared hit=28271
+```
+
+and `market_context` appeared **twice** in the plan, because `where d >= (select max(d) - 200 from
+market_context)` makes the planner build it once for the subquery and again for the window. Every
+ISR revalidation would have paid that, and the number would grow with the watchlist rather than with
+the chart.
+
+Same family as the band join of 20260916060000 and decision 0042's window-function rule: a read that
+looks like it touches a few rows and touches everything. Same answer — materialise, index, refresh —
+and the same hazard, which the generic check caught immediately: `scripts/ci/run.sh` did not refresh
+it and the gate failed with `0 empty | market_history`. **Third time that check has found a matview
+nobody refreshed.**
+
+**The whole span, not six months.** The window the charts draw is the page's decision, not the
+store's. Materialising everything costs the same refresh and leaves the window to an indexed
+`where d >= …`, so changing it later is a query change rather than a migration. It is 1,239 rows.
+
+**`vix_ma20_bars` travels with `vix_ma20`.** Postgres averages a 3-row window happily and returns a
+number indistinguishable from a 20-day average. The count is published so the page can refuse to
+draw the first nineteen points — hard constraint 8 in a new place, and worse than the original,
+because a line has no way to say it is provisional.

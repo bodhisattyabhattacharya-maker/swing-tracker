@@ -207,6 +207,50 @@ const CSS = `
 
      A sibling overlay rather than a background on .scroll, because the table paints over the
      container. pointer-events:none so it cannot swallow a click on the cell beneath it. */
+  /* ---------------------------------------------------------------------
+     MARKET HISTORY. A collapsible strip of four charts between the tiles and
+     the table. Closed by default - see the component header.
+
+     The four are NOT equal height, on purpose. VIX is the one with a norm, so
+     it gets the room to show a band being crossed; the regime strip is a
+     colour bar and needs almost none. Equal heights would say the four
+     matter equally, which they do not.
+     --------------------------------------------------------------------- */
+  .mh { margin-top: 20px; }
+  .mh-head { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 8px 12px;
+             border: 1px solid var(--rule); border-radius: 4px; background: var(--surface);
+             font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  .mh-head:hover { background: var(--rule-soft); }
+  .mh-t { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+          letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+  .mh-span { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--ink-faint); }
+  .mh-asof { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--warn);
+             margin-left: auto; }
+  .mh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 1px;
+             background: var(--rule); border: 1px solid var(--rule); border-radius: 4px;
+             overflow: hidden; }
+  /* VIX and its regime strip stack in the left column and read as one unit, which is why the
+     strip sits directly beneath the chart it describes rather than beside it. */
+  .mh-fig { background: var(--surface); padding: 10px 12px 6px; margin: 0; min-width: 0; }
+  .mh-fig.mh-vix { grid-column: 1; grid-row: 1; }
+  .mh-fig.mh-regime { grid-column: 1; grid-row: 2; }
+  .mh-fig.mh-term { grid-column: 2; grid-row: 1; }
+  .mh-fig.mh-breadth { grid-column: 2; grid-row: 2; }
+  .mh-fig figcaption { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+                       margin-bottom: 6px; }
+  .mh-ft { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+           letter-spacing: .08em; text-transform: uppercase; }
+  .mh-fb { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--ink-faint); }
+  .mh-fs { font-size: 11.5px; color: var(--ink-faint); flex-basis: 100%; }
+  /* The canvas box. min-width:0 on the figure and here is what stops a canvas from refusing to
+     shrink inside a grid column - without it the panel widens the page instead of the chart
+     narrowing, which is the one thing this layout may not do. */
+  .mh-canvas { width: 100%; min-width: 0; }
+  /* Reserved space before the palette has been read, so opening the panel does not jump. */
+  .mh-hold { width: 100%; }
+  .mh-err, .mh-note { margin-top: 10px; }
+  .mh-note { font-size: 12.5px; color: var(--ink-faint); }
+
   .scrollwrap { position: relative; }
   .scrollwrap .fade { position: absolute; top: 0; bottom: 1px; width: 40px; pointer-events: none;
                       opacity: 0; transition: opacity .12s ease; z-index: 6; }

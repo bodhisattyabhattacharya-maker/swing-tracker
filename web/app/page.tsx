@@ -15,6 +15,7 @@
  *   - It must not colour a value inside its warm-up window, even though the number exists.
  *   - It must not let a column that was not READ look like a column with no DATA.
  */
+import MarketHistory from "../components/MarketHistory";
 import ParameterGrid, { type GridRow } from "../components/ParameterGrid";
 import type { CellLike } from "../lib/columns";
 import { MARKET_TILES } from "../lib/market";
@@ -119,6 +120,7 @@ function MarketBlock(
 export default async function Dashboard() {
   const {
     status, tickers, cells, norms, market, rs, signals, rsAsOf,
+    history, historyError,
     marketError, rsError, signalsError, error,
   } = await fetchGrid();
 
@@ -258,6 +260,15 @@ export default async function Dashboard() {
         market={market}
         gridDate={status?.data_through ?? null}
         error={marketError}
+      />
+
+      {/* Under the tiles, above the grid, and SHUT until asked for. The grid is the product; four
+          charts of once-a-day context would push 53 rows below the fold on every load to say
+          something the four tiles already summarise. */}
+      <MarketHistory
+        rows={history}
+        error={historyError}
+        gridDate={status?.data_through ?? null}
       />
 
       <ParameterGrid

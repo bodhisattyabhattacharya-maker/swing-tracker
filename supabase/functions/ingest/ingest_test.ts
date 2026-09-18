@@ -605,6 +605,38 @@ Deno.test("planLimit: a full backfill defaults lower than a routine top-up", () 
   assertEquals(incremental >= 39, true);
 });
 
+Deno.test("the VIX band drawn on the chart is the norm in config/norms.yml", async () => {
+  // A DUPLICATED THRESHOLD, PINNED RATHER THAN TRUSTED.
+  //
+  // `config/norms.yml` decides whether the VIX tile is coloured. `web/lib/market-history.ts` also
+  // carries 16 and 30, because the market-history chart has to DRAW the band and the page does not
+  // fetch norms for the market block. That is a second copy of a threshold, which is precisely the
+  // thing this repo keeps getting bitten by - three norms have already judged nothing because a
+  // name or a number drifted (pct_off_ath, rs_vs_spx_6m, vix_term_struct).
+  //
+  // So the copy is allowed and asserted. Retune the norm without touching the chart and this fails
+  // here, rather than the dashboard quietly drawing last month's band across this month's data.
+  //
+  // Read as TEXT, not imported: web/ is a Next app with its own module resolution, and pulling a
+  // .ts file out of it into Deno would couple two toolchains to make one comparison.
+  const src = await Deno.readTextFile(
+    new URL("../../../web/lib/market-history.ts", import.meta.url),
+  );
+  const m = src.match(/export const VIX_BAND = \{\s*low:\s*(-?[\d.]+),\s*high:\s*(-?[\d.]+)\s*\}/);
+  assert(m, "could not find VIX_BAND in web/lib/market-history.ts - was it renamed?");
+  const chart = { low: Number(m![1]), high: Number(m![2]) };
+
+  const yml = await Deno.readTextFile(new URL("../../../config/norms.yml", import.meta.url));
+  const norm = parseNorms(yml).norms.find((n) => n.param === "vix");
+  assert(norm, "config/norms.yml has no vix norm, but the chart draws a band for it");
+
+  assertEquals(
+    chart,
+    { low: norm!.low, high: norm!.high },
+    "VIX_BAND in web/lib/market-history.ts has drifted from the vix norm in config/norms.yml",
+  );
+});
+
 Deno.test("planLimit: the routine cap covers the whole watchlist, indices included", async () => {
   // THE CHECK THAT DID NOT EXIST ON 2026-09-18. `DEFAULT_LIMIT_INCREMENTAL` was 45 while the
   // watchlist held 53 tickers plus three index series, so every nightly run silently dropped the

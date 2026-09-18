@@ -12,8 +12,10 @@
 #
 # WHAT IT CHECKS, precisely:
 #   1. No file containing "use client" imports from lib/grid.
-#   2. lib/columns.ts and lib/market.ts - the modules client components ARE allowed - never read
-#      process.env. They are pure configuration and must stay that way, or rule 1 becomes theatre.
+#   2. EVERY module in lib/ except grid.ts never reads process.env. They are pure configuration and
+#      must stay that way, or rule 1 becomes theatre. Named by exclusion rather than by a list:
+#      the list said "columns.ts and market.ts" and went stale the moment chart-theme.ts arrived
+#      (2026-09-18), which is the failure mode of every allowlist.
 #   3. No NEXT_PUBLIC_ variable name contains SERVICE or ROLE. Next inlines every NEXT_PUBLIC_*
 #      into the client bundle at build time; that prefix is the entire hazard.
 #   4. No backtick inside the CSS template literal in app/layout.tsx. Not a security rule - it is
@@ -66,9 +68,11 @@ else
   done
 fi
 
-# 2. The modules client components may import must stay pure.
-for pure in "$web/lib/columns.ts" "$web/lib/market.ts"; do
+# 2. The modules client components may import must stay pure. Everything in lib/ EXCEPT grid.ts:
+# a new pure module must be covered the day it is added, not the day someone remembers the list.
+for pure in "$web"/lib/*.ts; do
   [ -f "$pure" ] || continue
+  case "$(basename "$pure")" in grid.ts) continue ;; esac
   if grep -qE 'process\.env|Deno\.env' "$pure"; then
     echo "    FAILED: ${pure#"$web"/} reads the environment."
     echo "            It is imported by client components precisely because it cannot. Move"

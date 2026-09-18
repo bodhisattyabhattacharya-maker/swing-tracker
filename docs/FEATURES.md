@@ -878,3 +878,48 @@ test` 79 passing, and the cap guard negative-tested three ways: the old cap of 4
 past 90, and `^GSPC` removed from the yml. The page was read against a fixture carrying
 `symbols_priced: 19, symbols_behind: 3` at 1280 / 1440 / 1680 / 1920 in both themes, with the stat
 and the banner rendering and the header strip intact.
+
+## 2026-09-18 — The market block gets six months of history
+**What:** a collapsible Market history panel between the market tiles and the grid, with four
+charts over the last 126 sessions: VIX with its 20-bar average and the 16/30 norm band; a regime
+strip showing which side of that band each session closed on; term structure anchored at zero; and
+watchlist breadth against the S&P 500 on two scales. Closed by default — the grid is the product,
+and four charts of once-a-day context would push 53 rows below the fold on every load.
+**How:** decisions 0046 (Lightweight Charts 5.2.1, Apache-2.0) and 0047 (a matview, measured).
+Migration `20260918120000` adds `market_history` over the full span of `market_context` with
+`vix_ma20`/`vix_ma20_bars` and a unique index on `d`; the page reads the newest 126 rows as an index
+scan and reverses them once. New `web/lib/chart-theme.ts` reads the resolved palette off the
+document so charts follow the OS colour scheme with no toggle and cannot disagree with the cells
+beside them; new `web/lib/market-history.ts` holds the chart catalogue, pure, next to the column
+catalogue.
+**Architecture impact:** the first dependency in `web/` that draws, and the second client component.
+`check_web_boundary.sh` rule 2 is now "every module in `lib/` except `grid.ts`" rather than a list of
+two filenames — the list went stale the moment `chart-theme.ts` existed, which is what allowlists
+do. `VIX_BAND` duplicates a norm and is pinned to `config/norms.yml` by a test rather than trusted.
+**What these charts refuse to do,** each for a reason already paid for elsewhere: they do not draw
+`vix_ma20` before its 20th bar; they skip a missing session rather than bridging it, because a gap
+is a missing FRED publication and not a flat day (decision 0034); and they draw a threshold line
+only on VIX, the one series with a norm, because a line across a chart reads as a rule.
+**Verified by:** `scripts/ci/run.sh` green at 91 checks, 0 failing, 7 goldens MISSING as expected,
+with the new matview applied and populating (`vix_ma20_bars` 0 → 20, nulls before the window fills).
+`deno test` 80 passing, including the VIX_BAND pin, negative-tested by drifting the band to 17 and
+by renaming the constant. `npm run build` clean. Then the panel was read against a fixture of **126
+real production sessions** (2026-03-19 → 2026-09-17, chosen because VIX peaks at 31.05 above the
+norm, troughs at 14.25 below it, and term structure goes negative for five sessions in late March,
+so all three regimes and the zero crossing are exercised) at 1280 / 1440 / 1680 / 1920 in both
+themes, with an automated check that every chart box has a canvas, is wider than 200px, is not
+blank, and does not make the body scroll sideways.
+
+**Three defects were found before or on screen, and two of them were invisible to the build.**
+
+A unit check on the fixture caught the first: `history.tsv` is pipe-delimited and the fixture reader
+split on tabs, so every `vix` was `undefined` and all 126 sessions read as "unknown". It would have
+rendered four blank charts and a plausible-looking page.
+
+The regime strip was drawn in `--below-bg` and `--rule-soft` — cell *background* tints, near-white
+by design. On a white surface the 91 inside sessions and 33 below sessions were indistinguishable
+from the panel, and only the 2 above sessions showed: a chart built to show three regimes showed
+one. A tint that works behind text does not work as a mark.
+
+And the breadth chart clipped its own lowest axis label at the shared 8% bottom margin, because two
+price scales and a time axis leave less room below the plot than one does.
