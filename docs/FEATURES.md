@@ -923,3 +923,33 @@ one. A tint that works behind text does not work as a mark.
 
 And the breadth chart clipped its own lowest axis label at the shared 8% bottom margin, because two
 price scales and a time axis leave less room below the plot than one does.
+
+## 2026-09-18 — The cell detail sheet shows five years
+**What:** tapping a cell now draws that parameter's full stored history for that security, with the
+norm band where there is one, under the value and the state the sheet already showed. A planned
+column says no security has a value for it and draws nothing; a failed read says so and leaves the
+current value alone, which came with the page.
+**How:** decision 0048. **No migration** — `grid_cells` and `rs_cells` filtered by symbol *and*
+param are already indexed reads (8.5 ms / 234 buffers and 8.7 ms / 87 buffers on production), so
+the `grid_cell_history` view the plan budgeted was deleted by measuring it. New
+`web/app/api/cell-history/route.ts` is the app's first server endpoint; `web/lib/cell-history.ts`
+holds the allowlist it validates against, derived from `COLUMNS` so a parameter the grid does not
+display cannot be requested.
+**Architecture impact:** the first place in this repo where request input and the service_role key
+meet. `check_web_boundary.sh` gains rule 5 — a route handler that reads the key must call
+`validateRequest`, and must not put a request value on a line with a query — negative-tested by
+removing the validator and by splicing `q.get("cols")` into the select list.
+**Verified by:** the endpoint's contract, exercised end to end: a live param returns 200 with its
+series, a planned param 404 with "designed and not built", an unknown param 400, a malformed symbol
+400, a missing symbol 400. The sheet read at 1280 and 1920 in both themes — one chart per sheet,
+canvas painted, 451px tall and inside the viewport at every width, loading state gone within 1.2s,
+and a planned column drawing nothing while explaining why.
+**Not verified, and stated rather than implied:** the norm band's position against a *real* series.
+The preview shim serves one series for every param, so a bound at −25 sits off-scale under VIX
+values of 15–31. The band is the same `createPriceLine` call already visible on the VIX chart; its
+pairing with the right series gets checked on the deployed page.
+
+**One check of mine was wrong and said so loudly.** The screenshot harness asserted one canvas per
+history chart and reported seven. Seven is correct — Lightweight Charts stacks a canvas per pane,
+axis and crosshair — so the assertion counted the wrong thing. Corrected to count containers, with
+a second assertion that a container holding fewer than two canvases did not build.

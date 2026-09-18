@@ -251,6 +251,12 @@ const CSS = `
   .mh-err, .mh-note { margin-top: 10px; }
   .mh-note { font-size: 12.5px; color: var(--ink-faint); }
 
+  /* The history chart inside the cell detail sheet. Fixed height, because the sheet is a modal
+     and a chart that grows with its data would move the close button. */
+  .hist-canvas { width: 100%; min-width: 0; height: 150px; margin-top: 4px; }
+  .hist-hold { width: 100%; height: 150px; }
+  .hist-note { margin-top: 6px; font-size: 12px; color: var(--ink-faint); }
+
   .scrollwrap { position: relative; }
   .scrollwrap .fade { position: absolute; top: 0; bottom: 1px; width: 40px; pointer-events: none;
                       opacity: 0; transition: opacity .12s ease; z-index: 6; }
