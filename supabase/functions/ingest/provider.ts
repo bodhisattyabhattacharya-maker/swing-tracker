@@ -102,8 +102,35 @@ export class RateLimitError extends Error {
 // Starter publishes unlimited calls (2026-09-13). See the header of index.ts.
 // ---------------------------------------------------------------------------
 
-/** 35 days is ~24 bars per symbol, so the whole watchlist fits one run, with room for growth. */
-const DEFAULT_LIMIT_INCREMENTAL = 45;
+/**
+ * How many symbols one routine top-up run may fetch.
+ *
+ * 45 UNTIL 2026-09-18, AND IT WAS A SILENT CEILING. The comment it replaces said "the whole
+ * watchlist fits one run, with room for growth". That was true of 36 tickers and became false the
+ * night the universe went to 53 (plus three indices = 56). `activeSymbols` orders by symbol and the
+ * plan sort is a stable partition, so the cap did not sample the watchlist - it cut a DETERMINISTIC
+ * ALPHABETICAL TAIL, the same eleven names every night, which then fell one day further behind per
+ * run and could never catch up. On 2026-09-18 that tail was SMCI, SNDK, STX, TSLA, TSM, TXN, UNH,
+ * VRT, WDC, WMT, XOM, and the run that starved them finished ok = true.
+ *
+ * 90 IS FROM MEASUREMENT, not from taste. Two real runs, both inside a 150 s wall clock:
+ *   2026-09-16  39 top-ups, 973 rows, 32.4 s   -> ~0.8 s per symbol
+ *   2026-09-17  17 full backfills of ~1237 bars each plus 28 top-ups, 21,727 rows, 32.2 s
+ * At 0.8 s a symbol, 90 top-ups is ~72 s and leaves half the budget unspent. 90 is also 1.6x the
+ * current 56, so the watchlist can grow by half again before this number needs another look.
+ *
+ * THE WORST CASE THIS DOES NOT SOLVE, stated because the next person will meet it: a night when a
+ * large batch of NEW tickers lands uses this limit while most of the batch needs a full backfill,
+ * and 90 backfills would not fit. `DEFAULT_LIMIT_FULL` does not apply - it governs `full=1` runs
+ * only. The honest fix there is to cap a run by estimated cost rather than by symbol count, which
+ * is a bigger change than this one. Until then two detectors make the failure loud instead of
+ * silent: `verify_parameters.sql` fails when a symbol goes from current yesterday to missing today,
+ * and `grid_status.symbols_behind` puts the count on the dashboard.
+ *
+ * A test pins this against config/watchlist.yml, so growing the watchlist past the cap fails CI
+ * rather than quietly dropping whatever sorts last.
+ */
+const DEFAULT_LIMIT_INCREMENTAL = 90;
 
 /**
  * A full fetch is ~1250 bars per symbol at roughly 2-3 s each, so 15 is about 40 s. The margin

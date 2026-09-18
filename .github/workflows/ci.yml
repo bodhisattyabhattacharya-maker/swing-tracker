@@ -78,9 +78,12 @@ jobs:
         with: { deno-version: v2.x }
       # Unit tests only: fixtures of Yahoo's real response shapes, fetch stubbed. No network
       # test here on purpose - an unofficial endpoint being down must not block a docs PR.
-      # --allow-env is for the yaml package, which reads process.env on load.
+      # --allow-env is for the yaml package, which reads process.env on load. --allow-read is for
+      # the one test that compares provider.ts's per-run cap against config/watchlist.yml; it reads
+      # the yml from disk on purpose, because a ticker count typed into the test would go stale
+      # exactly when the check matters.
       - name: deno test (fixtures, no network)
-        run: deno test --allow-env supabase/functions/
+        run: deno test --allow-env --allow-read supabase/functions/
       - name: deno check (types against the real supabase-js)
         run: |
           for f in supabase/functions/*/index.ts; do

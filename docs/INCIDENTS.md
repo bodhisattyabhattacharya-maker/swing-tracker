@@ -463,3 +463,58 @@ literal and the line that closes it, matched on their own distinctive text so a 
 is not mistaken for one inside. Negative-tested. This belongs in CI rather than in prose because the
 failure mode is a build break whose error message points away from its cause, and because a guard
 comment has now failed twice at the only job it had.
+
+## 2026-09-18 — eleven names stopped updating, and every signal stayed green
+
+**What happened:** eleven of the 53 tracked securities — SMCI, SNDK, STX, TSLA, TSM, TXN, UNH, VRT,
+WDC, WMT, XOM — had no bar for 2026-09-17. Their rows rendered as dashes across every price and RSI
+column while the dashboard header read **"53 names · Data through 2026-09-17 · 5h ago · ok"**. The
+nightly run was `ok = true`, `grid_status.is_stale` was `false`, the digest went out, `npm run
+build` was green, and both new Phase 3a CI checks passed. Nothing anywhere said a fifth of the
+watchlist had stopped moving.
+
+Found by reading production after the Phase 3a merge — not by any check, and not by looking at the
+page, where eleven rows of dashes are indistinguishable from eleven rows of young listings.
+
+**Cause:** `DEFAULT_LIMIT_INCREMENTAL` in `supabase/functions/ingest/provider.ts` was 45. There are
+56 active tickers (53 plus three index series). `activeSymbols` ends in `.order("symbol")` and the
+plan sort is a stable partition on range only, so the cap did not sample the list — it cut a
+**deterministic alphabetical tail**, the same names every night, each one falling a further day
+behind per run with no mechanism to catch up. The run recorded exactly what it had skipped in
+`ingest_runs.detail.daily.deferred`. Nothing read that field.
+
+The cap was set when the watchlist was 36 and carried the comment "the whole watchlist fits one run,
+with room for growth". Decision 0041 took the universe to 53 five days later.
+
+**The part worth keeping:** *two numbers in two files, each correct on its own.* The cap was a
+reasonable cap. The universe was a reasonable universe. Neither file knew about the other, so
+growing one silently invalidated the other, and the only place the consequence appeared was a JSON
+field nobody consumed. Every green light on the system was reporting on something real — the
+pipeline had genuinely succeeded, the build had genuinely built — and none of them was looking at
+"is every name we claim to track actually moving".
+
+**Also wrong: a number I published and never checked.** The PR that grew the universe states in its
+commit message that "`breadth_tracked` reads 43, not 53", and the plan's verification section said
+the same. It read **32**. The claim was reasoned from the definition rather than measured after the
+release, and had anyone run it, 32 would have exposed this on day one. This is the second time in
+three days that predicting a number instead of measuring it hid a live defect; the first is the
+`norms_without_parameter` entry of 2026-09-17.
+
+**Fix, in three parts, because one of them alone would not have been enough:**
+
+1. `DEFAULT_LIMIT_INCREMENTAL` 45 → 90, from the measured ~0.8 s per symbol against a 150 s wall
+   clock (decision 0045).
+2. A deno test that reads `config/watchlist.yml` and fails when the cap is below the universe, so
+   the next watchlist change cannot do this quietly. Negative-tested three ways: the old cap, a
+   watchlist grown past the new cap, and an index series missing from the yml.
+3. `grid_status` gains `symbols_priced` and `symbols_behind` (migration 20260918060000) and the page
+   renders a `Priced today` stat and a banner when they differ — and `verify_parameters.sql` gains
+   an invariant that fails when a symbol goes from current yesterday to missing today.
+
+**What the first version of that invariant got wrong, in one run.** It asked "does every tracked
+symbol have a bar on the newest date" and read **3** against the CI fixture, which deliberately
+holds short-history symbols. It was telling the truth about a healthy state, which makes it useless
+as a gate. The defect has a sharper shape — a symbol we were *already carrying* stopped arriving —
+so the condition is now "newest bar is exactly the previous global date", which XOM matched and a
+late listing never does. `grid_status.symbols_behind` keeps the looser count, because "53 tracked,
+42 priced today" is the right sentence for the page and the wrong condition for a build failure.

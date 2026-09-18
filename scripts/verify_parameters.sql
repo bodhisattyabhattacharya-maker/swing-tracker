@@ -280,7 +280,35 @@ counts as (
     (select count(*) from public.norms n
       where not exists (select 1 from public.grid_cells   c where c.param = n.param)
         and not exists (select 1 from public.rs_cells     r where r.param = n.param)
-        and not exists (select 1 from public.market_cells m where m.param = n.param))       as norms_without_parameter
+        and not exists (select 1 from public.market_cells m where m.param = n.param))       as norms_without_parameter,
+    -- SYMBOLS THAT WERE CURRENT YESTERDAY AND ARE MISSING TODAY. Zero, always.
+    --
+    -- This is the row that was missing on 2026-09-18, when eleven names sat a day behind while
+    -- every other signal was green: `ok = true`, `is_stale = false`, the page saying "53 names,
+    -- data through 2026-09-17". The ingest had deferred them over its per-run cap and written the
+    -- list into `ingest_runs.detail.daily.deferred`, which nothing read.
+    --
+    -- WHY NOT `grid_status.symbols_behind`, WHICH IS RIGHT THERE. That column counts symbols with
+    -- no bar on the newest date, which is the right number for the PAGE - "53 tracked, 42 priced
+    -- today" - and the wrong condition for a gate. A symbol legitimately has no bar on the newest
+    -- date when it listed late, stopped trading, or, in this fixture, is one of the deliberate
+    -- short-history cases. Written that way this check read 3 against the CI fixture and was
+    -- telling the truth about a healthy state.
+    --
+    -- The real defect has a sharper shape: a symbol we were ALREADY CARRYING stopped arriving.
+    -- That is what happened to XOM, which had 2026-09-16 and not 2026-09-17, and it cannot be
+    -- explained by a listing date. So the condition is "newest bar is exactly the previous global
+    -- date" - current yesterday, absent today - and a symbol whose history simply ends earlier is
+    -- correctly ignored.
+    (select count(*) from (
+       select f.symbol
+       from public.daily_features f
+       join public.tickers t on t.symbol = f.symbol
+       where t.active and not t.is_index
+       group by f.symbol
+       having max(f.d) = (select max(d) from public.daily_features
+                           where d < (select max(d) from public.daily_features))
+     ) x)                                                                                  as symbols_regressed
 ),
 invariant_rows as (
   select * from (
@@ -452,6 +480,12 @@ invariant_rows as (
     select 'info', 'norms with no parameter built yet',
            'PASS', '(informational)', norms_without_parameter::text,
            'counts all three cell views; 6 on 2026-09-17, should FALL as layers land, and a RISE means a typo or rename' from counts
+    union all
+    select 'coverage', 'no symbol went from current yesterday to missing today',
+           case when symbols_regressed = 0 then 'PASS' else 'FAIL' end,
+           '0', symbols_regressed::text,
+           'non-zero means the ingest stopped carrying names it already had - check ingest_runs.detail.daily.deferred and DEFAULT_LIMIT_INCREMENTAL in provider.ts'
+      from counts
   ) t
 ),
 all_rows as (

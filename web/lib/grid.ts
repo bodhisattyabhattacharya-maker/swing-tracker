@@ -94,6 +94,22 @@ export interface Status {
   symbols?: number | null;
   /** Published as a fact, NOT as the verdict — a market holiday is not a failed pipeline. */
   days_behind?: number | null;
+  /**
+   * How many tracked symbols actually have a bar on `data_through`, and how many do not.
+   *
+   * `symbols` counts every active non-index ticker with ANY history; `symbols_priced` counts only
+   * those present on the newest date. On 2026-09-18 the first was 53 and the second 42, and the
+   * page showed only the first — "53 names · Data through 2026-09-17 · ok" — while eleven rows were
+   * a day behind because the ingest had deferred them over its per-run cap. Both numbers were true.
+   * Together, without the second, they were a lie of omission on the one page whose stated job is
+   * not to hide staleness.
+   *
+   * Optional for the reason every field here is: this shape is an assertion about a JSON document
+   * from a view that deploys on its own schedule. `undefined` means the deployment predates
+   * migration 20260918060000 and we know nothing — never render that as "all present".
+   */
+  symbols_priced?: number | null;
+  symbols_behind?: number | null;
   /** Hours since the daily ingest last completed successfully. null means it never has. */
   hours_since_success?: number | null;
   last_success_at?: string | null;
