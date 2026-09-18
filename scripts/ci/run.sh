@@ -98,6 +98,10 @@ refresh materialized view public.weekly_features;
 -- are siblings. Added 2026-09-17, and the gate went green with this matview entirely empty before
 -- it was; the `no matview is empty` check below is the guard that stops the next one doing that.
 refresh materialized view public.daily_signals;
+-- market_history reads market_context, which reads daily_features. Same ordering argument, and the
+-- same guard caught it: added 2026-09-18, and the gate failed with "0 empty | market_history" until
+-- this line existed. Third time that generic check has found a matview nobody refreshed.
+refresh materialized view public.market_history;
 SQL
 
 # Both scripts return one row per check, with the status in a column. CI's only job is to insist
