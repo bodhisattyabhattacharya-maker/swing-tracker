@@ -402,3 +402,64 @@ parameters that genuinely are not built.
 over-reports again. There is no way to derive the list of cell views automatically without guessing
 at names, so it is three explicit `not exists` clauses and a note saying to add the fourth.
 
+## 2026-09-18 — a cell state that could not be rendered
+
+**What happened:** `na` — "the question does not apply to this security" — had a colour, a legend
+entry, CSS, a `STATE_RANK` sort position and a branch in `cellState`, and could not appear on screen
+for any column, security or cell shape.
+
+**Cause:** `cellState` tested `col.status === "planned"` before `col.applies`, and all 28 columns
+carrying an `applies` predicate are also `planned`. The first line swallowed every one of them.
+
+**Why it survived.** The branch was syntactically live and the code compiled. Nothing in the build,
+the type checker or any check we had asks whether a branch is *reachable*. It was found by
+enumerating the states over every (column, security, cell) triple while building the preview
+fixture — not by reading the code, which had already been read.
+
+**Fix:** `na` is tested first (decision 0043) and `scripts/ci/check_cell_states.sh` asserts every
+declared state has a witness. Negative-tested four ways — restoring the old ordering, adding an
+unreachable state to the union, renaming a CSS selector, deleting a CSS rule — and all four fail
+with their own message.
+
+**The pattern, now four for four.** A matview never refreshed (20260914010000), a verdict check with
+no matching norm (2026-09-16), a bars-since assertion whose guard excluded the bar it existed to
+catch (2026-09-17), and now a state with no path to the screen. Each looked present and was not.
+Each time the answer was a **generic** check that enumerates, not one more specific assertion.
+
+## 2026-09-18 — every judged cell lost its colour, and the build was green
+
+**What happened:** every `below` and `above` cell in the table rendered with no tint and an invisible
+2.5px rule. The numbers were all correct and all present; nothing on the page said a norm had been
+crossed.
+
+**Cause:** `tbody td.below` and `tbody td.above` in `app/layout.tsx` were left over from the
+pre-preset grid, where the cell's class was bare. The class list is now `cell st-below mark`, so both
+selectors matched nothing. `td.mark::before` still drew the rule, with no background on it, so the
+one surviving mark was a transparent 2.5px strip.
+
+**Why it survived.** CSS that matches nothing is not an error at any layer — not TypeScript, not the
+Next build, not any check we had. This is the same shape as the entry above: a rule that exists and
+does nothing.
+
+**Fix:** selectors corrected to `.st-below` / `.st-above`, and `check_cell_states.sh` now requires
+each state to appear as a class in a selector that **opens a rule**, with CSS comments stripped
+first. The first version of that rule asked only whether the string appeared anywhere in the file,
+and its own negative test caught it passing over a comment that mentioned the class it had just been
+renamed away from. A check satisfied by prose is worse than no check, because it reports a pass.
+
+## 2026-09-18 — the backtick in the CSS template literal, third occurrence
+
+**What happened:** a comment inside `const CSS = ` used backticks around two class names. A backtick
+ends the template literal, and Next reports `Expected a semicolon` pointing at a line of English
+prose. Third time: twice on 2026-09-16, once here.
+
+**Cause, in the part that matters:** there has been a warning comment immediately above `const CSS`
+since the second occurrence. It was read and the third one was written anyway — in a comment
+*about* a class name, which is the exact context the warning names. Every occurrence has been in
+that context.
+
+**Fix:** rule 4 of `scripts/ci/check_web_boundary.sh` — no backtick between the line that opens the
+literal and the line that closes it, matched on their own distinctive text so a backtick on either
+is not mistaken for one inside. Negative-tested. This belongs in CI rather than in prose because the
+failure mode is a build break whose error message points away from its cause, and because a guard
+comment has now failed twice at the only job it had.

@@ -811,3 +811,42 @@ reset rule is asserted directly with no guard, both crosses are checked, and non
 cross type.
 **By:** Bodhi + Claude
 
+## 2026-09-18 — The grid becomes a dashboard
+**What:** two tabs, four presets over a 51-column catalogue, eight cell states, a pinned symbol
+column, collapsible theme bands, per-column sort within themes, a symbol-or-company filter, and a
+cell detail sheet. `/deep-dive` is an honest placeholder that lists its seven sections and says
+which are blocked on data and which on a charting layer.
+**How:** decisions 0043 and 0044. No migration, no ingest change, no new data — every number comes
+from `grid_cells`, `rs_cells`, `market_cells` and `signal_cells` exactly as they already publish it.
+`web/lib/columns.ts` is new and holds the catalogue, the presets and the state model; `web/lib/
+market.ts` holds the four tiles; `web/components/ParameterGrid.tsx` is the table.
+**Architecture impact:** the first client component in this app, and therefore the first time the
+service_role key could reach a browser bundle. `lib/grid.ts` is now only what needs that key;
+`lib/columns.ts` and `lib/market.ts` are pure and are what the browser imports. Two new gates:
+`scripts/ci/check_web_boundary.sh` (four rules) and `scripts/ci/check_cell_states.sh` (every
+declared state reachable and styled). A planned column is shown with its label, its group and
+`planned` under the heading — never hidden and never silently blank — so the Value block reads as
+27 parameters designed and not built rather than as 27 columns of missing data.
+**Also:** one-sided norms now read `≥ -25` / `≤ 4` rather than a bare `-25`, which did not say which
+side of the number the band was on. Two of the fifteen norms in `config/norms.yml` are floors and
+one is a ceiling, so that is the common case. And `app/icon.svg`, because `/favicon.ico` answered
+404 on every page load and put an error in the console of a page whose premise is that nothing on it
+is unexplained.
+**Verified by:** `npx tsc --noEmit` clean; `npm run build` green at 5 routes; both new checks pass
+and both were negative-tested — the boundary check's backtick rule once, the state check four ways
+(old ordering, an unreachable state added to the union, a renamed selector, a deleted rule). Then
+the page built against a fixture of **real production rows** for `d = 2026-09-16` and read at
+1280 / 1440 / 1680 / 1920 in both themes, in all four presets, with the cell sheet open and the
+table scrolled to both ends. No JS errors, no body-level horizontal scroll, scrim correct at every
+position, all eight states rendering in the All preset.
+
+**Three defects appeared only on screen, and that is the point of reading it rather than measuring
+it.** A cell state that could not render, every judged cell silently losing its colour, and the
+backtick build break for the third time — all three in `docs/INCIDENTS.md`, all three past a clean
+type check and a green build. The 2026-09-16 market block had three of these too. A dense table is
+a thing you have to look at.
+
+**Not in this phase:** market-history charts, `grid_cell_history` for the cell sheet's five-year
+series, and the Deep Dive stock strip. All three need a charting layer, which nothing in
+`web/package.json` provides today; the market charts come first because they serve every name at
+once rather than one at a time.

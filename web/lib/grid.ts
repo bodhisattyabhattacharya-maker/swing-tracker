@@ -52,6 +52,23 @@ export interface Ticker {
   name: string;
   theme: string;
   bellwether: boolean;
+  /** An ETF. Price parameters apply; fundamentals are NOT APPLICABLE, not missing (decision 0041). */
+  is_fund: boolean;
+  /** False for a theme that is not a peer group, which makes a sector rank meaningless rather than absent. */
+  rankable: boolean;
+}
+
+/**
+ * A signal cell: categorical, from `signal_cells`. Same row shape as `Cell` but the payload is a
+ * label plus an optional number, and the colour comes from `tone` rather than a norm verdict.
+ */
+export interface SignalCell {
+  symbol?: string;
+  param?: string;
+  label?: string | null;
+  value?: number | null;
+  tone?: string | null;
+  seed_ok?: boolean | null;
 }
 
 /**
@@ -122,6 +139,8 @@ export interface GridData {
   market: MarketCell[];
   /** Relative-strength cells at THEIR newest date, which trails the grid's most evenings. */
   rs: Cell[];
+  /** The five derived technicals, at the grid's own date — they are computed from it. */
+  signals: SignalCell[];
   /** The date `rs` is from. Null when RS could not be read or has no rows at all. */
   rsAsOf: string | null;
   /**
@@ -135,6 +154,7 @@ export interface GridData {
    */
   marketError: string | null;
   rsError: string | null;
+  signalsError: string | null;
   error: string | null;
 }
 
@@ -199,9 +219,11 @@ export async function fetchGrid(): Promise<GridData> {
     norms: [],
     market: [],
     rs: [],
+    signals: [],
     rsAsOf: null,
     marketError: null,
     rsError: null,
+    signalsError: null,
     error: null,
   };
 
@@ -226,9 +248,9 @@ export async function fetchGrid(): Promise<GridData> {
     // The three reads the grid cannot render without, and the two it can. Both groups go out
     // together - they are independent reads against the same host - but only the first group can
     // fail the page.
-    const [tickers, cells, norms, market, rsLatest] = await Promise.all([
+    const [tickers, cells, norms, market, rsLatest, signals] = await Promise.all([
       get<Ticker[]>(
-        "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether&order=theme.asc,symbol.asc",
+        "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether,is_fund,rankable&order=theme.asc,symbol.asc",
         cfg,
       ),
       get<Cell[]>(
@@ -244,6 +266,12 @@ export async function fetchGrid(): Promise<GridData> {
       // rather than deriving it from index_status: the two agree today, but one of them would be
       // an inference about how the other is built, and this is one cheap indexed read.
       tryGet<Array<{ d?: string }>>("rs_cells?select=d&order=d.desc&limit=1", cfg),
+      // Signals share the grid's date - they are derived from daily_features, not borrowed from a
+      // series on another clock - so they need no as-of of their own.
+      tryGet<SignalCell[]>(
+        `signal_cells?d=eq.${status.data_through}&select=symbol,param,label,value,tone,seed_ok`,
+        cfg,
+      ),
     ]);
 
     const rsAsOf = rsLatest.data?.[0]?.d ?? null;
@@ -261,11 +289,13 @@ export async function fetchGrid(): Promise<GridData> {
       norms,
       market: market.data ?? [],
       rs: rs.data ?? [],
+      signals: signals.data ?? [],
       rsAsOf,
       marketError: market.error,
       // An empty RS read with no error is a real state - the view genuinely has no rows - and must
       // not be reported as a failure. Only an actual error is one.
       rsError: rs.error ?? rsLatest.error,
+      signalsError: signals.error,
       error: null,
     };
   } catch (e) {
@@ -274,181 +304,14 @@ export async function fetchGrid(): Promise<GridData> {
 }
 
 /**
- * The column order of the grid, and the only place it is defined.
+ * WHAT USED TO LIVE BELOW THIS LINE, and where it went on 2026-09-17.
  *
- * `param` must match a parameter name in `grid_cells`. A typo here shows as a permanently blank
- * column rather than an error, which is why the set is small and explicit rather than derived.
+ * The column catalogue, the presets, the cell-state model and the formatters moved to
+ * `lib/columns.ts`; the market tiles to `lib/market.ts`. Both are PURE - no fetch, no env var, no
+ * secret - so the interactive table can import them in the browser.
+ *
+ * This file keeps only what needs the service_role key, which is the point: it is now the single
+ * module a client component must never import, rather than a mixed bag where the rule was easy to
+ * break by accident. `scripts/ci/check_web_boundary.sh` fails the build if a file containing
+ * "use client" reaches it.
  */
-export type Timeframe = "daily" | "weekly" | "rs";
-
-export interface Column {
-  param: string;
-  label: string;
-  digits: number;
-  signed: boolean;
-  timeframe: Timeframe;
-  /**
-   * WHICH MAP THE VALUE COMES FROM, stated rather than inferred from `timeframe`.
-   *
-   * `grid_cells` and `rs_cells` are different views keyed on different dates, and the page holds
-   * one lookup per view. Deriving this from `timeframe === "rs"` would work today and break the
-   * day a weekly-RS column exists, silently reading the wrong map.
-   */
-  source: "cells" | "rs";
-}
-
-/**
- * WHY EVERY COLUMN CARRIES A TIMEFRAME, and why it is not fetched from the row.
- *
- * "vs 21 EMA" means two different numbers depending on whether the bars are days or weeks, and a
- * grid that shows both without saying which is one a reader can misread without noticing. The
- * header groups on this.
- *
- * `grid_cells` publishes a `timeframe` column too, but the page does not read it: the parameter
- * names are already globally unique, so the cell lookup cannot collide, and a column has to be
- * declared here to appear at all. The database column exists because the DIGEST filters on it,
- * which is where it is load-bearing.
- *
- * WEEKLY VALUES STEP ONCE A WEEK. They come from the last week that ended before the week you are
- * looking at, so they are identical Monday through Friday and change on the boundary. That is
- * correct - a weekly bar has one value - and it is why a weekly cell going from blue to plain
- * mid-week would be a bug rather than a move.
- */
-export const COLUMNS: Column[] = [
-  { param: "close", label: "Close", digits: 2, signed: false, timeframe: "daily", source: "cells" },
-  { param: "rsi_daily", label: "RSI 14", digits: 1, signed: false, timeframe: "daily", source: "cells" },
-  { param: "close_vs_ema21d", label: "vs 21 EMA", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "close_vs_sma50d", label: "vs 50 SMA", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "close_vs_sma200d", label: "vs 200 SMA", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "pct_off_high_stored", label: "Off high", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "pct_off_52w_high", label: "Off 52w high", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "pct_above_low_stored", label: "Above low", digits: 1, signed: true, timeframe: "daily", source: "cells" },
-  { param: "realized_vol_20", label: "Real vol 20", digits: 1, signed: false, timeframe: "daily", source: "cells" },
-  { param: "volume_ratio", label: "Vol ratio", digits: 2, signed: false, timeframe: "daily", source: "cells" },
-
-  // Uncoloured by design, both of them: close_vs_sma200w had a norm that flagged 87-90% of
-  // name-weeks in every year we hold, and close_vs_sma30w has never had one measured.
-  // config/norms.yml carries the reasoning.
-  { param: "rsi_weekly", label: "RSI 14", digits: 1, signed: false, timeframe: "weekly", source: "cells" },
-  { param: "close_vs_ema21w", label: "vs 21 EMA", digits: 1, signed: true, timeframe: "weekly", source: "cells" },
-  { param: "close_vs_sma30w", label: "vs 30W SMA", digits: 1, signed: true, timeframe: "weekly", source: "cells" },
-  { param: "close_vs_sma200w", label: "vs 200W SMA", digits: 1, signed: true, timeframe: "weekly", source: "cells" },
-
-  /**
-   * Relative strength. ONE window on the grid, not three: 63b and 252b are computed, published by
-   * `rs_cells` and one line each to add here - but the table is already fourteen columns wide and
-   * a parameter nobody has lived with yet does not get three of them.
-   *
-   * `rs_vs_spx_126b` is the norm key too. It used to be `rs_vs_spx_6m`, which matched no parameter
-   * and therefore coloured nothing at all; renamed in decision 0038 precisely so this column could
-   * be judged rather than merely displayed.
-   */
-  { param: "rs_vs_spx_126b", label: "vs SPX 126b", digits: 1, signed: true, timeframe: "rs", source: "rs" },
-];
-
-/**
- * Column groups in order, for the grid's two-row header. Derived, so it cannot drift.
- *
- * The RS group's label carries ITS OWN DATE whenever that date is not the grid's. Most weekday
- * evenings it is not: `relative_strength` only publishes on dates where SPX also has a bar, and
- * FRED publishes hours after the equities do, so between the 22:30 ingest and the 11:00 catch-up
- * the newest RS row is one session behind everything else on the page.
- *
- * Showing the number and naming its date is the same treatment `market_cells` gives VIX and SPX,
- * and it is decision 0034's rule: every borrowed value carries its own date. The alternative
- * considered and rejected was a blank column until the catch-up filled it — strictly honest, and
- * empty exactly when someone is most likely to be looking.
- *
- * When the dates match, the label says nothing extra. A date that is always displayed stops being
- * read, and the one that matters is the one that differs.
- */
-export function columnGroups(
-  opts: { gridDate?: string | null; rsAsOf?: string | null } = {},
-): Array<{ timeframe: Timeframe; label: string; span: number }> {
-  const out: Array<{ timeframe: Timeframe; label: string; span: number }> = [];
-  for (const c of COLUMNS) {
-    const last = out[out.length - 1];
-    if (last && last.timeframe === c.timeframe) last.span += 1;
-    else out.push({ timeframe: c.timeframe, label: groupLabel(c.timeframe, opts), span: 1 });
-  }
-  return out;
-}
-
-function groupLabel(
-  tf: Timeframe,
-  { gridDate, rsAsOf }: { gridDate?: string | null; rsAsOf?: string | null },
-): string {
-  if (tf === "weekly") return "Weekly — last completed week";
-  if (tf !== "rs") return "Daily";
-  // Short on purpose. A group header is `white-space: nowrap` and this group has ONE column, so the
-  // label sets that column's minimum width: "Relative strength — vs S&P 500, as of 2026-09-14" made
-  // it ~350px wide with the number marooned at the far right. The date moved to the column's own
-  // sub-line (see rsAsOfNote), which is where per-column metadata already lives, and "vs S&P 500"
-  // was redundant with the column label "vs SPX 126b".
-  return "Relative strength";
-}
-
-/**
- * The line under the RS column heading, where the norm sits for every other column.
- *
- * Empty when RS is as current as the grid — a date shown every day stops being read, and the one
- * that matters is the one that differs. Most weekday evenings it does differ, by one session,
- * because SPX arrives from FRED hours after the equities.
- */
-export function rsAsOfNote(gridDate: string | null, rsAsOf: string | null): string {
-  if (!rsAsOf) return "not yet computable";
-  return rsAsOf === gridDate ? "" : `as of ${rsAsOf}`;
-}
-
-/**
- * The market block, in order. Four numbers about the market rather than about any name, which is
- * why they sit above the grid and not in it.
- *
- * `suffix` rather than a unit column: these are read at a glance and "12.7%" is one token where
- * "12.7" under a "%" heading is two. `hint` is the one-line reason the number is on the page at
- * all - the block is small enough that explaining it costs nothing and large enough that a reader
- * who has not thought about term structure in a year needs it.
- */
-export const MARKET_TILES: Array<{
-  param: string;
-  label: string;
-  digits: number;
-  signed: boolean;
-  suffix: string;
-  hint: string;
-}> = [
-  { param: "vix", label: "VIX", digits: 2, signed: false, suffix: "",
-    hint: "16–30 is the band we hedge in; above it is where scaling out gets considered." },
-  { param: "term_structure", label: "VIX term structure", digits: 1, signed: true, suffix: "%",
-    hint: "3-month VIX over spot. Negative is backwardation — the market pricing near-term stress." },
-  { param: "spx_close", label: "S&P 500", digits: 2, signed: false, suffix: "",
-    hint: "The base every relative-strength number on the grid is measured against." },
-  { param: "breadth_pct", label: "Breadth", digits: 0, signed: false, suffix: "%",
-    hint: "Share of the watchlist above its own 50-day average. Not the market's breadth — ours." },
-];
-
-/** Display names for watchlist themes. An unmapped theme falls back to its raw key, visibly. */
-export const THEME_LABELS: Record<string, string> = {
-  "ai-infrastructure": "AI infrastructure",
-  "ai-silicon": "AI silicon",
-  "diversified": "Diversified",
-  "foundry-analog-ip": "Foundry, analog & IP",
-  "mega-cap-tech": "Mega-cap tech",
-  "memory-storage": "Memory & storage",
-  "semi-equipment": "Semi equipment",
-};
-
-export function formatValue(v: number | null, digits: number, signed: boolean): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return "—";
-  const s = v.toFixed(digits);
-  return signed && v > 0 ? `+${s}` : s;
-}
-
-/** "30 · 70", "−30", "" — the norm as it is shown under a column heading. */
-export function formatNorm(n: Norm | undefined): string {
-  if (!n) return "";
-  const lo = n.low === null ? null : String(n.low);
-  const hi = n.high === null ? null : String(n.high);
-  if (lo !== null && hi !== null) return `${lo} · ${hi}`;
-  return lo ?? hi ?? "";
-}

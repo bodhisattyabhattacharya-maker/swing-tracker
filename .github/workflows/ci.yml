@@ -132,6 +132,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
+      # Before npm ci: greps only, so a broken boundary fails in seconds rather than after an
+      # install. A service_role key in a public bundle is not worth one wasted minute of runner.
+      - name: Client/server boundary
+        run: bash scripts/ci/check_web_boundary.sh
       # `npm ci` not `npm install`: it fails if package-lock.json disagrees with package.json,
       # which is exactly the drift we want a build to catch rather than silently resolve.
       - run: npm ci
@@ -139,6 +143,10 @@ jobs:
       # `next build` type-checks as part of the build, so this is the type gate too.
       - run: npm run build
         working-directory: web
+      # After the build: this one compiles web/lib/columns.ts with the repo's own TypeScript, so it
+      # needs node_modules.
+      - name: Every cell state is reachable and styled
+        run: bash scripts/ci/check_cell_states.sh
 
   hygiene:
     name: Change hygiene (docs/HYGIENE.md)
