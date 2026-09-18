@@ -139,6 +139,8 @@ const CSS = `
             letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
   .stat-v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px;
             font-weight: 500; font-variant-numeric: tabular-nums; }
+  /* A stat that only appears when something is off should look like it. */
+  .stat-v.warnv { color: var(--warn); }
 
   .banner { margin-top: 18px; padding: 11px 14px; border-radius: 3px; font-size: 13.5px;
             border-left: 3px solid var(--warn); background: var(--warn-bg); color: var(--ink); }

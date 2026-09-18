@@ -1248,3 +1248,54 @@ re-render 22 rows × 52 columns sixty times a second for a gradient no other cod
 **Also rejected: collapsing the table on narrow screens.** Decision 0005 stands — the phone surface
 is the digest. A 52-column table stacked vertically is not a smaller version of this page, it is a
 different and worse page.
+
+## 0045 — 2026-09-18 — The per-run cap must cover the universe, because it cuts a tail rather than a sample
+
+**Context:** `DEFAULT_LIMIT_INCREMENTAL` capped a routine top-up run at 45 symbols. It was written
+when the watchlist was 36 and its comment said "the whole watchlist fits one run, with room for
+growth". Decision 0041 took the universe to 53, which with the three index series is 56 active
+tickers, and nothing re-read that comment.
+
+**What a cap below the universe actually does.** `activeSymbols` ends in `.order("symbol")` and the
+plan sort is a stable partition on range only, so the run walks one deterministic list every night.
+A cap of 45 against 56 does not sample the watchlist — it removes the **same alphabetical tail every
+run**, which then falls one day further behind per night and can never catch up. On 2026-09-18 that
+tail was SMCI, SNDK, STX, TSLA, TSM, TXN, UNH, VRT, WDC, WMT and XOM, all still carrying 2026-09-16
+data while the page said 2026-09-17, and the run that starved them finished `ok = true`.
+
+This is the same shape as the bug the ordering code already documents. Its comment says the first
+backfill "spent its entire budget re-fetching five weeks of data for names that were already
+complete, while 28 symbols with nothing at all sat in `deferred` run after run. It would have
+looped forever." That was fixed by putting full backfills first. The incremental case kept the
+starvation and nobody looked, because a cap and a universe are two numbers in two files.
+
+**90, from measurement.** Two real runs, both inside the 150 s wall clock:
+
+| run | work | wall clock |
+|---|---|---|
+| 2026-09-16 | 39 top-ups, 973 rows | 32.4 s |
+| 2026-09-17 | 17 full backfills of ~1237 bars each, plus 28 top-ups, 21,727 rows | 32.2 s |
+
+About 0.8 s per symbol, so 90 top-ups is ~72 s and leaves half the budget unspent. 90 is also 1.6×
+the current 56, so the watchlist can grow by half again before the number needs another look — and
+a test now fails CI if it does, rather than the run quietly dropping whatever sorts last.
+
+**Rejected: no cap at all for incremental runs.** The cap is not decoration. A run killed by the
+150 s wall clock loses every per-symbol error it had collected, which is how the first live attempt
+became an unexplainable 504 (decision 0019's neighbourhood). An unbounded run is fine at 56 symbols
+and fails silently at 300.
+
+**Rejected for now: capping by estimated cost rather than by symbol count.** This is the correct
+answer and it is deferred deliberately. The remaining hole is a night when a large batch of NEW
+tickers lands: those runs use this same incremental limit while most of the batch needs a full
+backfill, and 90 backfills would not fit the wall clock. Cost-based capping — sum the estimated bars
+and stop there — closes that properly. It is a bigger change than raising a constant, and raising
+the constant is what stops today's eleven names rotting tonight. What makes the deferral acceptable
+is that the failure is no longer silent: `verify_parameters.sql` fails when a symbol goes from
+current yesterday to missing today, and `grid_status.symbols_behind` puts the count on the page.
+
+**Rejected: treating a deferral as a failed run.** It is not one. Deferring is the honest behaviour
+when work does not fit, and `ingest_runs.detail.daily.deferred` recorded the eleven names correctly
+all along. The defect was that nothing read that field — not that the field was wrong. So `ok`
+keeps meaning "the run did what it could and said what it skipped", and the new checks answer the
+different question of whether the skipping ever stops.

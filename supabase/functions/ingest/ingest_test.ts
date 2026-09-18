@@ -605,6 +605,37 @@ Deno.test("planLimit: a full backfill defaults lower than a routine top-up", () 
   assertEquals(incremental >= 39, true);
 });
 
+Deno.test("planLimit: the routine cap covers the whole watchlist, indices included", async () => {
+  // THE CHECK THAT DID NOT EXIST ON 2026-09-18. `DEFAULT_LIMIT_INCREMENTAL` was 45 while the
+  // watchlist held 53 tickers plus three index series, so every nightly run silently dropped the
+  // alphabetical tail - the same eleven names, one day further behind each night, with the run
+  // reporting success. Nothing compared the constant to the config.
+  //
+  // Reading the yml from disk rather than hardcoding a number is the point: a count typed in here
+  // would go stale the moment the watchlist changed, which is the failure being guarded against.
+  //
+  // The watchlist ALREADY CONTAINS the three index series, so they are not added on top. The first
+  // version of this test did add them and reported a universe of 59 against a real 56. The
+  // assertion still held - it was merely stricter than the truth - but the number was in the
+  // failure message, and a check that misreports the thing it is measuring teaches the next reader
+  // the wrong number. Asserted below rather than assumed, so a future yml that drops the indices
+  // makes this fail here instead of silently under-counting.
+  const yml = await Deno.readTextFile(new URL("../../../config/watchlist.yml", import.meta.url));
+  const symbols = parseWatchlist(yml).map((r) => r.symbol);
+  for (const s of Object.keys(SERIES)) {
+    assert(symbols.includes(s), `${s} is in SERIES but not in config/watchlist.yml`);
+  }
+  const universe = symbols.length;
+  const cap = planLimit(false, null);
+  assert(
+    cap >= universe,
+    `the per-run cap is ${cap} but one run must fetch ${universe} symbols ` +
+      `(config/watchlist.yml, indices included). Raise DEFAULT_LIMIT_INCREMENTAL in provider.ts. ` +
+      `A cap below the universe does not sample it - activeSymbols orders by symbol, so it ` +
+      `starves a fixed alphabetical tail every run, the same names each night.`,
+  );
+});
+
 Deno.test("planLimit: an explicit limit always wins, and junk falls back", () => {
   assertEquals(planLimit(true, "7"), 7);
   assertEquals(planLimit(false, "7"), 7);

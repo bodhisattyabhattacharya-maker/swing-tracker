@@ -53,6 +53,24 @@ function freshness(status: Status | null): string {
   return `${age}${status.is_stale ? " · stale" : " · ok"}`;
 }
 
+/**
+ * "42 of 53 priced today" — or null when the question cannot be answered.
+ *
+ * Returns null for `undefined` (a deployment older than migration 20260918060000, which knows
+ * nothing about per-symbol coverage) and for a count that is not behind. It does NOT return null
+ * for zero: zero behind is an answer, and it is the one the reader wants most.
+ */
+function partialDay(status: Status | null): { priced: number; tracked: number; behind: number } | null {
+  if (!status) return null;
+  const priced = status.symbols_priced;
+  const tracked = status.symbols;
+  const behind = status.symbols_behind;
+  if (typeof priced !== "number" || typeof tracked !== "number" || typeof behind !== "number") {
+    return null;
+  }
+  return { priced, tracked, behind };
+}
+
 function MarketBlock(
   { market, gridDate, error }: {
     market: MarketCell[];
@@ -147,6 +165,8 @@ export default async function Dashboard() {
     rankable: t.rankable,
   }));
 
+  const partial = partialDay(status);
+
   // Named blocks, not a boolean. "Relative strength could not be read" and "the signals could not
   // be read" are different sentences, and a reader deciding whether to trust a column needs to
   // know which one is missing.
@@ -174,6 +194,16 @@ export default async function Dashboard() {
             <span className="stat-k">Names</span>
             <span className="stat-v">{rows.length}</span>
           </div>
+          {/* Only when it differs. A "priced today" stat that always reads the same as Names is
+              furniture; one that appears when it diverges is information. */}
+          {partial && partial.behind > 0
+            ? (
+              <div className="stat">
+                <span className="stat-k">Priced today</span>
+                <span className="stat-v warnv">{partial.priced}</span>
+              </div>
+            )
+            : null}
           <div className="stat">
             <span className="stat-k">Last ingest</span>
             <span className="stat-v">{freshness(status)}</span>
@@ -202,6 +232,24 @@ export default async function Dashboard() {
             It should run every weekday evening, and the schedule is the only way data moves — there
             is no refresh button. The numbers below are real; they are just not as current as they
             should be. Newest bar: {status.data_through ?? "none"}.
+          </div>
+        )
+        : null}
+
+      {/* ADDITIVE, not another branch of the chain above. "The pipeline is stale" and "today's run
+          covered 42 of 53 names" are different failures and can be true at once; folding this into
+          the same if/else would let one hide the other. */}
+      {partial && partial.behind > 0
+        ? (
+          <div className="banner stale">
+            <b>
+              {partial.priced} of {partial.tracked} names have a bar for{" "}
+              {status?.data_through ?? "the newest date"}.
+            </b>{" "}
+            The other {partial.behind} were deferred by the ingest and are showing their last
+            complete day, which is why their price and RSI cells are blank rather than coloured.
+            The numbers on them are not wrong; they are older than the rest of this page. A run
+            reports success even when it defers, so this line is the only place that says so.
           </div>
         )
         : null}
