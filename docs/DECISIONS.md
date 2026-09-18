@@ -1159,3 +1159,92 @@ ask `pg_matviews` what exists rather than naming anything: no matview may be emp
 `swing-refresh-features` must name every one. Naming them would mean remembering to add the next,
 and forgetting is the whole failure.
 
+## 0043 — 2026-09-18 — The client boundary, and a cell state is a sentence
+
+**Context:** the Dashboard table became interactive — four presets, a text filter, per-column sort,
+collapsible theme bands, a cell detail sheet. Every one of those has to answer in the same frame as
+the click, so the table runs in the browser, and everything it imports is in the browser bundle.
+
+**The split.** `lib/grid.ts` holds `SUPABASE_SERVICE_ROLE_KEY` and is imported by server components
+only. `lib/columns.ts` and `lib/market.ts` are pure — no fetch, no env var, no secret — and are what
+the client component imports. Rows cross the boundary as props, which is fine and is the whole
+design; the module that can fetch them does not cross. The repo is public, so a service_role key in
+the bundle is a credential that is gone permanently rather than a bug that gets fixed, which is why
+`scripts/ci/check_web_boundary.sh` fails the build on that import instead of the file header asking
+nicely.
+
+**Eight states, and the order they are tested in is the contract.**
+
+| state | the sentence it makes |
+|---|---|
+| `na` | the question does not apply to this security |
+| `planned` | the parameter is not built — nobody has this value, not just this name |
+| `null` | we should have a value and do not |
+| `warmup` | computed, still partly its own seed. Shown, never judged (hard constraint 8) |
+| `no-norm` | a real value with no threshold set. Tracked, not judged |
+| `below` / `above` / `normal` | judged against `config/norms.yml` |
+
+**`na` is tested before `planned`, and this was the other way round first.** The reasoning for
+`planned` first was that an unbuilt column has nothing to say about any row. Two costs, both
+measured rather than argued. All 28 columns carrying an `applies` predicate are also `planned`, so
+the `na` branch was **unreachable** for all 51 columns against every shape of security and cell — a
+state with its own colour, legend entry, CSS and sort rank that could not appear on screen. And on
+the day Phase 4 flips those columns to `live`, every fund row in the Value block would change from
+"planned" to "n·a", which reads as news about the ETF when nothing about the ETF changed.
+
+The two facts are not the same kind of fact. `applies` is permanent and about the (row, column)
+pair — SPY will never have a P/E. `status` is temporary and about the column alone. Report the
+permanent one; it is already known and it will not change.
+
+**`na` and `planned` are derived in the page, not in SQL.** They are facts about the catalogue and
+about the security, not about a row in a cell view. Every state that IS about a row —
+`verdict`, `has_norm`, `suppressed_warmup` — still comes from SQL, where decision 0022 put it, and
+`scripts/ci/check_formulas.sql` still asserts the three cell views against one reference.
+
+**Where each state is expressed.** `planned` is marked once, in the column heading; its cells are
+dashes. `na` is marked in the cell. The split follows what the state is a fact *about*. The first
+build put a lavender `PLANNED` tag in every cell: correct per row, unreadable in bulk — the Value
+preset is 27 unbuilt columns, so 312 tags filled the screen and the page read as a placeholder
+rather than as a tracker with work outstanding. Bodhi's call, 2026-09-18: header only. Two things
+fell out of it that were not the reason for the change — the All preset narrowed from 6142px to
+5588px, and the Valuation group came inside the frame at 1680 for the first time. The cell keeps its
+`st-planned` class, so the model is unchanged and the detail sheet still names the state in words.
+
+**Rejected: a `planned` flag in the database.** It would put the build schedule in a data table, so
+shipping a parameter would mean a migration to stop calling it planned. The catalogue in
+`lib/columns.ts` is the honest home for "does this exist yet", because that is a fact about the
+repository.
+
+## 0044 — 2026-09-18 — A findable scroll, not a wider frame
+
+**Context:** the Momentum preset is 16 columns and 1851px. The frame is 1800px, which leaves 1758px
+inside the table's border, so two columns sat past the right edge on a 1920 screen. This is the same
+failure as 2026-09-16, when the frame went 1500 → 1800 for exactly this reason.
+
+**Widening again was measured and rejected.** A 1920 viewport with a scrollbar leaves 1905px, so a
+1901px frame fits with four pixels to spare and the next column added puts it back over. The All
+preset is 52 columns and 5588px; no frame fits that. Chasing the widest preset is a race the table
+wins every time, and each round of it hides the real problem for one column set.
+
+**So the scroll is made findable instead:** a 40px scrim at the right edge of `.scroll`, on only
+while there is content past that edge, off at the end of the scroll. The defect in September was
+described correctly at the time — *"a feature nobody would find"* — and a wider frame never
+addressed that sentence, only the instance of it.
+
+**A scrim, not a fade to `--surface`.** A gradient to the surface colour works only where the
+surface is what lies underneath, and inside this table it often is not: band rows are `--paper`,
+judged cells carry their own tint, pinned cells paint their own background. On a dark screen the
+first version did not fade — it **erased** a 40px strip of "Vol ratio" and of the pinned theme
+label in flat surface colour, which read as a rendering bug. A scrim darkens whatever is beneath it
+and cannot get the colour wrong, because it does not claim a colour.
+
+**No left-hand counterpart.** Its only message was "you can scroll back", which the scrollbar and
+the pinned symbol column both already say, and on the left it sat over the row's own identity — the
+one thing on this table that must never be obscured.
+
+**A class on the wrapper, not React state.** It fires on every scroll frame; `setState` there would
+re-render 22 rows × 52 columns sixty times a second for a gradient no other code reads.
+
+**Also rejected: collapsing the table on narrow screens.** Decision 0005 stands — the phone surface
+is the digest. A 52-column table stacked vertically is not a smaller version of this page, it is a
+different and worse page.

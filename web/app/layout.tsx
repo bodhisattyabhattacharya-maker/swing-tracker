@@ -14,6 +14,7 @@
  * only definition sits inside one of those blocks silently fails in the other state.
  */
 import type { ReactNode } from "react";
+import Tabs from "../components/Tabs";
 
 export const metadata = {
   title: "Swing Tracker",
@@ -42,6 +43,15 @@ const CSS = `
     --warn:       #8a5a12;
     --warn-bg:    #fbf2e2;
     --err:        #9c3b2e;
+    /* Planned is lavender-neutral on purpose: adjacent to nothing else on the page, so the marker
+       can never be misread as a verdict or as a warning. It is used in the column HEADING only -
+       see .tag near the cell states for why the per-cell fill was dropped. */
+    --plan:       #6a5f8c;
+    /* The edge shadow on the horizontal scroller. A scrim, not a colour: it darkens whatever cell
+       background happens to be under it, which is the only thing that works over a table whose
+       rows, bands and judged cells all paint differently. Heavier in dark mode - the same black at
+       .13 is invisible against #141d1f. */
+    --scrim:      rgba(16,23,25,.16);
     --shadow:     0 1px 2px rgba(16,23,25,.06), 0 8px 24px -16px rgba(16,23,25,.28);
   }
   @media (prefers-color-scheme: dark) {
@@ -61,6 +71,8 @@ const CSS = `
       --warn:      #d9a55c;
       --warn-bg:   #332713;
       --err:       #e08878;
+      --plan:      #a99cd0;
+      --scrim:     rgba(0,0,0,.55);
       --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
     }
   }
@@ -80,6 +92,8 @@ const CSS = `
     --warn:      #d9a55c;
     --warn-bg:   #332713;
     --err:       #e08878;
+    --plan:      #a99cd0;
+    --scrim:     rgba(0,0,0,.55);
     --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
   }
 
@@ -94,14 +108,20 @@ const CSS = `
   }
   main { max-width: 860px; margin: 0 auto; padding-block: 48px 72px; padding-inline: 20px; }
   /* Widened from 1500px on 2026-09-16, when relative strength made it sixteen columns.
-     MEASURED, not guessed: the table needs 1726px, and at 1500 the newest column was the one
-     permanently past the right edge — a feature nobody would find. 1800 fits the whole table on a
-     1920 screen (measured: 1726px of table inside a 1760px container, 34px to spare, so a longer
-     company name than any on the list today still fits). Narrower than that it scrolls, with the
-     symbol column pinned, which
-     is the behaviour this table has always had and the reason the page body never scrolls
-     sideways. Density is the point of this page (decision 0005); the answer to more columns is a
-     wider frame, not smaller type. */
+     MEASURED, not guessed. 2026-09-16: the table needed 1726px and the frame was 1500, so the
+     newest column sat permanently past the right edge; the frame went to 1800 and it fitted.
+
+     2026-09-17 AND THE REASON THE FRAME DID NOT GROW AGAIN: the presets put the Momentum set at 16
+     columns and 1859px, which is 101px more than the 1758px this frame leaves inside the table's
+     border. The obvious move was 1900. It was measured and rejected: a 1920 viewport with a
+     scrollbar leaves 1905px, so 1901px of frame fits with four pixels to spare, and the very next
+     column puts it back over. The All preset is 51 columns; no frame fits that. Chasing the widest
+     preset is a race the table wins every time.
+
+     So the frame stays at a deliberate reading width and the SCROLL is made findable instead — the
+     fade at the right edge of .scroll, below. That was the actual defect on 2026-09-16 and it was
+     described correctly at the time: "a feature nobody would find". Widening the frame hid that
+     symptom for one column set. Density is the point of this page (decision 0005). */
   main.wide { max-width: 1800px; padding-block: 28px 64px; }
 
   h1 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif; font-weight: 700;
@@ -162,6 +182,35 @@ const CSS = `
   .panel td { padding: 7px 0; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
   .panel tr:last-child td { border-bottom: 0; }
   .panel td:first-child { color: var(--ink-soft); width: 46%; }
+
+  /* THE SCROLLER, AND THE EDGE SHADOW THAT SAYS IT IS ONE.
+
+     A table wider than its frame is normal here and always will be. What is not acceptable is a
+     table that ENDS at the container edge with nothing to say there is more, which is how relative
+     strength stayed invisible on 2026-09-16 at every width. This is the affordance: it appears
+     only when there is content to the right and goes out at the end of the scroll, so it states a
+     fact rather than decorating an edge.
+
+     A SHADOW, NOT A FADE TO --surface, and that was a correction. The first version painted a
+     gradient from --surface to transparent, which works only where --surface is what is underneath
+     — and inside this table it often is not: band rows are --paper, judged cells carry their own
+     tint, and pinned cells paint their own background. On a dark screen at 1280 the result was not
+     a fade but an ERASURE: a 46px strip of "VOL RATIO" and of the pinned theme label were painted
+     over in flat surface colour, which read as a rendering bug. A scrim darkens whatever is beneath
+     it and cannot get the colour wrong, because it does not claim one.
+
+     There is also no left-hand counterpart any more. Its only message was "you can scroll back",
+     which the scrollbar and the pinned symbol column both already say, and being on the left it sat
+     over the one thing that must never be obscured: the row's identity.
+
+     A sibling overlay rather than a background on .scroll, because the table paints over the
+     container. pointer-events:none so it cannot swallow a click on the cell beneath it. */
+  .scrollwrap { position: relative; }
+  .scrollwrap .fade { position: absolute; top: 0; bottom: 1px; width: 40px; pointer-events: none;
+                      opacity: 0; transition: opacity .12s ease; z-index: 6; }
+  .scrollwrap .fade.r { right: 1px; border-top-right-radius: 4px; border-bottom-right-radius: 4px;
+                        background: linear-gradient(to left, var(--scrim), transparent); }
+  .scrollwrap.more-r .fade.r { opacity: 1; }
 
   .scroll { margin-top: 26px; overflow-x: auto; border: 1px solid var(--rule); border-radius: 4px;
             background: var(--surface); box-shadow: var(--shadow); }
@@ -231,14 +280,19 @@ const CSS = `
   tr.band td .n { font-family: ui-monospace, Menlo, monospace; color: var(--ink-faint);
                   font-weight: 400; letter-spacing: 0; margin-left: 8px; }
 
-  /* Severity in form as well as colour, so it survives greyscale and colourblindness. */
+  /* Severity in form as well as colour, so it survives greyscale and colourblindness.
+     THESE ARE .st-below / .st-above, NOT .below / .above. The cell's class list is built as
+     "cell st-<state> mark" (ParameterGrid's Cell), so the bare selectors these replaced - left over
+     from the pre-preset grid, where the class WAS bare - matched nothing: every judged cell drew
+     the 2.5px rule with no background on it and no tint behind the number. It compiled, it built,
+     and it was invisible until the states were enumerated. scripts/ci/check_cell_states.sh now
+     asserts each state has a rule that can reach it. */
   tbody td.mark { position: relative; font-weight: 600; }
-  tbody td.below { color: var(--below); background: var(--below-bg); }
-  tbody td.above { color: var(--above); background: var(--above-bg); }
+  tbody td.st-below { color: var(--below); background: var(--below-bg); }
+  tbody td.st-above { color: var(--above); background: var(--above-bg); }
   tbody td.mark::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px; }
-  tbody td.below::before { background: var(--below); }
-  tbody td.above::before { background: var(--above); }
-  tbody td.unjudged { color: var(--ink-faint); }
+  tbody td.st-below::before { background: var(--below); }
+  tbody td.st-above::before { background: var(--above); }
   .bell { color: var(--accent); font-size: 10px; vertical-align: 3px; margin-left: 3px; }
   .warm { color: var(--warn); margin-left: 2px; }
 
@@ -268,6 +322,151 @@ const CSS = `
   .yes { color: var(--accent); }
   .no { color: var(--warn); }
   footer { color: var(--ink-faint); font-size: 13px; margin-top: 32px; }
+
+  /* ---------------------------------------------------------------------
+     THE FRAME. Header is quiet and persistent; the body owns its own
+     scrolling in both axes. The active tab is unmistakable through contrast
+     and an understated accent, not a heavy filled button.
+     --------------------------------------------------------------------- */
+  .frame { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
+           gap: 26px; padding: 0 20px; height: 48px; background: var(--surface);
+           border-bottom: 1px solid var(--rule); }
+  .brand { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 700; font-size: 14px;
+           letter-spacing: .02em; }
+  .tabs { display: flex; gap: 2px; }
+  .tab { display: flex; align-items: center; gap: 7px; height: 47px; padding: 0 14px;
+         font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--ink-faint);
+         text-decoration: none; border-bottom: 2px solid transparent; }
+  .tab:hover { color: var(--ink-soft); }
+  .tab.on { color: var(--ink); border-bottom-color: var(--accent); }
+  .tabicon { font-size: 13px; opacity: .7; }
+  main { padding-block: 24px 64px; }
+
+  /* ---------------------------------------------------------------------
+     CONTROLS. One compact row: filter, preset segments, and a hint. They may
+     scroll horizontally as one row on a phone; they never wrap into a tall
+     control block that pushes the table off screen.
+     --------------------------------------------------------------------- */
+  .controls { display: flex; align-items: center; gap: 14px; margin-top: 18px;
+              padding-bottom: 12px; overflow-x: auto; }
+  .find { flex: 0 0 240px; padding: 6px 10px; font-size: 13px; font-family: inherit;
+          color: var(--ink); background: var(--surface); border: 1px solid var(--rule);
+          border-radius: 4px; }
+  .find::placeholder { color: var(--ink-faint); }
+  .presets { display: flex; gap: 1px; padding: 2px; background: var(--rule-soft);
+             border-radius: 5px; flex: 0 0 auto; }
+  .seg { padding: 5px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+         color: var(--ink-soft); background: transparent; border: 0; border-radius: 4px;
+         cursor: pointer; white-space: nowrap; }
+  .seg:hover { color: var(--ink); }
+  .seg.on { background: var(--ink); color: var(--paper); }
+  .hint { margin-left: auto; font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
+
+  /* Sortable header: a button so it is reachable by keyboard, styled as the label. */
+  .sorter { display: inline-flex; align-items: baseline; gap: 5px; padding: 0; border: 0;
+            background: none; font: inherit; color: inherit; letter-spacing: inherit;
+            text-transform: inherit; cursor: pointer; }
+  .sorter:hover { color: var(--ink); }
+  .tf { font-size: 8.5px; letter-spacing: .08em; color: var(--ink-faint); border: 1px solid var(--rule);
+        border-radius: 2px; padding: 0 3px; }
+  .dir { color: var(--accent); font-size: 10px; }
+  thead th .norm.plan { color: var(--plan); font-style: normal; letter-spacing: .06em; }
+  thead tr.grp th .asof { display: block; font-family: ui-monospace, Menlo, monospace;
+                          font-size: 9px; font-style: italic; letter-spacing: 0;
+                          text-transform: none; color: var(--ink-faint); }
+
+  /* Collapsible theme band. The chevron communicates state; collapsing removes member rows
+     without changing sorting or preset.
+
+     STICKY LEFT, for the same reason the symbol column is. The band's cell spans the whole table,
+     so at any scroll position past zero its label had scrolled out of the viewport and the theme
+     dividers became three blank grey strips - the reader lost the map of the page at exactly the
+     moment they were exploring it. Seen at 1440 scrolled right, not in any measurement.
+
+     width:max-content, not 100%: a sticky child only detaches from the scroll if it is narrower
+     than its container, and at width:100% it is exactly as wide as the table. */
+  .bandbtn { display: flex; align-items: center; gap: 8px; width: max-content; padding: 0;
+             border: 0; position: sticky; left: 12px;
+             background: none; font: inherit; color: inherit; letter-spacing: inherit;
+             text-transform: inherit; text-align: left; cursor: pointer; }
+  .chev { color: var(--ink-faint); font-size: 9px; width: 9px; }
+
+  /* ---------------------------------------------------------------------
+     CELL STATES. Seven of them, and each is a different sentence. Colour is
+     reinforced by label, pattern or detail text - never colour alone.
+     --------------------------------------------------------------------- */
+  td.cell { padding: 0; }
+  .cellbtn { display: block; width: 100%; padding: 7px 12px; border: 0; background: none;
+             font: inherit; color: inherit; text-align: right; cursor: pointer; }
+  td.st-null, td.st-na, td.st-planned, td.st-no-norm { color: var(--ink-faint); }
+  td.st-normal { color: var(--ink); }
+  td.st-warmup { color: var(--warn); }
+  .dash { color: var(--ink-faint); }
+  .unit { font-size: 10px; color: var(--ink-faint); margin-left: 1px; }
+
+  /* Not-applicable is the only per-ROW marker left in a cell: an outline, never a fill, because we
+     are declining to ask the question rather than reporting an answer.
+
+     There is no .tag.plan any more. Planned is a statement about the COLUMN, so it is made once in
+     the column heading (thead th .norm.plan, above) rather than 312 times on the Value preset,
+     which is what it came to on screen. Bodhi, 2026-09-18. */
+  .tag { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9px; letter-spacing: .08em;
+         text-transform: uppercase; padding: 1px 5px; border-radius: 2px; }
+  .tag.na { color: var(--ink-faint); background: transparent; border: 1px dashed var(--rule); }
+  /* The word "planned" where the footnote quotes a column heading, so the sentence points at
+     something the reader can actually find on the screen above it. */
+  .planword { color: var(--plan); font-family: "IBM Plex Sans Condensed", sans-serif;
+              font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+  /* No norm: a tracked value with no threshold. Outlined rather than tinted - we have no opinion. */
+  td.st-no-norm .cellbtn { text-decoration: underline; text-decoration-style: dotted;
+                           text-decoration-color: var(--rule); text-underline-offset: 4px; }
+
+  /* Categorical chips: label and number are one fact, so they sit together. */
+  .chip { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+          letter-spacing: .04em; padding: 1px 6px; border-radius: 9px; background: var(--rule-soft);
+          color: var(--ink-soft); }
+  td.st-above .chip { background: var(--above-bg); color: var(--above); }
+  td.st-below .chip { background: var(--below-bg); color: var(--below); }
+  .chipnum { margin-left: 6px; font-size: 11.5px; color: var(--ink-faint); }
+
+  /* ---------------------------------------------------------------------
+     CELL DETAIL SHEET. Opens over the table without leaving it. On a phone
+     this becomes a bottom sheet; on desktop it is centred and modest.
+     --------------------------------------------------------------------- */
+  .sheetwrap { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center;
+               justify-content: center; padding: 20px; background: rgba(16,23,25,.34); }
+  .sheet { width: min(560px, 100%); max-height: 84vh; overflow: auto; background: var(--surface);
+           border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow);
+           padding: 20px 22px; }
+  .sheethead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+  .sheet h3 { margin: 0; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 18px; }
+  .sheet .muted { margin: 2px 0 0; font-size: 12.5px; }
+  .x { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--ink-faint);
+       cursor: pointer; padding: 0 2px; }
+  .sheetstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 16px;
+                background: var(--rule); border: 1px solid var(--rule); border-radius: 5px;
+                overflow: hidden; }
+  .sheetstats > div { background: var(--surface); padding: 9px 12px; display: flex;
+                      flex-direction: column; gap: 2px; }
+  .sheetstats .k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9.5px;
+                   letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .sheetstats .v { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  .why { margin: 14px 0 0; font-size: 13px; }
+  .sheet .note { margin-top: 14px; padding-top: 12px; font-size: 12px; }
+
+  .plan { margin: 0; padding-left: 18px; font-size: 13.5px; }
+  .plan li { margin-bottom: 5px; }
+  .plan em { color: var(--ink-faint); font-size: 12.5px; }
+
+  /* A phone keeps the same two mental models: a horizontally navigable table and a horizontally
+     swiped stock strip. Never a vertical card feed - that destroys comparison. */
+  @media (max-width: 720px) {
+    .controls { gap: 10px; }
+    .find { flex-basis: 150px; }
+    .hint { display: none; }
+    .sheetwrap { align-items: flex-end; padding: 0; }
+    .sheet { width: 100%; max-height: 88vh; border-radius: 10px 10px 0 0; }
+  }
 `;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -282,7 +481,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
         <style dangerouslySetInnerHTML={{ __html: CSS }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {/* The persistent application frame. Two tabs carry the entire product: Dashboard answers
+            "what is happening across the universe", Deep Dive answers "what is happening inside
+            these names". No third workflow competes with those two. */}
+        <header className="frame">
+          <span className="brand">Swing Tracker</span>
+          <Tabs />
+        </header>
+        {children}
+      </body>
     </html>
   );
 }
