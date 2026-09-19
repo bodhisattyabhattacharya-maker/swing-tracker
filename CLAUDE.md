@@ -1,11 +1,12 @@
 # Swing Tracker — read this first
 
-End-of-day dashboard: 26 parameters across ~40 tickers, colour-coded against norms we set.
+End-of-day dashboard over a fixed watchlist of **53 securities** in 9 themes: a **51-column**
+catalogue of which **22 read live data today**, colour-coded against norms we set.
 Swing / LEAPS horizon, 6 months+. **A tracker, not an advisor** — no score, no ranking in v1.
 Two people, Claude coding on both ends, stateless sessions. This file is the shared memory.
 
 **New to this repo? Read `docs/ONBOARDING.md` first** — a 15-minute read order, a
-comprehension check, and the five mistakes new sessions keep making here.
+comprehension check, and the six mistakes new sessions keep making here.
 
 ## Hard constraints — verified. Do not rediscover these.
 
@@ -21,8 +22,10 @@ Evidence and dates in `docs/CONSTRAINTS.md`; formulas in `docs/DEFINITIONS.md`.
 3. **Prices come from Polygon (now massive.com), indices from FRED.** Both keyed, both with
    published limits. Polygon **Stocks Starter** ($29/mo since 2026-09-13): unlimited calls and
    5 years of history. The binding constraint is now the edge function's 150 s wall clock, not a
-   rate limit. "% off all-time high" is still bounded by stored history, so a backfill runs
-   in batches and "% off all-time high" is bounded by what we store.
+   rate limit — and because that cap cuts an ALPHABETICAL TAIL rather than a sample, it must
+   exceed the universe. It did not on 2026-09-18 and eleven names were starved nightly while the
+   run reported success (decision 0045). "% off all-time high" is bounded by what we store, which
+   is why the parameter is named `pct_off_high_stored` for its window.
 4. **SEC XBRL works keyless**, stamped with filing dates, so genuinely point-in-time. Needs a
    User-Agent with a contact email.
 5. **Weekly features join to the last COMPLETED week.** Never the current partial week — that
@@ -90,47 +93,95 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 | Colour thresholds — edit this, not the table | `config/norms.yml` (synced to `norms`; compared in SQL, decision 0023) |
 | Task procedures | `.claude/skills/` |
 
-## Current state
+## Current state — 2026-09-19
 
-Phase 1 (tracker) is **live and running unattended**: swing-tracker-nu.vercel.app.
+Phases 1 to 3 are **live and running unattended**: swing-tracker-nu.vercel.app.
 
-*This paragraph had drifted into contradicting itself — it announced the pg_cron schedule and then
-listed it as not existing. Rewritten 2026-09-15. `docs/FEATURES.md` remains the authoritative list;
-if this and FEATURES ever disagree again, FEATURES wins.*
+*`docs/FEATURES.md` remains the authoritative list. If this section and FEATURES ever disagree,
+FEATURES wins — this one is a summary and summaries rot.*
+
+### What is there, in numbers
+
+| | |
+|---|---|
+| Securities | **53** — 43 companies and 10 ETFs, in **9** themes; plus 3 index series that are never rows |
+| Column catalogue | **51** — **22 live**, 29 planned. 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
+| Norms | **15**, in `config/norms.yml`, synced to the database and compared there |
+| Bars held | **63,579** daily equity bars over 5 years (2021-10-11 →), **8,063** index rows over 11 years — FRED goes back further than the equity plan |
+| Matviews | **4**: `daily_features`, `weekly_features`, `daily_signals`, `market_history` |
+| Scheduled jobs | **4** pg_cron, UTC |
+| Pages | `/` (Dashboard), `/deep-dive`, `/status` |
+| On-demand routes | **2**: `/api/cell-history`, `/api/stock-history` |
 
 **Running on its own**, four pg_cron jobs, UTC: ingest 22:30 → refresh 22:45 → digest 23:00 on
 weekdays (decisions 0022, 0028), plus an index-only catch-up at 11:00 **every day** because FRED
-publishes later than the evening run (0033). The refresh rebuilds **both** matviews; any new matview
-must be added to that job in the migration that creates it. There is no user-led refresh by design,
-so the schedule is the only path — if it does not fire, the dashboard is stale and nobody can fix it
-from the page.
+publishes later than the evening run (0033). The refresh rebuilds **all four** matviews; any new
+matview must be added to that job in the migration that creates it — this project has shipped that
+omission three times. There is no user-led refresh by design, so the schedule is the only path.
 
-**Built:** the full 5-year daily backfill over Polygon + FRED (decision 0019); the **daily** and
-**weekly** parameter layers, with Wilder's recursion existing exactly once in
-`public.recursive_indicators` (0030); norms, flags and `grid_cells`, now carrying **both timeframes**
-with weekly joined to the day by date arithmetic that cannot see the future (0032); pipeline-based
-staleness (0026); **the dashboard** at `/`, server-rendered with service_role over PostgREST so the
-browser never touches Postgres and RLS needs no read policy (0025), with the deployment check at
-`/status`; the **weekday email digest**, which retries its reads and sends a partial email rather
-than going silent (0027, 0028, 0031); an **index catch-up run** and `index_status` (0033); the
-**market block** `market_context` (0034); and a **CI formula gate** comparing the SQL to an
-independent implementation at 1e-9 (0029) — which since 2026-09-15 also fails when a check file does
-not run, rather than counting zero failures and reporting green.
+### Built
 
-**Not built:** relative strength, session-aligned hourly bars, sector-relative ranks, fundamentals
-from SEC XBRL, and the scale-out to ~200 tickers. The market block exists in the database but is not
-yet rendered on the page. Phase 2 (rule engine, alerts, backtesting) is specified, not started.
+**Data plane.** The five-year daily backfill over Polygon + FRED (0019); the daily, weekly and
+**signal** parameter layers, with Wilder's recursion existing exactly once in
+`public.recursive_indicators` (0030); norms, flags and `grid_cells` across both timeframes with
+weekly joined by date arithmetic that cannot see the future (0032); `rs_cells` (relative strength
+at 63/126/252 **bars**), `signal_cells` (MA stack, both crosses with bars since, both slopes),
+`market_context` and its matview `market_history`; pipeline-based staleness (0026) and
+per-symbol coverage (`symbols_priced` / `symbols_behind`, 0045).
 
-**Three things that will bite you, all learned the hard way:**
-- A green `cron.job_run_details` row is **not** evidence of anything but a queued request — pg_net is
-  fire-and-forget. On 2026-09-14 it read `succeeded` for a digest that sent no email. Authority
+**Interface.** The **Dashboard** at `/` — 53 names banded by theme, a two-tier sticky header, four
+presets, text filter, per-column sort, the eight-state cell model (0043), a cell detail sheet with
+five years of history (0048), and the four market-history charts (0046, 0047). The **Deep Dive** at
+`/deep-dive` — one 420px analysis column per security, eight sections at identical heights, six of
+them live, with a price panel that reads its own bars on scroll and draws candles or a line
+depending on how many fit (0049, 0050). The deployment check at `/status`. Server-rendered with
+service_role over PostgREST so the browser never touches Postgres and RLS needs no read policy
+(0025); two allowlist routes are the only on-demand reads.
+
+**Guardrails.** The CI formula gate comparing SQL to an independent implementation at 1e-9 (0029);
+`check_web_boundary.sh` (5 rules, including that a route holding the key must validate its input);
+`check_cell_states.sh` (every grid cell state reachable AND styled); `check_strip_sections.sh`
+(the same for the Deep Dive, failing **both** ways — a state with no rule, and a rule for a state
+that cannot occur).
+
+### Not built
+
+- **Fundamentals** — **22 columns** are fundamentals-sourced: **20 of the 26** in the Value preset,
+  plus the **two sector ranks** (valuation, margin), which sit in the Relative group and not in
+  that preset. Counted, 2026-09-19; "27 Value columns" appeared in several PR bodies and was
+  wrong. All 22 are blocked on the **Massive Financials & Ratios add-on ($29/month)** and its four
+  acceptance probes; nothing starts until Bodhi subscribes.
+- **Forward Look** — the other **6** of the Value preset's 26. No vendor tier sells analyst
+  consensus, so these arrive as **searched** values carrying their own source and as-of date.
+  Permanent, not queued.
+- **Session-aligned hourly bars**, and the hourly RSI gauge that waits on them. 13,936 exploratory
+  hourly rows exist for 4 symbols from a 2024 experiment; nothing reads them and they are not
+  session-aligned. Do not mistake them for the feature.
+- **Scale-out to ~200 tickers.** Rebuild the ingest around grouped-daily flat files *before*
+  adding names: at 200 the per-symbol loop is what breaks, on any vendor.
+- **Phase 2** (rule engine, alerts, backtesting) is specified, not started.
+
+### Three things that will bite you, all learned the hard way
+
+- A green `cron.job_run_details` row is **not** evidence of anything but a queued request — pg_net
+  is fire-and-forget. On 2026-09-14 it read `succeeded` for a digest that sent no email. Authority
   order: `ingest_runs` → `grid_status` → `cron.job_run_details` last.
-- **Absence of evidence is not evidence of health** (decision 0031). An unread change list is not a
-  quiet day; a missing freshness field is not a fresh pipeline; a check file that failed to parse is
-  not a passing gate. All three shipped as cheerful green text before they were caught.
+- **Absence of evidence is not evidence of health** (0031). An unread change list is not a quiet
+  day; a missing freshness field is not a fresh pipeline; a check file that failed to parse is not
+  a passing gate; a cell state with no CSS rule is not a styled state. All four shipped as cheerful
+  green before they were caught.
 - **An as-of value carries its own date.** The index series legitimately lag the grid by a session,
   so `market_context` publishes `vix_as_of` beside `vix` — and a ratio across two different as-of
   dates (term structure) is null, not stale (0034).
+
+### And one that is newer
+
+**A state you cannot reach is a state you cannot trust.** Three times now something has been
+declared, styled and documented while being impossible to produce: the `na` cell state (ordering,
+0043), a CSS rule for a class that no element carried, and the price chart's line mark, which the
+arithmetic allowed and the interface could not reach because panning widens nothing (0050). The
+answer each time was a **generic** check that enumerates what can actually happen rather than one
+more specific assertion — and, since 0050, one that walks the controls a reader has.
 
 Vercel needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — the key **must not** carry a
 `NEXT_PUBLIC_` prefix, which Next would inline into the browser bundle.

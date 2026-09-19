@@ -11,6 +11,7 @@ handover: what to read, in what order, and what each thing actually gives you.
 |---|---|---|---|---|
 | 1 | `CLAUDE.md` | 3 min | The eight hard constraints, the house rules, the hard stops. **Non-optional.** Most wasted hours on this project came from not knowing one of these. | Never skip |
 | 2 | `make context` | 10 sec | Live state: branch, last commit, ticker count, migrations applied. Docs describe intent; this describes reality. | Never skip |
+| 2b | `CLAUDE.md` § Current state | 2 min | What is built, what is not, and which of three different things each blocker is. Read it before the spec, or you will spend twenty minutes learning the product and still not know what exists. | Never skip |
 | 3 | `docs/DECISIONS.md` | 5 min | Every settled call and what we rejected. Read before proposing anything architectural — most "good ideas" here were already considered and declined for a reason. | Never skip |
 | 4 | `docs/CODEMAP.md` | 2 min | Where code lives, how data flows, entry points. | No code involved in your task |
 | 5 | `docs/DEFINITIONS.md` | 5 min | The exact formula for every parameter, anchored to TradingView. | Not touching a number |
@@ -18,7 +19,7 @@ handover: what to read, in what order, and what each thing actually gives you.
 | 7 | `docs/GLOSSARY.md` | 2 min | "Episode" vs "signal", "norm" vs "rule", "baseline", "edge". These words have specific meanings here. | Never — it is 2 minutes |
 | 8 | `docs/FEATURES.md` | skim | What exists and how it works, newest last. | — |
 | 9 | `docs/CODE_STYLE.md` | 4 min | How to write code here so the next agent understands it. | Not writing code |
-| 10 | `docs/PROPOSAL.md` | 20 min | The full v1 spec — what the product *is*, not what exists. **Versioned, not frozen:** it is revised when scope genuinely changes, and it carries a revision history at the end. Currently **v2**. Read that table first if you last saw an earlier version. | You only need the part your task touches |
+| 10 | `docs/PROPOSAL.md` | 20 min | The full v1 spec — what the product *is*, not what exists. **Versioned, not frozen:** it is revised when scope genuinely changes, and it carries a revision history at the end. Currently **v3**. Read that table first if you last saw an earlier version. | You only need the part your task touches |
 
 Steps 1–3 and 7 are the floor. Everything else is task-dependent.
 
@@ -35,6 +36,8 @@ something:
 6. What happens if you add a rule referencing a searched column? *(skills/add-rule)*
 7. How does a viewer refresh the data? *(Trick question — they cannot, and there is no login either. PROPOSAL §4. If you were about to build a button or a role check, stop.)*
 8. A scheduled job reports success. Does that mean today's data arrived? *(No. The fetch is dispatched asynchronously, so success means "we asked". The run log and the freshness check are what answer it — PROPOSAL §4, CONSTRAINTS.)*
+9. A cell state has a colour, a legend entry and a CSS rule. Is it a state the page can show? *(Not necessarily, and this project has got it wrong three times. `cellState` once tested `planned` before `applies`, which made `na` unreachable for all 51 columns; a rule was once written for a class no element carried; and the price chart's line mark was reachable in the arithmetic and not through any control. `scripts/ci/check_cell_states.sh` and `check_strip_sections.sh` enumerate what can actually happen — the second fails both ways.)*
+10. You need a number for a doc — the ticker count, how many columns are live, how much history. Where do you get it? *(From the database or the catalogue, by running something. Not from another doc, and not from memory. Two claims in this repo were wrong for a day each because they were reasoned from a definition instead of measured.)*
 
 ## Then: your task
 
@@ -47,8 +50,11 @@ Procedures live in `.claude/skills/`. Read the one matching your task before sta
 | Change the schema | `run-migration` |
 | Data looks stale, missing or wrong | `debug-ingest` |
 
-## The five mistakes new sessions make here
+## The six mistakes new sessions make here
 
+0. **Believing a number you did not measure.** `breadth_tracked` was claimed as 43 and read 32; a
+   per-run cap was reasoned to be sufficient and was starving eleven names nightly. Both hid a real
+   defect for a day. If a number goes in a doc, a commit message or a PR body, run something first.
 1. **Writing a local fetch script.** It will hang. There is no market-data egress from this
    sandbox — fetching runs inside Supabase. This has cost more time than any other error.
 2. **Trusting a computed number without checking `DEFINITIONS.md`.** RSI, EMA and realized

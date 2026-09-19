@@ -29,12 +29,15 @@ next agent to the wrong file confidently.
                   └───────┬──────────────┘
                           │ SQL views (no network needed)
                   ┌───────▼──────────────┐
-                  │  parameters          │  the 26 tracked numbers
+                  │  parameters          │  22 live of a 51-column catalogue
                   │  + norms applied     │  → same query serves today's scan
                   └───────┬──────────────┘    and a 10-year replay
-                          │                   daily_features and weekly_features EXIST
-                          │                   (matviews, both refreshed at 22:45 UTC);
-                          │                   market context and fundamentals still planned
+                          │                   FOUR matviews, all rebuilt at 22:45 UTC:
+                          │                   daily_features, weekly_features,
+                          │                   daily_signals, market_history.
+                          │                   A new one must be added to that job in
+                          │                   the migration that creates it - omitted
+                          │                   three times so far. Fundamentals planned.
                  ┌────────┴────────┐
         ┌────────▼──────┐   ┌──────▼─────────┐
         │ Next.js grid  │   │ email digest   │
@@ -74,7 +77,10 @@ next agent to the wrong file confidently.
 | Which week is a given day showing? | The newest week that started before that day's own week — `weekly_in_force` (`source_week_start` names it), and `DEFINITIONS.md` §"How a weekly value attaches to a day". **Not** `is_complete`, which is a fact about today rather than about that day. |
 | Why did a weekly cell not move all week? | Because a weekly bar has one value. It steps on the week boundary and nowhere else. |
 | Are the numbers right? | `scripts/verify_parameters.sql` — paste it into the SQL editor and read the rows |
-| Can we even compute a fundamental for all 36 names? | `scripts/probe_sec_tags.sql` — paste it into the SQL editor, one STEP at a time. Asks SEC which tags each filer actually reports, rather than assuming. Not run by CI: it makes outbound requests. |
+| Why does a panel say it is not built rather than showing nothing? | `web/lib/deep-dive.ts` — a section's state is derived from its params' own `status` and `applies`, so Phase 4 flips the Fundamentals panel in the same commit that flips the columns. Three invariants run at module load, including a 120-character cap on the sentence, because it renders once per column. |
+| Candles or a line? | `web/lib/stock-history.ts` `markFor` — pixels per bar, not a bar count. Candles while each gets 5px; at a 390px plot that is 78 bars. |
+| Which of my states can the page actually reach? | `scripts/ci/check_cell_states.sh` for the grid and `scripts/ci/check_strip_sections.sh` for the Deep Dive. The second fails **both** ways: a reachable state with no rule that colours it, and a rule for a state that cannot occur. |
+| Can we even compute a fundamental for all 43 companies? | `scripts/probe_sec_tags.sql` — paste it into the SQL editor, one STEP at a time. Asks SEC which tags each filer actually reports, rather than assuming. Not run by CI: it makes outbound requests. |
 | Why is a number there but not coloured? | Its `*_seed_ok` flag is false — computed, but still partly its seed |
 | What broke last time? | `docs/INCIDENTS.md` |
 | Why is a read slow rather than wrong? | `docs/INCIDENTS.md` 2026-09-16 first. A join with no equality in it costs nothing on one date and is quadratic over the whole view; `scripts/ci/check_formulas.sql` section `shape` asserts the plan, because no value check can see this. |
