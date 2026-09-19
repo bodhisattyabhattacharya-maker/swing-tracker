@@ -150,6 +150,12 @@ jobs:
       # needs node_modules.
       - name: Every cell state is reachable and styled
         run: bash scripts/ci/check_cell_states.sh
+      # The Deep Dive strip is a second set of elements carrying the same state class names, and
+      # the grid's rules do not reach it - it styles td.st-below and a strip row is a div. This
+      # check enumerates what the strip can render and fails BOTH ways: a state with no rule that
+      # colours it, and a rule for a state the strip cannot produce.
+      - name: Every Deep Dive section and state is reachable and styled
+        run: bash scripts/ci/check_strip_sections.sh
 
   hygiene:
     name: Change hygiene (docs/HYGIENE.md)

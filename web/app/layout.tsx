@@ -510,6 +510,195 @@ const CSS = `
   .plan li { margin-bottom: 5px; }
   .plan em { color: var(--ink-faint); font-size: 12.5px; }
 
+  /* ---------------------------------------------------------------------
+     THE DEEP DIVE STRIP. One 420px analysis column per stock, scrolled
+     sideways. The width is a constant, not a range: the whole point is that
+     the RSI gauges sit at the same offset on every name so the eye can
+     travel horizontally and compare one thing. It NEVER reflows into a
+     vertical stack, at any width - on a phone it swipes.
+
+     TWO-AXIS SCROLLING INSIDE ITS OWN FRAME, and that is what makes the
+     per-column heading stick. A container with overflow-x:auto and
+     overflow-y:visible has the y axis computed to auto, so a sticky child
+     sticks to a box that never scrolls - which is to say, never. Giving the
+     scroller a max-height gives the sticky heading something to stick to,
+     and 53 columns of 8 sections is far taller than a screen, so knowing
+     which name you are reading is not optional.
+     --------------------------------------------------------------------- */
+  .dd-wrap { position: relative; }
+  .dd-wrap .dd-fade { position: absolute; top: 1px; bottom: 1px; width: 44px; pointer-events: none;
+                      opacity: 0; transition: opacity .12s ease; z-index: 6; }
+  /* A DARKENING, NOT A FADE TO THE SURFACE COLOUR. The grid learned this on 2026-09-18: a gradient
+     to --surface over content erases the text beneath it instead of suggesting more content. */
+  .dd-wrap .dd-fade.r { right: 1px; border-top-right-radius: 4px; border-bottom-right-radius: 4px;
+                        background: linear-gradient(to left, var(--scrim), transparent); }
+  .dd-wrap.more-r .dd-fade.r { opacity: 1; }
+
+  .dd-scroll { margin-top: 22px; overflow: auto; max-height: min(84vh, 1000px);
+               border: 1px solid var(--rule); border-radius: 4px; background: var(--surface);
+               box-shadow: var(--shadow); overscroll-behavior-x: contain; }
+  .dd-strip { display: flex; align-items: stretch; width: max-content; }
+  .dd-col { box-sizing: border-box; border-right: 1px solid var(--rule-soft); }
+  .dd-col:last-child { border-right: 0; }
+  /* Where a theme changes. The grid bands its rows; the strip rules between blocks, which is the
+     same statement rotated 90 degrees. */
+  .dd-col.theme-start { border-left: 1.5px solid var(--rule); }
+
+  .dd-head { position: sticky; top: 0; z-index: 4; background: var(--surface);
+             padding: 11px 14px 9px; border-bottom: 1.5px solid var(--rule); }
+  .dd-sym { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px;
+            font-weight: 600; display: flex; align-items: baseline; gap: 5px; }
+  .dd-name { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px;
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dd-theme { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9.5px;
+              letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+              margin-top: 3px; }
+  .dd-behind { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--warn);
+               margin-top: 3px; }
+  .tag.fund { color: var(--ink-faint); background: var(--rule-soft); border: 1px solid var(--rule);
+              vertical-align: 2px; }
+
+  .dd-sec { padding: 11px 14px 13px; border-bottom: 1px solid var(--rule-soft); }
+  .dd-sec:last-child { border-bottom: 0; }
+  .dd-sec h3 { margin: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+               font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+               font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  /* THREE OUTCOMES, THREE TREATMENTS, keyed on what the panel RENDERS rather than on its params'
+     statuses - see StockStrip's Section for the contradiction that produced ("planned" over
+     "permanent, not pending" on an ETF). A panel showing data gets the full heading; one carrying a
+     sentence is quieter, because the sentence is the content and the heading is only a label.
+     Each needs a rule of its own: scripts/ci/check_strip_sections.sh fails the build if a render
+     outcome has no CSS that can reach it. */
+  .dd-sec.ss-data h3 { color: var(--ink-soft); }
+  .dd-sec.ss-blocked h3 { color: var(--ink-faint); }
+  .dd-sec.ss-na h3 { color: var(--ink-faint); }
+  /* The n-a marker in a heading sits on the baseline of an uppercase label, so it needs the same
+     nudge the ETF tag gets in the column header. */
+  .dd-sec h3 .tag.na { vertical-align: 1px; }
+  .dd-sec h3 .asof { font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-style: italic;
+                     letter-spacing: 0; text-transform: none; color: var(--ink-faint); }
+  /* Explicit, and NOT inheriting the bare .plan rule above: that one is a list style, and at
+     specificity 0,1,0 its padding-left would indent this marker by 18px. */
+  .dd-sec h3 .norm { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; padding: 0;
+                     letter-spacing: 0; text-transform: none; font-weight: 400; }
+  .dd-sec h3 .norm.plan { color: var(--plan); letter-spacing: .06em; }
+  /* NO .dd-sub RULE. The section's one-line description is the heading's title attribute now, not
+     an element - it is identical on every column, and this layout multiplies anything constant by
+     the size of the watchlist. Removed with its markup rather than left behind: a rule matching
+     nothing is how a stylesheet starts describing a page that no longer exists. */
+
+  /* The sentence a blocked section carries. Tinted with --plan, the same colour the grid uses for
+     a planned column heading, so "not built" looks the same in both halves of the product. */
+  .dd-why { margin: 7px 0 0; padding: 6px 9px; font-size: 11.5px; line-height: 1.45;
+            color: var(--ink-soft); background: var(--paper); border-radius: 3px;
+            border-left: 2.5px solid var(--plan); }
+  /* NOT APPLICABLE is a different sentence from NOT BUILT, so it gets a different edge: dashed and
+     neutral, matching the .tag.na treatment in the grid, because we are declining to ask the
+     question rather than queueing it. An ETF's Fundamentals panel is this, permanently. */
+  .dd-why.na { border-left: 2.5px dashed var(--rule); color: var(--ink-faint); }
+  /* NO .dd-partial RULE. The line it styled said the same thing on every column - a fact about a
+     parameter, not about a security - so it is now in the page footnote, once. Deleted with its
+     markup: a rule for markup that no longer exists is how a stylesheet starts lying. */
+
+  /* NO RESERVED CHART BOX HERE, and the first version had one. A dashed 200px placeholder under the
+     sentence reserved space for something that is not coming in this release, at 200px multiplied
+     by 53 columns, and it never rendered anyway: a blocked section shows its sentence and returns,
+     so both the component and this rule were dead. Measuring the rendered page is what found it.
+     The sentence IS the content. */
+
+  /* ---- RSI gauges -----------------------------------------------------
+     Bars on a 0-100 track, not dials. RSI is bounded by construction, so the
+     track is the whole domain; the band is drawn as two dashed threshold
+     edges, which is exactly how the VIX chart draws its norm, so the two
+     read as the same kind of statement. The band geometry comes from the
+     norm and never from a literal 30/70 - rsi_weekly is 40/70 today. */
+  .dd-gauges { margin-top: 9px; display: grid; gap: 8px; }
+  .dd-gauge { display: grid; grid-template-columns: 14px 1fr 48px 44px; align-items: center;
+              gap: 9px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+              font-variant-numeric: tabular-nums; }
+  .g-tf { font-size: 8.5px; letter-spacing: .08em; color: var(--ink-faint); text-align: center; }
+  .g-track { position: relative; height: 7px; background: var(--rule-soft); border-radius: 2px; }
+  .g-band { position: absolute; top: -2px; bottom: -2px; box-sizing: border-box;
+            border-left: 1px dashed var(--ink-faint); border-right: 1px dashed var(--ink-faint); }
+  .g-mark { position: absolute; top: -3px; bottom: -3px; width: 3px; margin-left: -1.5px;
+            border-radius: 1px; background: var(--ink); }
+  .g-mark.st-below { background: var(--below); }
+  .g-mark.st-above { background: var(--above); }
+  .g-val { text-align: right; }
+  .g-norm { font-size: 9.5px; color: var(--ink-faint); text-align: right; }
+  /* A gauge whose param is not built keeps its band and loses its marker: the rule is set, the
+     number is not computed. The track is dimmed so it does not read as a value of zero. */
+  .dd-gauge.st-planned .g-track { opacity: .45; }
+
+  /* ---- Relative-strength bars ----------------------------------------
+     THE FILL IS NEUTRAL IN BOTH DIRECTIONS, and that is a hard constraint
+     rather than a palette choice. Only rs_vs_spx_126b has a norm; colouring
+     a bar green for "outperforming" would be inventing a verdict on the two
+     that have none, which is the one thing this product does not do. The
+     direction is carried by which side of zero the bar sits on, and the
+     verdict - where there is one - by the number's own state colour. */
+  .dd-bars { margin-top: 9px; display: grid; gap: 8px; }
+  .dd-bar { display: grid; grid-template-columns: 38px 1fr 58px; align-items: center; gap: 9px;
+            font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+            font-variant-numeric: tabular-nums; }
+  .b-lab { font-size: 9.5px; letter-spacing: .04em; color: var(--ink-faint); }
+  .b-track { position: relative; height: 8px; background: var(--rule-soft); border-radius: 2px; }
+  .b-zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px;
+            background: var(--ink-faint); }
+  .b-fill { position: absolute; top: 1px; bottom: 1px; background: var(--ink-soft); }
+  .b-fill.pos { left: 50%; border-radius: 0 2px 2px 0; }
+  .b-fill.neg { right: 50%; border-radius: 2px 0 0 2px; }
+  /* The bar ran past its display bound. A solid cap at the outer end, so the glance says "further
+     than this" while the number beside it stays the exact figure. */
+  .b-fill.pos.clipped { border-right: 2.5px solid var(--ink); }
+  .b-fill.neg.clipped { border-left: 2.5px solid var(--ink); }
+  .b-val { text-align: right; }
+
+  /* ---- Label / value rows -------------------------------------------- */
+  .dd-rows { margin: 9px 0 0; font-size: 12px; }
+  .dd-rows .dd-row { display: flex; align-items: baseline; justify-content: space-between;
+                     gap: 12px; padding: 4px 0 4px 6px; border-bottom: 1px solid var(--rule-soft);
+                     position: relative; }
+  .dd-rows .dd-row:last-child { border-bottom: 0; }
+  .dd-row dt { display: flex; align-items: baseline; gap: 5px; color: var(--ink-soft);
+               min-width: 0; }
+  .dd-row dd { margin: 0; font-family: ui-monospace, Menlo, monospace; white-space: nowrap;
+               font-variant-numeric: tabular-nums; }
+  .dd-row dt .norm { font-family: ui-monospace, Menlo, monospace; font-size: 9px; padding: 0;
+                     color: var(--ink-faint); }
+  /* Severity in form as well as colour, the same 2.5px rule the grid draws on a judged cell. */
+  .dd-row.mark { font-weight: 600; }
+  .dd-row.mark::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 2px;
+                         width: 2.5px; }
+  .dd-row.st-below::before { background: var(--below); }
+  .dd-row.st-above::before { background: var(--above); }
+
+  /* ---- Cell states inside the strip ----------------------------------
+     THESE ARE NOT THE GRID'S RULES. The grid styles td.st-below; a strip row
+     is a div, so every one of those selectors matches nothing here. That is
+     the exact defect shipped on 2026-09-18 - tbody td.below against a class
+     that was really st-below - repeating in a new place, and it is invisible
+     at every layer of the toolchain because CSS that matches nothing is not
+     an error. scripts/ci/check_strip_sections.sh asserts that each cell
+     state reachable in the strip has a rule under .dd-sec. */
+  .dd-sec .st-below { color: var(--below); }
+  .dd-sec .st-above { color: var(--above); }
+  .dd-sec .st-normal { color: var(--ink); }
+  .dd-sec .st-warmup { color: var(--warn); }
+  .dd-sec .st-null, .dd-sec .st-planned, .dd-sec .st-no-norm { color: var(--ink-faint); }
+  /* THERE IS NO .dd-sec .st-na RULE, deliberately, and that absence is checked. A section whose
+     every param is inapplicable collapses to one sentence (see sectionRender), so no strip element
+     can carry .st-na - a rule for it would be dead CSS, which is the 2026-09-18 defect inverted.
+     check_strip_sections.sh fails BOTH ways: a reachable state with no rule, and a rule for a state
+     that cannot occur. When Phase 4 makes the fundamentals live, that check is what will tell us
+     whether this needs to come back. */
+  /* No norm: tracked, not judged. Outlined rather than tinted - we have no opinion, and the dotted
+     underline says so without borrowing a verdict colour. */
+  .dd-row.st-no-norm dd { text-decoration: underline; text-decoration-style: dotted;
+                          text-decoration-color: var(--rule); text-underline-offset: 3px; }
+  .dd-sec .st-above .chip { background: var(--above-bg); color: var(--above); }
+  .dd-sec .st-below .chip { background: var(--below-bg); color: var(--below); }
+
   /* A phone keeps the same two mental models: a horizontally navigable table and a horizontally
      swiped stock strip. Never a vertical card feed - that destroys comparison. */
   @media (max-width: 720px) {
