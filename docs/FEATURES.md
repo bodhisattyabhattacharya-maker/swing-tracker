@@ -993,3 +993,53 @@ with an unbuilt param" branch were both dead — neither could render, and both 
 first version printed a 270-character explanation and a two-line description in *every* column: the
 same arithmetic that turned a per-cell PLANNED tag into 312 of them on the Value preset. Constant
 text now lives once, in the page footnote; descriptions are hover text on the headings.
+
+## 2026-09-19 — The Deep Dive price panel draws its bars
+**What:** the price section of every Deep Dive column is now a real chart. It reads its own bars
+when you scroll to that column, opens on three months of candles, and offers 3M / 1Y / 5Y on daily
+and 1Y / 3Y / 5Y on weekly. EMA21, SMA50 and SMA200 are drawn over the daily view and EMA21W,
+SMA30W and SMA200W over the weekly one, always at full width and always with a gap where the
+average does not exist yet rather than a value carried across it. Weekly shows **completed weeks
+only**. Two of the eight sections remain unbuilt — Fundamentals and Forward Look — and the page
+footnote now says so in two sentences instead of three.
+**How:** decision 0050. **No migration and no new view.** New `web/app/api/stock-history/route.ts`
+and `web/lib/stock-history.ts`, built on the same allowlist discipline as `/api/cell-history`, which
+`check_web_boundary.sh` rule 5 enforces for both without a change.
+**Measured rather than assumed, twice.** Letting Postgres join the bars to the averages costs
+9.745 ms and 797 buffers for 260 NVDA rows — 780 of those buffers are a nested loop of index
+lookups. Two flat index scans stitched by date in the handler cost 1.186 ms + 0.218 ms and 33
+buffers: about a seventh of the time on a twenty-fourth of the buffers. That is decision 0048's
+move applied to a join rather than to a view, and it went the opposite way to the intuition.
+**A trap found before it was written:** `weekly_bars.is_complete` means "not the newest week for
+this symbol", so it is false for the week in progress even on a Friday evening. Filtering it always
+drops the newest week — which is correct here, because `weekly_features` computes its averages on
+completed weeks and a candle one bar ahead of its own overlays would disagree with the Weekly panel
+directly below it in the same column.
+**Verified by:** measurement in a real browser before any screenshot. 6 of 22 columns fetch on
+load, so the panel is lazy; the plot is 390px by 200px; a candle is **6.0px** at the opening view;
+clicking 1Y and 5Y switches the mark to a line and back; the weekly toggle reports 125 completed
+weeks ending a week before the daily series. Every column is 420px wide and **1473px tall, to the
+pixel, across 1280 / 1440 / 1680 / 1920 in both themes** — including after one column's range is
+changed. The new CI section was negative-tested three ways and the whole check thirteen.
+
+**Three defects in my own work, and the first two were design errors the measurement exposed.**
+
+1. **Panning could never reach the line.** The first build opened on a quarter and let you drag
+   back through five years, with zoom off. Panning moves the window; it never widens it — so the
+   line mark, which exists precisely for more bars than pixels, was unreachable through the
+   interface. The CI check said it was reachable because it asked the rule for a large bar count
+   instead of asking what the controls can produce. Both the panel and the check were rebuilt
+   around explicit range buttons, which is also closer to what was asked for: "views".
+2. **A drag inside a horizontally scrolling strip is ambiguous.** Pressing on a 390px canvas and
+   moving sideways had two plausible meanings. Removing the pan removed the question.
+3. **A wrapped caption broke the alignment the strip exists for.** At 5Y the caption ran to two
+   lines, pushing that column's RSI panel 17px below every other column's. The caption now reserves
+   two lines always, and the harness compares column heights *after* interacting, not only on load.
+   The caption was also wrong: "3M of 627 sessions · 2024-04-25 → 2026-09-18" described the whole
+   series beside a three-month label. It now reads "3M · 65 of 627 sessions to 2026-09-18".
+
+**Not verified here, and stated rather than implied:** the browser check ran against a *synthetic*
+series, shaped to match the real ALAB one read off production (627 bars, averages absent for the
+first 20 / 49 / 199) because what it tests is geometry. That the route returns the right rows and
+that `stitch` aligns them was answered in SQL against production, and gets answered again against
+the deployed route after merge — the way the AVGO norm band was closed out on 2026-09-18.

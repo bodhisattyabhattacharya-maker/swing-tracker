@@ -48,7 +48,7 @@ export const COLUMN_WIDTH = 420;
 
 /** How a section renders. Each is a different component branch, not a styling variant. */
 export type SectionKind =
-  | "chart" // a price series — needs bars, which this page does not fetch yet
+  | "chart" // a price series, read per column through /api/stock-history
   | "gauges" // a bounded 0-100 scale with a norm band drawn on it
   | "rows" // label / value / verdict, one line per param
   | "bars"; // a signed magnitude against a zero line
@@ -76,7 +76,7 @@ export interface SectionSpec {
    * catalogue has no entry for. Only the price chart is like that: the grid publishes
    * `close_vs_sma50d`, a distance, and a candlestick panel needs the bars and the average itself.
    * Listing `close` here to make the section look anchored would have been worse than listing
-   * nothing, because `close` is live and the chart is not — see `sectionState`, which got this
+   * nothing, because `close` was live while the chart was not — see `sectionState`, which got this
    * wrong on the first attempt for exactly that reason.
    */
   params: string[];
@@ -113,12 +113,12 @@ export const SECTIONS: SectionSpec[] = [
   {
     key: "price",
     title: "Price",
-    sub: "Daily candles with EMA21, SMA50 and SMA200 overlays, and a D/W toggle.",
+    sub: "Candles under a quarter in view, a line beyond it. EMA21 / SMA50 / SMA200, D or W.",
     kind: "chart",
-    // No params, deliberately — see the field's comment. This panel draws a series, and the series
-    // is not in the column catalogue.
+    // No params, deliberately — see the field's comment. This panel draws a series, and a series is
+    // not in the column catalogue. It reads through /api/stock-history when the column is scrolled
+    // to, which is why it has no `why` any more: nothing is blocking it.
     params: [],
-    why: "Not built. The bars are already in the database; this panel needs a route to read one name's series.",
   },
   {
     key: "rsi",
@@ -269,20 +269,11 @@ export function sectionState(s: ResolvedSection): SectionState {
  * so there is no configuration in which it is skipped.
  */
 for (const s of RESOLVED) {
-  // A section that renders a SERIES rather than params must carry a `why` until something in this
-  // app can draw a series per stock. Nothing can today: `SectionKind` declares "chart" and no
-  // component branch handles it, so a series section without a `why` would render a heading, a
-  // subtitle and then nothing at all — a blank panel, which is the one outcome every rule in this
-  // file exists to prevent. DELETE THIS CLAUSE in the change that adds the bars route and the
-  // candlestick renderer; it is the only thing keeping that section honest in the meantime.
-  if (s.columns.length === 0) {
-    if (!s.why) {
-      throw new Error(
-        `deep-dive section ${s.key} renders a series and has no "why", but nothing in this app ` +
-          `draws a series yet. It would render an empty panel.`,
-      );
-    }
-  }
+  // The clause that used to stand here required a series section to carry a `why`, because nothing
+  // in the app could draw a series and the panel would otherwise have rendered a heading and then
+  // nothing. `StockChart` now draws one, so the clause was deleted in the change that made it
+  // false — which is the point of writing an invariant with its own expiry note rather than
+  // leaving a rule behind that quietly outlives its reason.
   const state = sectionState(s);
   if (state === "planned" && !s.why) {
     throw new Error(
@@ -353,6 +344,8 @@ export type SectionRender = "na" | "blocked" | "data";
 export function sectionRender(s: ResolvedSection, sec: Security): SectionRender {
   // Permanent before temporary. See above.
   if (s.columns.length > 0 && notApplicableWithin(s, sec).length === s.columns.length) return "na";
+  // A series section has no params to derive from, so its `why` decides — and the price panel no
+  // longer has one, which is exactly how it became live in this change without a second edit here.
   if (sectionState(s) === "planned") return "blocked";
   return "data";
 }

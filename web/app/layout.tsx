@@ -606,6 +606,54 @@ const CSS = `
      so both the component and this rule were dead. Measuring the rendered page is what found it.
      The sentence IS the content. */
 
+  /* ---- The price panel -----------------------------------------------
+     The only section that fetches. It reads its bars when the column is
+     scrolled to, so what sits here before that is a sentence, never a frame
+     with axes in it - an empty chart is a claim about the data, and the
+     claim would be false.
+
+     THE CHART IS LOCKED, like every other chart in this app, and the range
+     buttons are the control. An earlier build let it be dragged; two
+     measurements ended that. Panning moves the window without widening it,
+     so the line mark could never be reached however far you dragged - and a
+     drag inside a horizontally scrolling strip is ambiguous about whether
+     it moves the chart or the strip. See RANGES in lib/stock-history.ts. */
+  .pc { margin-top: 9px; }
+  .pc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  /* The legend takes whatever is left and wraps to its own line if the two controls need the room,
+     rather than squeezing a button to nothing at a narrower column. */
+  .pc-legend { margin-left: auto; }
+  /* Two segmented controls, same treatment: WHAT is plotted (D/W) and HOW MUCH (3M/1Y/5Y). They
+     are separate groups rather than one row of five, because they answer different questions and a
+     single row would invite reading 3M as a third timeframe. */
+  .pc-tf, .pc-range { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px;
+                      overflow: hidden; }
+  .pc-tf .seg, .pc-range .seg { padding: 1px 7px; font-family: ui-monospace, Menlo, monospace;
+                font-size: 10px; letter-spacing: .06em; border: 0;
+                border-right: 1px solid var(--rule); background: none; color: var(--ink-faint);
+                cursor: pointer; }
+  .pc-tf .seg:last-child, .pc-range .seg:last-child { border-right: 0; }
+  .pc-tf .seg.on, .pc-range .seg.on { background: var(--ink); color: var(--surface); }
+  /* The legend is three words, and each carries the colour its line is drawn in - so the overlay
+     order cannot silently disagree with the chart. The three tokens are the same ones the chart
+     reads through lib/chart-theme.ts, which is what keeps them equal in both themes. */
+  .pc-legend { display: inline-flex; gap: 9px; font-family: ui-monospace, Menlo, monospace;
+               font-size: 9px; letter-spacing: .04em; }
+  .pc-key.k0 { color: var(--accent); }
+  .pc-key.k1 { color: var(--below); }
+  .pc-key.k2 { color: var(--above); }
+  .pc-canvas { width: 100%; min-width: 0; margin-top: 5px; }
+  .pc-hold { width: 100%; }
+  /* TWO LINES, ALWAYS, whether the caption needs them or not.
+     The caption is the only thing in a column whose length changes with a click: 5Y says more than
+     3M, and the weekly view adds a clause. At one line it wrapped on the long ones, which pushed
+     that column's RSI panel 17px below every other column's - and sections lining up across names
+     is the entire premise of the strip. A reserved height costs 14px on every column once; a wrap
+     costs the comparison the layout exists for. Caught in a screenshot, not by an assertion, which
+     is why the harness now measures column heights AFTER interacting rather than only on load. */
+  .pc-note { margin-top: 5px; padding-top: 0; border-top: 0; font-size: 10.5px; max-width: none;
+             min-height: 31px; }
+
   /* ---- RSI gauges -----------------------------------------------------
      Bars on a 0-100 track, not dials. RSI is bounded by construction, so the
      track is the whole domain; the band is drawn as two dashed threshold
