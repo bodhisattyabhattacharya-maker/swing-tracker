@@ -1439,3 +1439,54 @@ the measurement deleted the work.
 **The history line is never coloured by verdict.** The line is five years of a value; a verdict is
 about today. Painting the past with today's threshold would state the norm as a fact about history,
 and norms get retuned — decision 0038 moved `rsi_weekly` from 45/65 to 40/70.
+
+## 0049 — 2026-09-19 — The Deep Dive frame ships before its charts, and every panel state is derived
+
+**Context:** the Deep Dive tab is a horizontal strip of ~420px analysis columns, one per security.
+Most of what it shows — RSI, the moving-average state, price statistics, weekly, relative strength
+— is already in the page payload the Dashboard fetches. The candlestick charts are not: 53 names at
+about 1,260 daily bars each is roughly 67,000 rows, which cannot travel in a page payload.
+
+**Decision (Bodhi, 2026-09-19): the bars arrive through a lazy per-column route, and the frame
+ships first, in its own change.** Three options were put up.
+
+| | payload | first paint | cost of a name you never scroll to |
+|---|---|---|---|
+| Lazy per-column route, frame first | unchanged | data at once, charts on demand | nothing |
+| Lazy per-column route, one change | unchanged | same | nothing |
+| Server-render a 250-bar window for all 53 | +13,000 rows | charts at once | paid in full |
+
+The third was rejected on the payload and on a second point that decided it: a D/W toggle needs a
+second fetch anyway, so the window buys one paint and still leaves the route to be written. The
+split into two changes was chosen over one larger change because the two defects that cost this
+project the most in the past week — the unreachable `na` cell state and the ingest cap — both hid
+inside changes big enough that nobody enumerated what was in them.
+
+**The route reuses `/api/cell-history`'s machinery rather than inventing its own**: the same
+`validateRequest` allowlist derived from `COLUMNS`, and the same two rules in
+`check_web_boundary.sh` that keep a service_role handler from becoming a database proxy.
+
+**Every panel state is derived from the column catalogue; nothing declares it.** A section names
+params, and whether it renders data, a not-applicable sentence or a blocked sentence follows from
+those params' own `status` and `applies`. The reason is a specific future day: when Phase 4 flips
+the twenty fundamental columns to `live`, the Fundamentals panel becomes live in the same commit,
+without anyone remembering that a second file exists. This project has now shipped the opposite
+bug — a hand-maintained second list — three times with matview refresh jobs.
+
+**Three invariants are checked at module load rather than by review**, because each has already
+happened in some form: a section naming a param the catalogue does not have (a permanently blank
+panel that reads as missing data); a blocked section whose sentence is missing, or that still
+carries one after its params went live (a stale excuse rendering over real data); and a sentence
+longer than 120 characters. The last is a layout constraint rather than a style preference — a
+panel renders once per column, so a paragraph there is a paragraph per security, which is the
+arithmetic behind Bodhi's "header only is fine" on 2026-09-18.
+
+**`na` is tested before `blocked`, one level up from where that ordering was fixed on 2026-09-18.**
+The first build put `planned` first, so an ETF's Fundamentals panel read "blocked on the financials
+ingest and the vendor add-on behind it". Every word is true about the panel and none of it is true
+about SPY: an ETF has no income statement, so the panel will not fill in after Phase 4 either. The
+two facts differ in kind — `applies` is permanent and about the pair, `status` is temporary and
+about the param — and the permanent one is the one to report.
+
+**Reversing:** the strip is one component, one pure catalogue and one CI check; deleting the three
+files returns `/deep-dive` to a placeholder. Nothing in the data plane changed.

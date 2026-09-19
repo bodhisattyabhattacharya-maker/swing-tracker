@@ -953,3 +953,43 @@ pairing with the right series gets checked on the deployed page.
 history chart and reported seven. Seven is correct — Lightweight Charts stacks a canvas per pane,
 axis and crosshair — so the assertion counted the wrong thing. Corrected to count containers, with
 a second assertion that a container holding fewer than two canvases did not build.
+
+## 2026-09-19 — The Deep Dive tab is a real strip, frame first
+**What:** `/deep-dive` is no longer a placeholder. It renders one 420px analysis column per
+security, side by side, with eight sections at identical heights on every name: price, three RSI
+gauges, moving averages, price statistics, weekly, relative strength, fundamentals, forward look.
+Five of the eight read real data today. The three that do not each say which of three different
+things is blocking them, and an ETF's two fundamentals panels say something stronger — *not
+applicable, permanent, not pending* — because an ETF has no income statement and never will.
+**How:** decision 0049. **No migration and no new read.** The page calls the same `fetchGrid` the
+Dashboard calls; Next's Data Cache is keyed on the request URL and shared across routes, so
+whichever tab is visited first populates it. New `web/lib/deep-dive.ts` is the strip's catalogue —
+pure, like `columns.ts` — and new `web/components/StockStrip.tsx` is the client component.
+**Charts are deliberately not in this change:** 53 names × ~1,260 daily bars is ~67,000 rows and
+cannot travel in a page payload, so the bars arrive next through a per-column route built on the
+same allowlist as `/api/cell-history` (Bodhi chose this sequencing over one larger change).
+**Architecture impact:** three things in `lib/deep-dive.ts` are checked at module load rather than
+by review — a section naming a param the catalogue does not have, a blocked section whose sentence
+is missing or has gone stale, and a sentence over 120 characters. The last one has a layout reason:
+a panel renders once per column, so a paragraph there is a paragraph per security. New
+`scripts/ci/check_strip_sections.sh` runs in the `web` job.
+**Verified by:** measurement before screenshots, in a real browser, at 1280 / 1440 / 1680 / 1920 in
+both themes against a fixture of real production rows. Every column exactly 420px and exactly the
+same height, so sections line up across names; no body-level horizontal scroll at any width; the
+column heading sticks when the frame is scrolled; the right scrim appears and clears. The RSI band
+geometry was read off the rendered page: daily starts at 30% of the track and weekly at 40%,
+because `rsi_weekly` is 40/70 in `config/norms.yml` while the other two are 30/70 — a hardcoded
+30 would have drawn the weekly threshold ten points from where the colouring changes. Every gauge
+marker sits within 2% of its own value. Each cell state resolves to a distinct ink in both themes,
+by `getComputedStyle`, which is the only check that can see the 2026-09-18 class-with-no-rule
+defect. The new CI check was negative-tested thirteen ways.
+
+**Four defects in my own work, all found by measuring the rendered page rather than reading it.**
+The section-state derivation marked the price chart *live* because it named `close`, a param that
+is live while the chart is not. The `na`-before-`planned` ordering bug from the cell-state model
+repeated one level up, so an ETF's Fundamentals panel read "blocked on the vendor add-on" when the
+truth is that the question will never apply to it. A reserved 200px chart box and a "live section
+with an unbuilt param" branch were both dead — neither could render, and both had CSS. And the
+first version printed a 270-character explanation and a two-line description in *every* column: the
+same arithmetic that turned a per-cell PLANNED tag into 312 of them on the Value preset. Constant
+text now lives once, in the page footnote; descriptions are hover text on the headings.
