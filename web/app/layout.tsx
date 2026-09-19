@@ -1,13 +1,17 @@
 /**
  * Root layout.
  *
- * Desktop-first (decision 0005, PROPOSAL §4 "Surfaces"): the scan is 26 columns across 36 names,
- * which is an information-density problem no responsive trick solves. The phone surface is the
- * email digest, not a squeezed version of this table. The table therefore gets its own horizontal
- * scroll container and the page body never scrolls sideways.
+ * Desktop-first (decision 0005, PROPOSAL §4 "Surfaces"): the scan is a 51-column catalogue across
+ * 53 names, which is an information-density problem no responsive trick solves. The phone surface
+ * is the email digest, not a squeezed version of this table. The table therefore gets its own
+ * horizontal scroll container and the page body never scrolls sideways; so does the Deep Dive
+ * strip, which is 53 columns of 420px and must never collapse into a vertical feed.
  *
- * Styles stay inline here rather than in a CSS module because there are two pages and one style
- * sheet. Move them out when a third page needs something different, not before.
+ * Styles stay inline here rather than in a CSS module because there is one stylesheet for three
+ * pages. THIS IS NOW THE LARGEST FILE IN web/ and the argument for splitting it gets better every
+ * change; the reason not to yet is that every colour in it is a token defined at the top, and a
+ * split that separates a token from the rules that use it costs more than it saves. Split by
+ * SURFACE (grid / strip / charts) when it happens, never by property.
  *
  * THEMING: light and dark are both defined at token level. The `:root` block holds the complete
  * light palette; the media query and the `[data-theme]` block only redefine tokens. A colour whose
@@ -642,6 +646,11 @@ const CSS = `
   .pc-key.k0 { color: var(--accent); }
   .pc-key.k1 { color: var(--below); }
   .pc-key.k2 { color: var(--above); }
+  /* An overlay this listing has too little history for. Struck rather than hidden, so the reader
+     sees that the line is absent and not that the legend forgot it. ALAB, ARM and SNDK have fewer
+     than 200 completed weeks, which is a fact about the listing and not a gap in the data. */
+  .pc-key.off { color: var(--ink-faint); text-decoration: line-through;
+                text-decoration-thickness: 1px; opacity: .75; }
   .pc-canvas { width: 100%; min-width: 0; margin-top: 5px; }
   .pc-hold { width: 100%; }
   /* TWO LINES, ALWAYS, whether the caption needs them or not.

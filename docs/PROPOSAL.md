@@ -4,18 +4,18 @@ An end-of-day dashboard that watches a fixed list of companies we already have a
 
 | | |
 |---|---|
-| **Revision** | **v2 — 13 September 2026** (first draft 17 August 2026) |
+| **Revision** | **v3 — 19 September 2026** (first draft 17 August 2026) |
 | **Horizon** | Swing / LEAPS, 6 months+ |
 | **Team** | Two builders, ~10 readers, Claude coding on each end |
 | **Repo** | Shared GitHub, public |
-| **Scope** | 26 parameters × 36 tickers + 3 index series |
+| **Scope** | A 51-parameter catalogue × 53 securities + 3 index series, on two tabs |
 | **Data** | Polygon Stocks Starter ($29/mo) + FRED + SEC XBRL |
 
 > **This document is the product surface: what the thing IS.** It is the only file the change
 > matrix lets a scope change touch, and nothing else may contradict it. It does **not** track build
 > status — `docs/FEATURES.md` does that, and `CLAUDE.md` carries the current state in a paragraph.
 >
-> **What changed in v2 is listed at the end**, under Revision history. Three things moved enough to
+> **What changed in v3 is listed at the end**, under Revision history. Three things moved enough to
 > be worth knowing before reading anything else: the price source changed vendor, v1 has **one**
 > daily clock rather than four, and there is **no user-led refresh and no login** — the dashboard is
 > open and its schedule is set by us.
@@ -156,7 +156,9 @@ What constrains scale is not the schema. Measured: a full history fetch costs ab
 
 **Two jobs, not one job at two screen sizes.** Conflating them is what makes most dashboards annoying on a phone.
 
-**The scan** — 26 columns across 36 names, looking for what's out of place — is a wide-table task. That's an information-density problem, not a layout problem, and no responsive trick solves it.
+**The scan** — a wide catalogue across 53 names, looking for what's out of place — is a wide-table task. That's an information-density problem, not a layout problem, and no responsive trick solves it. Presets cut the catalogue to a readable set; the table never collapses.
+
+**The read** — *"what is going on inside this handful of names?"* — is the second tab. One fixed-width analysis column per security, side by side, so the same section sits at the same height on every name and the eye compares horizontally. Also a density problem, also never collapsed into a vertical feed: stacking it would destroy the only thing it is for.
 
 **The nudge** — *"anything I should look at today?"* — is three lines. It doesn't need a table, and it doesn't need to be *visited*. It needs to *arrive*.
 
@@ -308,7 +310,7 @@ Nothing here involves the share price. Recomputed when a filing lands.
 |---|---|---|---|---|
 | 22 | VIX level and regime band | Daily | Yahoo | Which volatility band we're in changes what any single-name signal is worth. |
 | 23 | VIX term structure (VIX vs VIX3M) | Daily | Yahoo | Contango or backwardation — whether the market prices current stress as a blip or a regime. Confirmed free and live. |
-| 24 | Watchlist breadth | Daily | derived | Share of our own 36 names above their 200-day SMA. Free from data we already hold, and a better read on our universe than any index. |
+| 24 | Watchlist breadth | Daily | derived | Share of our own **companies** above their 200-day SMA — ETFs are excluded, because an ETF of our own names double-counts them. Free from data we already hold, and a better read on our universe than any index. |
 
 ### Searched — valuation context, usable as a filter
 
@@ -512,7 +514,7 @@ The tradeoff: between 2a and 2b, rule creation is limited to whoever is comforta
 
 **Settled since the first draft**, each with its reasoning in `docs/DECISIONS.md`:
 
-- **We do pay for data** — $29/month, and the trigger was concrete rather than aspirational: the 200-week SMA is one of the 26 parameters and could not be computed at all on two years of history. Forward P/E and PEG still come from Claude search; no feed sells us those at a price worth paying.
+- **We do pay for data** — $29/month, and the trigger was concrete rather than aspirational: the 200-week SMA is one of the parameters and could not be computed at all on two years of history. Forward P/E and PEG still come from Claude search; no feed sells us those at a price worth paying.
 - **The dashboard is open, with no login.** About ten readers on their own devices, none of whom should need a password for a page of public-market numbers.
 - **No user-led refresh.** We set the schedule.
 - **Norms are compared in the database**, so the grid, the digest and the future rule engine share one definition of "outside normal" and history stays queryable.
@@ -536,6 +538,22 @@ Still open:
 
 Git holds the full diff; this is the summary of what a reader of the previous version would find
 changed. Every entry has its reasoning in `docs/DECISIONS.md`.
+
+### v3 — 19 September 2026
+
+The interface was specified in full and built; the universe grew. Nothing about *what the product
+is* was reversed — this revision records that it got wider in two directions.
+
+| Changed | Was | Now |
+|---|---|---|
+| **Universe** | 36 equities | **53 securities** — 43 companies plus **10 ETFs**, in 9 themes. An ETF trades and oscillates like a stock, so every price parameter applies; it has no income statement, so every fundamental is *not applicable* rather than missing. It is a grid row; an index never is. |
+| **Parameter set** | 26 parameters | **A 51-column catalogue**, of which 22 read live data. The rest are designed and **say so on the page** — a `planned` marker under the column heading, dashes in the cells — rather than being absent from it. Showing the shape of the finished product while it is unfinished is a deliberate choice, not a placeholder. |
+| **Surfaces** | One scan, plus the digest | **Two tabs.** The Dashboard is the scan; **Deep Dive** is one fixed-width analysis column per security, side by side. The digest is unchanged. |
+| **Presets** | Not in v1 | Momentum / Technicals / Value / All. Changes which columns are visible and **nothing else** — not a row filter, not a different view of the data. |
+| **Charts** | None | Market history (VIX with its norm band, regime, term structure, breadth vs SPX), five years of history behind any cell, and a per-stock price panel with moving-average overlays. Drawn with Lightweight Charts, in a palette **read off the page** so a chart cannot disagree with the cell beside it. |
+| **Fundamentals source** | SEC XBRL, keyless | **The Massive Financials & Ratios add-on**, $29/month, pending four acceptance probes — restatement behaviour, `0.0` versus not-reported, diluted EPS, and whether the IFRS filers (TSM, ASML, ARM) are normalised. SEC XBRL remains the cross-check and the fallback. The definitions in §7 do not change either way; they are computed from components, never from a vendor's derived field. |
+| **Forward Look** | Six parameters, source unstated | **No vendor tier sells analyst consensus at any price worth paying.** These six arrive as *searched* values carrying their own source and as-of date, in their own tinted block so they never read as measurements. This is permanent, not a queue position. |
+| **`rs_vs_sox`** | Dropped in v2 for want of a source | Still dropped as an index, but **SMH is now a watchlist ETF**, so a semiconductor comparison is available as an ordinary row. If it ever becomes a parameter it is `rs_vs_smh`, named for what it measures. |
 
 ### v2 — 13 September 2026
 

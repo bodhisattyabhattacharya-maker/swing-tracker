@@ -1552,3 +1552,40 @@ worse than one that is a week short and says so.
 blocked section — and `lib/deep-dive.ts` will then demand its `why` back, because the invariant
 that required one was written with an expiry note and removed in this change rather than left to
 outlive its reason.
+
+## 0051 — 2026-09-19 — The docs that describe the present get measured; the ones that record the past do not get rewritten
+
+**Context:** three phases shipped in four days. The orientation docs described the product as it
+was on 2026-09-15 — `CLAUDE.md` listed relative strength, the market block and the whole interface
+as not built, and a new session reading it would have started from a false picture of what exists.
+
+**Two kinds of document, and only one of them is edited.**
+
+`CLAUDE.md`, `README.md`, `CODEMAP.md`, `GLOSSARY.md`, `ONBOARDING.md` and `PROPOSAL.md` describe
+**the present**. When the present changes they are wrong, and they get corrected.
+
+`DECISIONS.md`, `FEATURES.md`, `INCIDENTS.md` and the dated rows of `CONSTRAINTS.md` record **the
+past**. Every one of them says "36 names" somewhere and every one of them is right: that was the
+universe on the day it was written. **These are not updated.** A log that is edited to agree with
+today is no longer evidence of anything, and this project leans on those three files precisely
+because they were written at the time — the ingest-cap defect was diagnosed from an old FEATURES
+entry stating a number that had since become false.
+
+**Every figure was measured before it was written**, from the database and the compiled catalogue.
+That pass immediately earned itself: the Value preset is **26** columns and not 27, a figure that
+had been repeated in several PR bodies. The two sector ranks are fundamentals-sourced and sit in
+the Relative group, so they are not in that preset — 20 + 6 = 26, and 22 columns in total wait on
+the add-on. It is the third time in this project a number reasoned from a definition turned out to
+be wrong, after `breadth_tracked` and the per-run cap, which is why "measure it" is now mistake
+zero in `ONBOARDING.md`.
+
+**`PROPOSAL.md` goes to v3 rather than being quietly corrected.** Decision 0024 makes it versioned
+and not frozen: a feature shipping is a FEATURES entry, a change in what the product *is* earns a
+revision. 36 → 53 securities, 26 → 51 catalogue columns, a second tab and a charting layer are a
+change in what the product is.
+
+**One thing this does not fix.** The status summary in `CLAUDE.md` will rot again — it is a
+summary, and summaries do. It says so in its own second line and defers to `FEATURES.md`, which is
+append-only and therefore cannot. The alternative, generating it from the database, was considered
+and rejected: the useful half of that section is *why* something is blocked, and no query knows
+that.

@@ -126,6 +126,9 @@ export default function StockChart({ symbol }: { symbol: string }) {
   // than keeping a key that means nothing on the other side ("3M" does not exist in weeks).
   const ranges = RANGES[tf];
   const range: RangeSpec = ranges.find((r) => r.key === rangeKey) ?? ranges[0];
+  // Null until the read lands. Until then every key is drawn plain rather than struck: "we do not
+  // know yet" must not look like "this one is missing".
+  const series = load.s === "ready" ? load.series : null;
 
   const controls = (
     <div className="pc-head">
@@ -158,10 +161,26 @@ export default function StockChart({ symbol }: { symbol: string }) {
           </button>
         ))}
       </div>
+      {/* A KEY IS DIMMED WHEN ITS LINE IS NOT THERE, rather than dropped or left claiming a line.
+          Found by checking the deployed route against the database on 2026-09-19: ALAB has 130
+          completed weeks, a 200-week average needs 200, so `sma200w` comes back as an empty array
+          and nothing is drawn — while the legend went on listing SMA200W. ARM and SNDK are the
+          same. Dropping the key would be worse than leaving it: three names would have a
+          two-entry legend and no reason given. Struck through, with the reason on hover, says the
+          line is missing AND why. */}
       <span className="pc-legend">
-        {OVERLAYS[tf].map((o, i) => (
-          <span key={o.key} className={`pc-key k${i}`}>{o.label}</span>
-        ))}
+        {OVERLAYS[tf].map((o, i) => {
+          const drawn = !series || (series.overlays[o.key]?.length ?? 0) > 0;
+          return (
+            <span
+              key={o.key}
+              className={drawn ? `pc-key k${i}` : `pc-key k${i} off`}
+              title={drawn ? undefined : `${symbol} has too little history for ${o.label}, so it is not drawn`}
+            >
+              {o.label}
+            </span>
+          );
+        })}
       </span>
     </div>
   );

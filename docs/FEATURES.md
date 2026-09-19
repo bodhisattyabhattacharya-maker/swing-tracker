@@ -1043,3 +1043,39 @@ series, shaped to match the real ALAB one read off production (627 bars, average
 first 20 / 49 / 199) because what it tests is geometry. That the route returns the right rows and
 that `stitch` aligns them was answered in SQL against production, and gets answered again against
 the deployed route after merge — the way the AVGO norm band was closed out on 2026-09-18.
+
+## 2026-09-19 — Documentation brought back to what is true, and one legend defect
+**What:** the orientation docs described a product that no longer exists. `CLAUDE.md` still opened
+with "26 parameters across ~40 tickers" and its Current state listed relative strength, the market
+block, the interface and hourly as **not built** — all but hourly had shipped. `README.md` said the
+same. `GLOSSARY.md` defined a parameter as "one of the 26" and carried **two duplicated terms**
+(*Searched column*, *Not applicable*). `CODEMAP.md` drew two matviews where there are four.
+`PROPOSAL.md` still scoped the product at 26 × 36.
+
+**Also one real defect, found by the verification owed from #82.** Checking the deployed
+`/api/stock-history` against the database showed ALAB's weekly `sma200w` coming back as an empty
+array — correct, it has 130 completed weeks and a 200-week average needs 200 — while the chart's
+legend went on listing **SMA200W** beside a line that was not drawn. ARM and SNDK are the same.
+The key is now struck through with the reason on hover, rather than dropped: three names with a
+two-entry legend and no explanation would be worse than the bug.
+
+**And a number that was wrong in several PR bodies.** The Value preset is **26** columns, not 27:
+20 fundamentals plus 6 forward. The two sector ranks are fundamentals-sourced but live in the
+Relative group, outside that preset. Counted from the catalogue rather than carried forward again.
+
+**How:** decision 0051. `PROPOSAL.md` takes a **v3** revision rather than a silent edit, because
+going 36 → 53 securities and 26 → 51 catalogue columns with a second tab is a scope change and
+decision 0024 says a scope change earns a revision entry. `ONBOARDING.md` gains a step 2b pointing
+at the current state *before* the spec, and two new comprehension questions.
+
+**What was deliberately NOT touched:** `DECISIONS.md`, `FEATURES.md`, `INCIDENTS.md` and the dated
+row in `CONSTRAINTS.md` all say "36 names" and all of them are **right** — they are dated records
+of what was true when written. Rewriting history to match the present is how a log stops being
+evidence.
+
+**Verified by:** every number in the rewritten sections measured first — 53 securities / 10 ETFs /
+9 themes / 3 indices and 15 norms from the database, 51 columns / 22 live / 28 with an `applies`
+rule and the preset sizes from the compiled catalogue, 63,579 equity bars over five years and
+8,063 index rows over eleven from `daily_bars`, four matviews and four cron jobs from the catalog
+tables. The Value-preset count is what that pass caught. Cross-checked afterwards that no two docs
+state a different figure for the same thing.
