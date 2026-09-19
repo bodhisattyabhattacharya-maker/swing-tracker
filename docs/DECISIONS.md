@@ -1490,3 +1490,65 @@ about the param — and the permanent one is the one to report.
 
 **Reversing:** the strip is one component, one pure catalogue and one CI check; deleting the three
 files returns `/deep-dive` to a placeholder. Nothing in the data plane changed.
+
+## 0050 — 2026-09-19 — Range buttons, not panning, and the join belongs in the handler
+
+**Context:** decision 0049 split the Deep Dive in two and deferred the price chart to a lazy
+per-column route. This is that route and that chart.
+
+### The join goes in the handler, and the measurement is why
+
+Measured on production for NVDA over 260 bars:
+
+```
+daily_bars LEFT JOIN daily_features in SQL   9.745 ms   797 buffers
+daily_bars alone                             1.186 ms    17 buffers
+daily_features alone                         0.218 ms    16 buffers
+```
+
+The join plan is a nested loop of 260 lookups into `daily_features_pk`, and 780 of those 797
+buffers are the loop. Two flat index scans and a hash in JavaScript are about seven times faster on
+a twenty-fourth of the buffers. **The intuition — let the database do the join — is the one that
+loses here**, and it loses for the same reason decision 0048's planned view was unnecessary: both
+sides are already keyed exactly the way the request filters them, so neither read needs help.
+
+### Candles under a quarter, a line beyond it (Bodhi, 2026-09-19)
+
+"Candles in 3m or less views. We can move to line beyond 3 months views." The rule is expressed in
+**pixels per bar, not in a bar count**: candles while each one gets at least 5px, which at the
+strip's 390px plot lands at 78 bars — a quarter plus three weeks. A fixed count would be wrong at
+any other column width, and "can a candle be seen" is a question about pixels.
+
+### Buttons rather than panning, and this was wrong first
+
+The first build opened on 65 bars and let you drag back through five years. Two measurements ended
+it:
+
+- **Panning moves the window; it never widens it.** With zoom off — and zoom had to be off, because
+  a wheel inside a horizontally scrolling strip is a fight over the gesture — nothing could ever put
+  more than 65 bars on screen, so the line mark could not be reached at all. This is the unreachable
+  state of 2026-09-18 for the third time, now in arithmetic rather than in CSS, and the CI check
+  missed it because it asked whether the rule *returns* "line" for a large input instead of whether
+  any control can produce that input. **A reachability check has to walk the controls a reader
+  actually has**; that is now what `check_strip_sections.sh` does.
+- **A drag inside this strip is ambiguous.** The columns scroll horizontally and so did the chart.
+  A press and a sideways move had two plausible meanings.
+
+Three range buttons make the view a choice with a visible current state, which is also what "views"
+meant in the request. One request serves all three ranges: re-reading on a button press would put a
+round trip behind a control that must feel instant.
+
+### Completed weeks only, and it is not tidiness
+
+`weekly_bars.is_complete` is defined as "this is not the newest week for this symbol", so it is
+false for the week in progress even when the calendar week has ended — the view cannot know whether
+another bar is coming. Filtering it therefore always drops the newest week. That is the right trade
+because `weekly_features` computes its averages on completed weeks: an unfiltered chart would put
+the candles one bar ahead of their own overlays, and one bar ahead of the Weekly panel sitting
+directly beneath them in the same column. A chart that disagrees with the numbers beside it is
+worse than one that is a week short and says so.
+
+**Reversing:** two new files and one CI section. Deleting them returns the price panel to a
+blocked section — and `lib/deep-dive.ts` will then demand its `why` back, because the invariant
+that required one was written with an expiry note and removed in this change rather than left to
+outlive its reason.

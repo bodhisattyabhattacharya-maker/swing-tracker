@@ -28,6 +28,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import StockChart from "./StockChart";
 import {
   COLOURED,
   type CellLike,
@@ -291,6 +292,10 @@ function Section(
         ? <p className="dd-why">{spec.why}</p>
         : (
           <>
+            {/* The price panel. Its own component because it is the only section that fetches:
+                the bars are far too many to travel in the page payload, so they arrive per column
+                when you scroll to one. Decision 0049. */}
+            {spec.kind === "chart" ? <StockChart symbol={sec.symbol} /> : null}
             {spec.kind === "gauges"
               ? (
                 <Gauges

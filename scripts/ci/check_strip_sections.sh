@@ -26,11 +26,11 @@
 #      cannot disagree about what renders, and it is what the heading marker keys off - the first
 #      version keyed the marker off `SectionState` and printed "planned" above a body reading
 #      "Permanent, not pending" on every ETF.
-#   4. Every cell state the strip can actually PRODUCE - computed by walking only the sections that
+#   3. Every cell state the strip can actually PRODUCE - computed by walking only the sections that
 #      `sectionRender` says show DATA, against an exhaustive matrix of security and cell shapes, not
 #      from a hand-written list - has a strip-scoped rule that carries `.st-<state>` AND SETS
 #      `color`.
-#   5. AND THE REVERSE: no strip-scoped rule exists for a state the strip cannot produce. This
+#   4. AND THE REVERSE: no strip-scoped rule exists for a state the strip cannot produce. This
 #      direction was added when the first version of this check demanded a rule for `.st-na`, which
 #      no strip element can carry - a section whose every param is inapplicable collapses to one
 #      sentence, so `n·a` never reaches a cell there. A rule for an impossible state is the
@@ -45,8 +45,19 @@
 #      is now "something sets its colour", which is how every state in the strip is actually
 #      distinguished. A future state that is legitimately styled without colour will fail here and
 #      should be given its own line, loudly, rather than silently weakening this one.
-#   6. Loading `lib/deep-dive.ts` at all, which exercises its two module-load invariants: an unknown
-#      param name, and a `why` that is missing on a planned section or stale on a live one.
+#   5. Loading `lib/deep-dive.ts` and `lib/stock-history.ts` at all, which exercises the load-time
+#      invariants: a section naming an unknown param, a `why` that is missing on a planned section
+#      or stale on a live one, and a `why` over the length cap.
+#   6. BOTH MARKS OF THE PRICE PANEL ARE REACHABLE. The chart draws candles while each candle has
+#      room to be one and a line once it does not (Bodhi, 2026-09-19). That is a binary with two
+#      code paths and two chart series, and a threshold wrong in either direction kills one of
+#      them - candles that never appear at the opening view, or a line that never appears however
+#      far you pan out. Same unreachable-state failure as the `na` cell state, in arithmetic rather
+#      than in CSS, so it is checked the same way: a witness for each. The witness must come from
+#      WALKING THE RANGE BUTTONS, because the first version of this check asked the rule for a large
+#      bar count, got "line", and reported fine while the interface - which panned rather than
+#      zoomed - could never put that many bars on screen. A control the reader has, or it does not
+#      count.
 #
 # WHAT IT DOES NOT CHECK: whether a state occurs in PRODUCTION data, and whether it is the RIGHT
 # state. Those are different questions and this is not the check for them.
@@ -62,7 +73,7 @@ web="$repo/web"
 out="$(mktemp -d)"
 trap 'rm -rf "$out"' EXIT
 
-for f in lib/deep-dive.ts lib/columns.ts app/layout.tsx; do
+for f in lib/deep-dive.ts lib/stock-history.ts lib/columns.ts app/layout.tsx; do
   if [ ! -f "$web/$f" ]; then
     echo "FAILED: web/$f not found - this check is looking in the wrong place"
     exit 1
@@ -71,9 +82,9 @@ done
 
 # Plain CommonJS so node can require it with no bundler. `--skipLibCheck` because we are exercising
 # this module's own shape, not the ambient DOM/Next types; `npm run build` is the real type gate.
-if ! (cd "$web" && npx --no-install tsc lib/deep-dive.ts \
+if ! (cd "$web" && npx --no-install tsc lib/deep-dive.ts lib/stock-history.ts \
         --outDir "$out" --module commonjs --target es2020 --skipLibCheck >"$out/tsc.log" 2>&1); then
-  echo "FAILED: could not compile web/lib/deep-dive.ts"
+  echo "FAILED: could not compile web/lib/deep-dive.ts or web/lib/stock-history.ts"
   cat "$out/tsc.log"
   exit 1
 fi
@@ -314,6 +325,60 @@ for (const [st, sel] of styled) {
     console.log(`  FAILED    dead    ${st.padEnd(8)} styled by  ${sel}  but no section that shows data can produce it`);
     console.log(`            Either make it reachable or delete the rule. A rule for an impossible state is a lie`);
     console.log(`            the stylesheet tells about the page, and it is how the 2026-09-18 defect happened backwards.`);
+    bad++;
+  }
+}
+
+// -------------------------------------------------------------------------
+// 6. The price panel's two marks.
+// -------------------------------------------------------------------------
+let sh;
+try {
+  sh = require(path.join(out, "stock-history.js"));
+} catch (e) {
+  console.log(`  FAILED    lib/stock-history.ts refused to load: ${e.message}`);
+  process.exit(1);
+}
+const { markFor, RANGES, barsInRange, MAX_BARS, TIMEFRAMES, candleLimit, MIN_CANDLE_PX } = sh;
+const { COLUMN_WIDTH } = mod;
+
+// The plot is the column less its horizontal padding (14px each side in app/layout.tsx). Checked
+// across a range of widths as well, so the rule is not merely true at one width by luck.
+//
+// AND IT IS CHECKED THROUGH THE RANGE BUTTONS, not by feeding the rule a large number. The first
+// version of this section asked whether markFor(MAX_BARS) returns "line" - it does, and it proved
+// nothing, because with panning the interface could never put that many bars in view. The line
+// series was unreachable on screen while this check reported it fine. A reachability check has to
+// walk the controls a person actually has.
+const PLOT = COLUMN_WIDTH - 28;
+for (const tf of TIMEFRAMES) {
+  const marks = new Map();
+  for (const r of RANGES[tf]) {
+    const shown = barsInRange(r, MAX_BARS[tf]);
+    const m = markFor(shown, PLOT);
+    if (!marks.has(m)) marks.set(m, `${r.label} (${shown} bars, ${(PLOT / shown).toFixed(1)}px each)`);
+  }
+  for (const want of ["candles", "line"]) {
+    if (marks.has(want)) {
+      console.log(`  ok        mark    ${tf}  ${want.padEnd(7)} via ${marks.get(want)}`);
+    } else {
+      console.log(`  FAILED    mark    ${tf}  no range button produces ${want}; that mark is unreachable on screen`);
+      console.log(`            Ranges: ${RANGES[tf].map((r) => r.label).join(" ")} at ${PLOT}px, MIN_CANDLE_PX ${MIN_CANDLE_PX}, switch at ${candleLimit(PLOT)} bars.`);
+      bad++;
+    }
+  }
+  // The default range must be the readable one: a panel that opens as a line has thrown away the
+  // candles it went to the trouble of fetching.
+  const first = RANGES[tf][0];
+  if (markFor(barsInRange(first, MAX_BARS[tf]), PLOT) !== "candles") {
+    console.log(`  FAILED    mark    ${tf}  the default range ${first.label} does not open as candles`);
+    bad++;
+  }
+}
+// And it must hold across plausible column widths rather than at 420 by coincidence.
+for (const w of [300, 392, 600, 900, 1200]) {
+  if (markFor(20, w) !== "candles" || markFor(5000, w) !== "line") {
+    console.log(`  FAILED    mark    at ${w}px one of the two marks is unreachable`);
     bad++;
   }
 }

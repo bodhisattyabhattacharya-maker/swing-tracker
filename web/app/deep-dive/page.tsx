@@ -216,15 +216,20 @@ export default async function DeepDive() {
           2026-09-18: "header only is fine"). So the panels carry a statement and this note carries
           the reasoning. */}
       <p className="note">
-        Three of the eight sections are not built, and they are blocked by three different things.
-        The <b>price chart</b> waits on a route to read one name&rsquo;s bars — <em>the bars
-        themselves are already in the database</em>, in <code>daily_bars</code> and{" "}
-        <code>weekly_bars</code>, so this is the shortest of the three. <b>Fundamentals</b> waits on
-        the financials ingest, and that waits on the vendor add-on and its four acceptance probes:
-        nobody has those numbers here yet, for any name. <b>Forward Look</b> has no source at any
-        vendor tier, so it will arrive as searched values carrying their own source and as-of date
-        rather than as measurements — that is permanent, not a queue position. None of the three is
-        a loading state, and a panel that is blank says which one it is.
+        <b>The price panel reads its bars when you scroll to it</b>, not when the page loads: 53
+        names at about 1,260 daily bars each is far more than a page payload can carry, so each
+        column asks for its own series and a column you never reach costs nothing. It opens on a
+        quarter, draws candles while each one has room to be a candle, becomes a line once they do
+        not, and can be dragged back through everything stored. The weekly view shows{" "}
+        <em>completed weeks only</em> — the week in progress is excluded, because the averages
+        drawn over it are computed on completed weeks and a candle ahead of its own overlays is
+        worse than a chart that is a week short.
+        {" "}Two of the eight sections are still not built, for two different reasons.{" "}
+        <b>Fundamentals</b> waits on the financials ingest, and that waits on the vendor add-on and
+        its four acceptance probes: nobody has those numbers here yet, for any name. <b>Forward
+        Look</b> has no source at any vendor tier, so it will arrive as searched values carrying
+        their own source and as-of date rather than as measurements — that is permanent, not a
+        queue position. Neither is a loading state, and a panel that is blank says which it is.
         {unbuilt.length > 0
           ? (
             <>
