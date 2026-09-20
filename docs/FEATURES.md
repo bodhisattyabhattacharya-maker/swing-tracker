@@ -1223,3 +1223,47 @@ false of the file. Now greedy, with an assertion naming the stray directly.
 
 **Also corrected:** the VIX chart's caption still said "Shaded band is the norm we set", which
 stopped being true the moment three bands were shaded.
+
+## 2026-09-20 — The Deep Dive picker: choose names, pin them, and link the view
+
+**What:** the strip opens on the **bellwethers** rather than all 53 names — 22,260px of horizontal
+scroll was never a starting position. A **Choose names** panel lists the whole watchlist grouped
+by theme; each column carries **pin** and **remove** in its header, where the decision is actually
+made rather than back in a list of 53.
+
+**The view is the URL.** `?s=AVGO,NVDA&pin=AVGO`. It is shareable, it survives a reload, and it
+keeps `/deep-dive` **statically prerendered** — reading the query through the framework's
+`searchParams` would have marked the route dynamic and charged every visitor a server render.
+Written back with `replaceState`, so building a selection does not fill the back button.
+
+**Your order is the column order.** Pinned names first, then the order you picked them in. The
+theme rules between blocks are drawn only in the default view: in a hand-ordered strip they would
+imply a grouping that is not there. `stripOrder`'s rule against ordering by a parameter still
+holds — that forbids the *product* asserting a ranking, not the reader arranging a workspace.
+
+**How:** decision 0055. `lib/selection.ts` is a new pure module — parse, serialise, default,
+resolve, and the pick/drop/pin verbs — with **no runtime imports**, so the check exercises the
+real code rather than a transpiled copy.
+
+**Verified by:** `scripts/ci/check_selection.sh`, new and negative-tested seven ways, plus the
+picker driven in a real browser: add a name and the strip grows by one and the URL follows; untick
+one already shown and it goes; pin and the column moves to the left with `pin=` in the URL; unpin
+and it **returns to its place rather than disappearing**; remove takes exactly one out; the
+resulting link reproduces the strip exactly; `?s=NVDA,AVGO,AAPL` renders in that order and draws
+no theme rules; a link naming an untracked symbol shows the rest and **says what it dropped**; a
+link naming only untracked symbols falls back to the default instead of rendering blank; reset
+clears the query string. All seven web checks pass, and `/deep-dive` is still `○` in the build
+output.
+
+**Two defects found.**
+
+**`bellwetherOf` was hiding half the bellwethers.** Shipped in Stage B returning only the first in
+a theme, on a comment asserting a second "would be a config error". It is not: ai-silicon names
+both AVGO and NVDA and mega-cap-tech both AAPL and MSFT — 9 bellwethers across 7 themes. The
+Dashboard band had been printing "AVGO bellwether" over a theme where NVDA is equally one, and the
+comment is what stopped anyone counting. It names all of them now.
+
+**A vacuous assertion in the new check.** The bound test compared the parsed length against
+`MAX_PICKED` itself, so raising the constant to 100,000 satisfied it — caught by a negative test
+that passed when it should have failed. It asserts an absolute ceiling now, and the lesson
+generalises: an assertion that reads the same constant the code reads is not a test of anything.

@@ -136,6 +136,8 @@ five years of history (0048), and the four market-history charts (0046, 0047). T
 them live, with a price panel that reads its own bars on scroll and draws candles or a line
 depending on how many fit (0049, 0050). The deployment check at `/status`.
 
+**The Deep Dive** opens on the bellwethers, not all 53 names, and the picked set lives in the URL so a view is shareable and the page stays statically prerendered (0055). Pinned first, then your own order; theme rules are drawn only in the default view.
+
 **The market block** carries the five-band VIX regime scale (0054). Three kinds of horizontal say
 three different things: a dashed line with an axis label is a **norm**, a change of tint is a
 **label** (50 and 80 are display-only and colour no cell), a solid ink line is a **definition**
@@ -170,7 +172,7 @@ kinds are reachable, since a kind whose every column is `planned` cannot appear 
 written; `check_regime_scale.sh` (0054) requires the five VIX bands to tile the number line with
 **exactly one** band claiming every edge — both `calm` and `normal` claimed 16 until it asked —
 and every band to have a colour token in all three theme blocks, a CSS class and an entry in the
-strip's colour map. **Six web checks.**
+strip's colour map; `check_selection.sh` (0055) treats the Deep Dive URL as the untrusted input it is — shape-checked, bounded, and **no query string can produce an empty strip**, because a blank page is indistinguishable from a broken deploy. **Seven web checks.**
 
 ### Not built
 

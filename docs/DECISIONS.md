@@ -1764,3 +1764,64 @@ template literal early. Measured: with one stray inserted, the check went from 5
 and reported 31 "token not defined in :root" failures, all true of the fragment and false of the
 stylesheet, pointing nowhere near the cause. Now greedy, with an assertion that names the stray
 directly. (Written after doing it twice in one afternoon.)
+
+## 0055 — 2026-09-20 — The Deep Dive picker: the URL is the state, and bellwethers are the default
+
+**Context:** 53 names at 420px is **22,260px of horizontal scroll**. That is expected — the strip
+is a comparison surface and its columns are deliberately never allowed to reflow — but it is not a
+starting position. Stage D adds a picker. Three decisions settled it (Bodhi, 2026-09-20).
+
+**The selection lives in the URL, read client-side.** `?s=AVGO,NVDA&pin=AVGO`, parsed from
+`window.location` after mount and written back with `replaceState`. The alternative reading — the
+framework's `searchParams` — would mark `/deep-dive` **dynamic**, and every visitor would pay for
+a server render to move some columns around; the page stays statically prerendered on its
+15-minute revalidate. `localStorage` was rejected because a view you cannot link to is not a view
+you can send yourself, and this is a tool used across two machines. The cost is one reflow when a
+link actually carries a selection, which is the cheapest of the three.
+
+`replaceState`, not `pushState`: picking a name is adjusting a view, not navigating. Twelve clicks
+building a selection should leave the back button pointing where the reader came from.
+
+**The default is every bellwether.** Bellwether is declared in `config/watchlist.yml`, so it is a
+config fact and not a computed judgement — the same claim the ◆ on the Dashboard already makes.
+Hard constraint 1 rules out the product ordering names by a parameter; it does not rule out the
+product reading its own config.
+
+Note "**every** bellwether", not one per theme. That was the assumption in the question, in the
+first draft of the module, and in the check's own header — and it is wrong in two of seven themes:
+ai-silicon names both AVGO and NVDA, mega-cap-tech both AAPL and MSFT. 9 bellwethers, 7 themes.
+Taking one per theme would mean this module choosing between two names the config treats as
+equals, which is exactly the judgement it must not make.
+
+**Your order wins; theme grouping is the default's ordering only.** `stripOrder`'s comment argued
+that theme grouping is "the only ordering that carries no verdict", and that is right about what
+the PRODUCT may assert — a strip sorted by RSI would be a recommendation with extra steps. It is
+not right about the reader. An order someone dragged into place asserts nothing about the
+securities; it is a workspace, not a claim. So pinned first, then picked order, and the theme
+rules between blocks are drawn **only in the default view** — in a hand-ordered strip they would
+imply a grouping that is not there.
+
+**It is untrusted input, and the failure mode is not a crash.** Every other piece of state in this
+app arrives from the database through a typed view. This one is a string a person can edit or
+paste from a message sent before the watchlist changed. The rules, all enforced by
+`scripts/ci/check_selection.sh`: symbols are shape-checked before any lookup, the list is bounded
+at 60, and **no input can produce an empty strip** — a blank page is indistinguishable from a
+broken deploy, so an unrecognised link falls back to the default and the page says what it
+dropped rather than quietly showing four columns when the link named five.
+
+**Two things this found.**
+
+`bellwetherOf`, shipped in Stage B, returned only the first bellwether in a theme, on a comment
+asserting that a second "would be a config error". It is not an error, it is the config, and the
+Dashboard band had been printing "AVGO bellwether" over a theme where NVDA is equally one. The
+comment is what stopped anyone looking.
+
+And the bound assertion in the new check was **vacuous**: it compared the parsed length against
+`MAX_PICKED` itself, so raising the constant to 100,000 satisfied it. A negative test caught it by
+passing when it should have failed. It asserts an absolute ceiling now.
+
+**Also split:** `lib/selection.ts` is a new pure module. `deep-dive.ts` answers "what is in a
+column"; this answers "which columns, in what order", and they have changed for different reasons
+in three of the last four stages. It also has **no runtime imports at all**, which is what lets
+the check load the real code rather than a transpiled copy — `deep-dive.ts` imports `./columns`
+extensionless, which a bundler resolves and a plain `node` does not.
