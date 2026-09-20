@@ -61,6 +61,18 @@ export interface ChartTheme {
    */
   calm: string;
   stress: string;
+  /** The stressed tint, for a fill rather than a mark. Its mark counterpart is `stress`. */
+  stressBg: string;
+  /**
+   * The five-step regime ramp, low to high. Its ends are the same colours as `calm` and `stress`
+   * above — one vocabulary, not two — and the strip needs all five as literals because
+   * Lightweight Charts colours a histogram point by point and cannot read a custom property.
+   */
+  regCalm: string;
+  regNormal: string;
+  regHigh: string;
+  regStress: string;
+  regExtreme: string;
   /** True when the resolved palette is the dark one. Used for nothing but sanity assertions. */
   dark: boolean;
 }
@@ -91,6 +103,12 @@ const TOKENS: Record<keyof Omit<ChartTheme, "dark">, string> = {
   ma3: "--ma3",
   calm: "--calm",
   stress: "--stress",
+  stressBg: "--stress-bg",
+  regCalm: "--reg-calm",
+  regNormal: "--reg-normal",
+  regHigh: "--reg-high",
+  regStress: "--reg-stress",
+  regExtreme: "--reg-extreme",
 };
 
 /**
@@ -120,6 +138,12 @@ const FALLBACK: ChartTheme = {
   ma3: "#7b5d8f",
   calm: "#3a6d8c",
   stress: "#9d4c1b",
+  stressBg: "#f9ebdd",
+  regCalm: "#3a6d8c",
+  regNormal: "#9a8f7e",
+  regHigh: "#c0762c",
+  regStress: "#9d4c1b",
+  regExtreme: "#6b2411",
   dark: false,
 };
 

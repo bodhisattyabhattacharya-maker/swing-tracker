@@ -76,6 +76,24 @@ const CSS = `
     --calm-bg:    #e6eef3;
     --stress:     #9d4c1b;
     --stress-bg:  #f9ebdd;
+
+    /* THE FIVE-STEP REGIME RAMP, for the VIX strip and the bands behind the VIX line.
+       Anchored at both ends on the intensity pair above: --reg-calm IS --calm and
+       --reg-stress IS --stress, so the strip, the VIX tile and the bands all say "calm" and
+       "stressed" in one vocabulary rather than three that happen to look similar. The three steps
+       between and beyond are interpolations of that same slate-to-rust path.
+       NOT the verdict pair: red and green mean "outside a norm we set", and a calm tape is not a
+       verdict (decision 0052, and the note above MARKET_TILES). */
+    /* The fill a regime element paints with. Overridden per band by the .r-* classes; the default
+       here is not decoration but a floor - a swatch that somehow reaches the page without a band
+       class renders grey rather than invisible, which is a visible bug instead of a silent one.
+       It resolves through --ink-faint, so it follows the theme without a second definition. */
+    --band-ink:    var(--ink-faint);
+    --reg-calm:    #3a6d8c;
+    --reg-normal:  #9a8f7e;
+    --reg-high:    #c0762c;
+    --reg-stress:  #9d4c1b;
+    --reg-extreme: #6b2411;
     /* Planned is lavender-neutral on purpose: adjacent to nothing else on the page, so the marker
        can never be misread as a verdict or as a warning. It is used in the column HEADING only -
        see .tag near the cell states for why the per-cell fill was dropped. */
@@ -151,6 +169,12 @@ const CSS = `
       --calm-bg:   #172b34;
       --stress:    #e0a05c;
       --stress-bg: #372213;
+
+      --reg-calm:    #78b4d4;
+      --reg-normal:  #a89b86;
+      --reg-high:    #d79a52;
+      --reg-stress:  #e0a05c;
+      --reg-extreme: #c9714a;
       --plan:      #a99cd0;
       --ma1:       #d6a55e;
       --ma2:       #78b4d4;
@@ -189,6 +213,12 @@ const CSS = `
     --calm-bg:   #172b34;
     --stress:    #e0a05c;
     --stress-bg: #372213;
+
+    --reg-calm:    #78b4d4;
+    --reg-normal:  #a89b86;
+    --reg-high:    #d79a52;
+    --reg-stress:  #e0a05c;
+    --reg-extreme: #c9714a;
     --plan:      #a99cd0;
     --ma1:       #d6a55e;
     --ma2:       #78b4d4;
@@ -374,7 +404,61 @@ const CSS = `
   /* The canvas box. min-width:0 on the figure and here is what stops a canvas from refusing to
      shrink inside a grid column - without it the panel widens the page instead of the chart
      narrowing, which is the one thing this layout may not do. */
-  .mh-canvas { width: 100%; min-width: 0; }
+  /* The band overlay sits INSIDE this box, behind the chart, so the box has to be a positioning
+     context. The chart's own background is transparent, which is what lets the tints show. */
+  .mh-canvas { width: 100%; min-width: 0; position: relative; }
+  .mh-plot { position: relative; z-index: 1; width: 100%; height: 100%; }
+  .mh-bands { position: absolute; left: 0; top: 0; bottom: 0; z-index: 0; pointer-events: none; }
+  /* THE TINT IS A PSEUDO-ELEMENT, NOT AN OPACITY ON THE BAND, and the difference is not stylistic:
+     the opacity property applies to the whole subtree and cannot be undone by a child, so a band
+     at .085 with
+     a label inside it has a label at .085 - invisible. The fill gets its own layer; the label
+     stays opaque. */
+  .mh-band { position: absolute; left: 0; right: 0; }
+  .mh-band::before { content: ""; position: absolute; inset: 0; background: var(--band-ink);
+                     opacity: .085; }
+  /* The label is ink, not the band's hue. Three of the five ramp colours are pale enough that a
+     9px uppercase word in them would fail the contrast floor, and the hue is already carried by
+     the fill behind it and the swatch in the legend - it does not need saying a third time. */
+  .mh-band-l { position: absolute; left: 4px; top: 1px; font-family: var(--sans-cond);
+               font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+               color: var(--ink-faint); }
+
+  /* THE REGIME RAMP, one class per band, for the legend swatches and the VIX band tints.
+     CARRIED ON A CUSTOM PROPERTY, NOT ON the color property, and that is a correctness point
+     style one. These five are FILLS: a 9x9px swatch and a tint at 8.5% behind a chart. None of
+     them is ever ink. Declaring them as color told check_contrast.sh they were text and it
+     correctly failed three of them against the 4.5:1 floor for text - a floor that is simply the
+     wrong question for a fill. Weakening the floor to make them pass would have weakened it for
+     every real piece of text on the page; saying what they actually are costs nothing and leaves
+     the check as strict as it was. */
+  .r-calm    { --band-ink: var(--reg-calm); }
+  .r-normal  { --band-ink: var(--reg-normal); }
+  .r-high    { --band-ink: var(--reg-high); }
+  .r-stress  { --band-ink: var(--reg-stress); }
+  .r-extreme { --band-ink: var(--reg-extreme); }
+  .r-unknown { --band-ink: var(--ink-faint); }
+
+  /* Eight readings of the window. A definition list, because that is what it is. */
+  .mh-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 1px; background: var(--rule-soft); border: 1px solid var(--rule-soft);
+              margin: 12px 0 0; }
+  .mh-stat { background: var(--surface); padding: 7px 10px; min-width: 0; }
+  .mh-stat dt { font-family: var(--sans-cond); font-size: 9.5px; letter-spacing: .08em;
+                text-transform: uppercase; color: var(--ink-faint); }
+  .mh-stat dd { margin: 2px 0 0; font-family: var(--mono); font-size: 14px; color: var(--ink);
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mh-stat-n { margin-left: 5px; font-size: 10px; color: var(--ink-faint); }
+  @media (max-width: 900px) { .mh-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+  /* The legend names only the bands that occurred - see regimesPresent. */
+  .mh-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px; }
+  .mh-leg { display: inline-flex; align-items: baseline; gap: 5px; font-size: 12px;
+            color: var(--ink-soft); }
+  .mh-leg b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+  .mh-leg-r { font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); }
+  .mh-swatch { width: 9px; height: 9px; background: var(--band-ink); align-self: center;
+               flex: 0 0 auto; }
   /* Reserved space before the palette has been read, so opening the panel does not jump. */
   .mh-hold { width: 100%; }
   .mh-err, .mh-note { margin-top: 10px; }

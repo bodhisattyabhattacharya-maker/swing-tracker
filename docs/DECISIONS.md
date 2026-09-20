@@ -1706,3 +1706,61 @@ own 50-day average". The SQL filters on `sma200`, and `docs/DEFINITIONS.md` has 
 The tooltip was the only place that was wrong, and it was wrong to a reader rather than to a
 formula — which is why the sweep that found it was reading the migration before writing a
 descriptor, not running a test.
+
+## 0054 — 2026-09-20 — Five named regime bands, a scale that tiles, and a term chart that finally says what it claimed
+
+**Context:** the visual specification names five VIX regimes — `<16 calm`, `16–30 normal`,
+`30–50 high`, `50–80 stress`, `>80 extreme` — where this build had three: below, inside and above
+the norm. It also asks for stress fills behind backwardation, eight stat chips, and breadth as an
+area.
+
+**Two of the five bands are empty, and that decided how the legend works.** Measured over the 126
+sessions this panel draws, the split is 33 / 91 / 2 / **0** / **0**. VIX has closed above 80 on
+about one day in the eleven years of index history we hold. So (Bodhi, 2026-09-20) the SCALE has
+all five bands — `regimeOf` classifies into them, the strip colours them, the first session above
+50 is drawn correctly the moment it arrives — but the LEGEND names only the bands with sessions in
+them. An entry reading "stress 0" would take a line of the caption permanently to describe
+nothing, which is this project's unreachable-state problem in visual form.
+
+**Three kinds of horizontal, drawn three ways, because they make three different claims.** A
+dashed line with an axis label is a NORM: 16 and 30, from `config/norms.yml`, the numbers that
+colour the VIX tile. A change of tint is a LABEL: 50 and 80 are display-only, `REGIME_CUTS`, and
+no cell anywhere is coloured by them. A solid ink line is a DEFINITION: the term chart's zero is
+not a threshold anyone chose — backwardation *is* below zero. A reader who could not tell these
+apart would read the regime scale as five norms the product does not have.
+
+**Edge ownership is written down, because the check found it was wrong.** `regimeOf(16)` returned
+`calm` while the VIX tile, colouring off the same norm, treats exactly 16 as *inside* the band —
+one session could have been calm on the strip and unremarkable on the tile. Both bands claimed the
+edge and the answer fell out of list order. The ownership is genuinely not uniform: the norm is a
+closed interval, so `normal` owns both its edges and every band outside it owns only its upper
+one. Any single rounding rule gets one of the two wrong, so `loInclusive`/`hiInclusive` are now
+explicit fields and the check requires **exactly one** band to claim every edge.
+
+**The term chart was not doing what its own comment said.** It was an `AreaSeries` with the verdict
+tints on `topColor`/`bottomColor` and a comment reading "an area anchored at zero". An `AreaSeries`
+fills from the line to the **bottom of the pane** and paints that fill as a vertical gradient; the
+colours described a pixel's height in the box and nothing else, so a session at +29.5% and one at
+−5.7% got the same treatment. `BaselineSeries` splits at `baseValue` and is what was meant. The
+fills are deliberately unequal — muted stress below zero, near-neutral above — because
+backwardation is the rare state worth noticing and contango is the background condition.
+
+**Eight chips, all readings and counts.** Chosen over a set pairing each current value with its
+percentile in the window: a percentile is a derived quantity this page computes nowhere else, and
+it invites "today is unusual", which is a judgement the market block does not make. Two of the
+eight are counts precisely because the charts are worst at counts — the term line visibly dips
+below zero, but whether that was four sessions or fourteen cannot be read off it.
+
+**The ramp is a fill, not an ink.** Declaring the five regime colours as `color` told
+`check_contrast.sh` they were text, and it correctly failed three against the 4.5:1 floor. They
+are a 9×9px swatch and a tint at 8.5%; none is ever text. Weakening the floor would have weakened
+it for every real piece of text on the page, so they moved to a `--band-ink` custom property
+instead and the floor stayed where it was.
+
+**And the check that was quietly reading a fifth of the stylesheet.** `check_contrast.sh` found the
+CSS with a non-greedy match to the first backtick. A backtick inside a CSS comment — easy to write,
+since backticks are how identifiers are quoted in prose everywhere else in this repo — ends the
+template literal early. Measured: with one stray inserted, the check went from 548 pairings to 102
+and reported 31 "token not defined in :root" failures, all true of the fragment and false of the
+stylesheet, pointing nowhere near the cause. Now greedy, with an assertion that names the stray
+directly. (Written after doing it twice in one afternoon.)

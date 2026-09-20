@@ -1167,3 +1167,59 @@ reading the migration before writing a descriptor for it.
 
 **Also corrected:** two file headers shipped yesterday still said "the palette is blue and ochre
 rather than red and green", which stopped being true in the same PR that shipped them.
+
+## 2026-09-20 — Five regime bands, a term chart split at zero, and eight readings of the window
+
+**What:** the VIX chart carries the spec's five named regime bands as tints behind the line —
+calm, normal, high, stress, extreme — and the regime strip colours each session by the same scale.
+The legend under the panel names **only the bands that occurred**: today calm 33, normal 91, high
+2. The scale still has five, so the first session above 50 draws correctly the moment it arrives;
+what is conditional is the caption.
+
+Three kinds of horizontal, drawn three ways, because they make three different claims: a **dashed
+line with an axis label** is a norm (16 and 30, from `config/norms.yml`), a **change of tint** is a
+label (50 and 80 are display-only and colour no cell anywhere), and a **solid ink line** is a
+definition (the term chart's zero — backwardation *is* below zero).
+
+Eight stat chips replace the prose caption: VIX last, its 20-bar average, the window high,
+sessions above the band, term structure last, sessions backwardated, breadth last, breadth range.
+All readings or counts, nothing derived. Breadth becomes an area against the index line, because
+a share of a fixed population has a meaningful floor to fill down to and an index level does not.
+
+The **Technicals preset** gains the three weekly vs-average columns, 14 → 17, closing the
+one-column `TECHNICALS · WEEKLY` band the ten-band split left in it.
+
+**How:** decision 0054. `REGIME_BANDS` in `lib/market-history.ts` is the scale, with explicit
+`loInclusive`/`hiInclusive` edge ownership; `bandRects` is pure and takes a mapping function, so
+the geometry is testable without a browser. The band tints are HTML over the canvas rather than a
+chart primitive — Lightweight Charts has no horizontal band, a filled series would appear in the
+crosshair readout as a hoverable value, and a thick price line cannot carry a label.
+
+**Verified by:** `scripts/ci/check_regime_scale.sh`, new and negative-tested six ways — the bands
+tile the number line with no gap or overlap, **exactly one** band claims every edge, `regimeOf`
+agrees with the table at every boundary and either side of it, the norm's edges stay inclusive to
+match the VIX tile, `unknown` never folds into a band, and every band has a colour token in all
+three theme blocks, a CSS class, and an entry in the strip's colour map. In a browser: the three
+bands in range are drawn and the two above it are **clipped away rather than drawn flat**, the
+drawn bands meet exactly, the overlay is inset from the price axis, the legend reports no zeros,
+and the eight chips all carry values. All six web checks pass.
+
+**Three defects found, two of them in code that shipped weeks ago.**
+
+`regimeOf(16)` returned `calm`, while the VIX tile treats exactly 16 as inside the band. Both
+bands claimed the edge and the answer fell out of list order. Edge ownership is now explicit and
+the check requires exactly one owner per edge.
+
+**The term chart was not doing what its own comment said.** It was an `AreaSeries` with verdict
+tints on `topColor`/`bottomColor` and a comment reading "an area anchored at zero". An
+`AreaSeries` fills from the line to the *bottom of the pane* as a vertical gradient — the colours
+described a pixel's height and nothing else, so +29.5% and −5.7% were drawn identically. It is a
+`BaselineSeries` now and backwardation is the only rust on the chart.
+
+**`check_contrast.sh` was reading a fifth of the stylesheet.** Its non-greedy match stopped at the
+first backtick; one inside a CSS comment ends the template literal early. Measured: 548 pairings
+became 102, and it reported 31 "token not defined" failures that were true of the fragment and
+false of the file. Now greedy, with an assertion naming the stray directly.
+
+**Also corrected:** the VIX chart's caption still said "Shaded band is the norm we set", which
+stopped being true the moment three bands were shaded.

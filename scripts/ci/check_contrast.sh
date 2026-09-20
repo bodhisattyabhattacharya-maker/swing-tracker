@@ -71,9 +71,34 @@ let checks = 0;
 
 // --------------------------------------------------------------------------- the stylesheet
 const layout = read("app/layout.tsx");
-const lit = layout.match(/const CSS = `([\s\S]*?)`;/);
+// GREEDY TO THE LAST BACKTICK, THEN NO BACKTICK ALLOWED INSIDE, and this replaced a non-greedy
+// match on 2026-09-20 after it hid a real failure.
+//
+// The stylesheet is one template literal. A backtick written inside a CSS comment - which is easy
+// to do, because backticks are how one quotes an identifier in the prose everywhere else in this
+// repo - ends that literal early. The compiler catches it eventually, with a message pointing at
+// a CSS comment and complaining about a missing semicolon.
+//
+// The non-greedy version agreed with the stray backtick and captured only the CSS before it.
+// Measured, on a stray inserted at line 417: the check went from 548 pairings to 102 and then
+// reported 31 failures, all of them variations on "this token is not defined in :root" - true of
+// the fragment it was looking at, false of the stylesheet, and pointing nowhere near the cause.
+// Loud but misdirecting, which costs more than silence because it sends you to fix 31 things
+// that are not broken. (A stray NOT followed by a semicolon did not truncate at all, so the old
+// regex failed unpredictably rather than always.) Greedy takes the whole literal; the assertion
+// below then names the one real problem in one line.
+const lit = layout.match(/const CSS = `([\s\S]*)`;/);
 if (!lit) {
   console.log("FAILED: could not find the CSS template literal in app/layout.tsx");
+  process.exit(1);
+}
+if (lit[1].includes("`")) {
+  const line = layout.slice(0, layout.indexOf("`", layout.indexOf("const CSS = `") + 13)).split("\n").length;
+  console.log(
+    `FAILED: a backtick appears inside the CSS template literal, near app/layout.tsx:${line}. ` +
+      `It ends the literal early and breaks the whole file; the compiler reports it as a missing ` +
+      `semicolon in a CSS comment. Write the identifier without backticks.`,
+  );
   process.exit(1);
 }
 // Comments stripped first, so prose about a colour can never vouch for a rule that sets one. The

@@ -136,6 +136,11 @@ five years of history (0048), and the four market-history charts (0046, 0047). T
 them live, with a price panel that reads its own bars on scroll and draws candles or a line
 depending on how many fit (0049, 0050). The deployment check at `/status`.
 
+**The market block** carries the five-band VIX regime scale (0054). Three kinds of horizontal say
+three different things: a dashed line with an axis label is a **norm**, a change of tint is a
+**label** (50 and 80 are display-only and colour no cell), a solid ink line is a **definition**
+(the term chart's zero). The legend names only the bands that occurred; the scale still has five.
+
 **The header is ten bands** in the spec's order (0053): Price, Technicals · daily, Technicals · weekly, MA signals, Relative, Revenue, Profit, Valuation, Quality, Forward look — measurements split by timeframe, derived signals on their own, which is also a clean split by render kind. Theme bands name their count and bellwether; market tiles carry a descriptor line; warm-up is a hatch rather than ochre text.
 
 **The skin** is the visual specification's: warm cream paper and near-black warm ink, deep
@@ -162,7 +167,10 @@ palette has not drifted from the stylesheet; `check_render_kinds.sh` (0053) requ
 kind to have an explicit branch in **both** the grid and the strip — a kind with no branch draws as
 a plausible number in silence — requires the two renderers to handle the same set, and prints which
 kinds are reachable, since a kind whose every column is `planned` cannot appear however well it is
-written.
+written; `check_regime_scale.sh` (0054) requires the five VIX bands to tile the number line with
+**exactly one** band claiming every edge — both `calm` and `normal` claimed 16 until it asked —
+and every band to have a colour token in all three theme blocks, a CSS class and an entry in the
+strip's colour map. **Six web checks.**
 
 ### Not built
 
