@@ -93,7 +93,7 @@ Also enforced in `.claude/settings.json`, because prose is not enforcement.
 | Colour thresholds — edit this, not the table | `config/norms.yml` (synced to `norms`; compared in SQL, decision 0023) |
 | Task procedures | `.claude/skills/` |
 
-## Current state — 2026-09-19
+## Current state — 2026-09-20
 
 Phases 1 to 3 are **live and running unattended**: swing-tracker-nu.vercel.app.
 
@@ -134,7 +134,17 @@ presets, text filter, per-column sort, the eight-state cell model (0043), a cell
 five years of history (0048), and the four market-history charts (0046, 0047). The **Deep Dive** at
 `/deep-dive` — one 420px analysis column per security, eight sections at identical heights, six of
 them live, with a price panel that reads its own bars on scroll and draws candles or a line
-depending on how many fit (0049, 0050). The deployment check at `/status`. Server-rendered with
+depending on how many fit (0049, 0050). The deployment check at `/status`.
+
+**The skin** is the visual specification's: warm cream paper and near-black warm ink, deep
+warm charcoal in dark, serif titles, condensed-sans labels, monospace tabular numbers, a floating
+bottom-centre tab pill, a coloured rail per category band, and a three-position theme control
+(system / light / dark) whose choice is applied before first paint. **Verdicts are muted red and
+green** since 0052, which reversed 0018 — the meaning is unchanged, it is still the relationship to
+a norm and never a recommendation. Two things deliberately sit outside that pair: the three
+moving-average overlays have their own brass/slate/plum tokens, and **VIX is on an intensity scale**
+(slate calm, amber stressed) because its band is 16–30 and the verdict mapping would paint a
+stressed tape green. Server-rendered with
 service_role over PostgREST so the browser never touches Postgres and RLS needs no read policy
 (0025); two allowlist routes are the only on-demand reads.
 
@@ -142,7 +152,11 @@ service_role over PostgREST so the browser never touches Postgres and RLS needs 
 `check_web_boundary.sh` (5 rules, including that a route holding the key must validate its input);
 `check_cell_states.sh` (every grid cell state reachable AND styled); `check_strip_sections.sh`
 (the same for the Deep Dive, failing **both** ways — a state with no rule, and a rule for a state
-that cannot occur).
+that cannot occur); `check_contrast.sh` (0052) resolves the palette as a browser would and measures
+every foreground/background pairing in **both** themes against a 4.5:1 floor, asserts the two dark
+token blocks are identical, that every `var()` resolves, that every group has a rail and every tile
+scale has rules — and none exists for a scale no tile declares — and that the charts' fallback
+palette has not drifted from the stylesheet.
 
 ### Not built
 

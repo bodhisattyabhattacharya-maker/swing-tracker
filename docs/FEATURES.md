@@ -1079,3 +1079,45 @@ rule and the preset sizes from the compiled catalogue, 63,579 equity bars over f
 8,063 index rows over eleven from `daily_bars`, four matviews and four cron jobs from the catalog
 tables. The Value-preset count is what that pass caught. Cross-checked afterwards that no two docs
 state a different figure for the same thing.
+
+## 2026-09-20 — The Atelier skin: warm palette, red/green verdicts, a theme toggle
+
+**What:** the interface takes the visual specification's palette and type. Cream paper and warm
+near-black ink in light, deep warm charcoal and soft ivory in dark. Serif display for the product
+and page titles, condensed sans for interface labels, monospace for numbers with tabular numerals
+inherited from `body` so no column can jitter. The two tabs leave the top bar for a floating pill at
+bottom centre; a three-position theme control (system / light / dark) takes their place at top
+right. Each of the nine category bands gains a coloured rail along the top of its heading, which is
+what makes a 51-column table navigable.
+
+**Verdicts are now muted red and green.** Below a norm is red, above is green — decision 0052 for
+why that reverses 0018 and what it does not change. The MA signal chips are the immediate win:
+Golden / Death, Bull / Bear, Rising / Falling now read at a glance.
+
+**Two colours that are deliberately NOT verdicts.** The three moving-average overlays moved to their
+own brass/slate/plum tokens, because a 50-day average drawn in verdict red is a claim the chart is
+not making. And VIX moved to an **intensity scale** — slate for calm, amber for stressed — since its
+band is 16–30 and the verdict mapping would have painted a stressed tape green. A market tile now
+declares which scale it is read on; term structure stays a verdict and is right there.
+
+**How:** the palette is 38 tokens in three blocks and nothing else changed colour — 22 verdict rules
+and three chart files already read the same names, so the swap was a token-level edit rather than a
+hunt. `--ma1/--ma2/--ma3`, `--calm`/`--stress` and nine `--g-*` rail tokens are new.
+`components/ThemeToggle.tsx` is new; `lib/chart-theme.ts` needed no behavioural change because its
+`data-theme` observer had been speculatively wired two days earlier.
+
+**Verified by:** `scripts/ci/check_contrast.sh`, new and negative-tested thirteen ways — it resolves
+the tokens as a browser would and measures **494 pairings** across both themes against a 4.5:1
+floor, asserts the two dark blocks are identical, that every `var()` resolves, that every group in
+`GROUPS` has a rail, that every tile scale has rules and no rule exists for a scale no tile declares,
+and that `chart-theme.ts`'s FALLBACK has not drifted from the stylesheet. 649 assertions. Then in a
+real browser: the toggle walked by clicking through all three positions and across a reload, nine
+distinct rails measured off the headings, the floating pill checked for overlap at the end of both
+pages at 1280 and 1920, the resolved font families read off the elements, and screenshots at
+1280/1440/1680/1920 on both pages in both themes.
+
+**That measuring pass caught a defect it was not looking for.** `--ink-faint` has been under 3:1
+against its own surfaces since the first palette, at 9–11px. Fixed here; see 0052.
+
+**Not verified here:** Spectral does not load in the sandbox, which has no route to Google Fonts, so
+every screenshot shows the fallback serif. The check asserts a serif resolved, not that Spectral did.

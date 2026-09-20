@@ -18,13 +18,14 @@
  * palette, in `app/layout.tsx`, and the charts are downstream of it.
  *
  * ---------------------------------------------------------------------------
- * NO THEME TOGGLE, AND THAT IS DELIBERATE (Bodhi, 2026-09-18)
+ * TWO WAYS THE PALETTE MOVES, AND THIS FILE NEEDED NO CHANGE FOR THE SECOND
  *
- * There is no switch in the UI; the page follows `prefers-color-scheme` and the toggle is a v2
- * item. That decision is the reason this file subscribes to the media query rather than reading
- * once: a viewer whose OS flips to dark mid-session gets charts that flip with it, and when the
- * toggle does arrive it changes `data-theme` on the root, which this same probe picks up. Nothing
- * here needs to know which mechanism moved the tokens.
+ * It subscribes to `prefers-color-scheme` AND to the root's `data-theme` attribute. The second was
+ * wired on 2026-09-18 while the toggle was still a v2 item and nothing set the attribute, on the
+ * argument that it cost four lines. The toggle shipped on 2026-09-20 and those four lines were the
+ * whole integration: `components/ThemeToggle.tsx` sets the attribute, the MutationObserver below
+ * fires, every chart re-reads the page. Nothing here knows which mechanism moved the tokens, which
+ * is the property that made the toggle cheap.
  */
 
 /** Every colour a chart in this app is allowed to use. Names mirror the CSS tokens exactly. */
@@ -42,6 +43,24 @@ export interface ChartTheme {
   above: string;
   aboveBg: string;
   warn: string;
+  /**
+   * The three moving-average overlay hues, in the order the overlays are drawn.
+   *
+   * SEPARATE FROM below/above ON PURPOSE. Until 2026-09-19 the overlays borrowed `accent`, `below`
+   * and `above`, which was harmless while the verdict pair was blue and ochre. Verdicts are now
+   * muted red and green (decision 0052), and a 50-day average drawn in verdict red on a page where
+   * that hue means "below its norm" is a claim the chart is not making.
+   */
+  ma1: string;
+  ma2: string;
+  ma3: string;
+  /**
+   * The intensity pair: calm and stressed. Used by the VIX regime strip and by nothing else on a
+   * canvas. Kept off `below`/`above` so the verdict pair means one thing everywhere — see the note
+   * above MARKET_TILES in lib/market.ts.
+   */
+  calm: string;
+  stress: string;
   /** True when the resolved palette is the dark one. Used for nothing but sanity assertions. */
   dark: boolean;
 }
@@ -67,6 +86,11 @@ const TOKENS: Record<keyof Omit<ChartTheme, "dark">, string> = {
   above: "--above",
   aboveBg: "--above-bg",
   warn: "--warn",
+  ma1: "--ma1",
+  ma2: "--ma2",
+  ma3: "--ma3",
+  calm: "--calm",
+  stress: "--stress",
 };
 
 /**
@@ -78,19 +102,24 @@ const TOKENS: Record<keyof Omit<ChartTheme, "dark">, string> = {
  * check below fails the build if these drift from the stylesheet.
  */
 const FALLBACK: ChartTheme = {
-  ink: "#101719",
-  inkSoft: "#5d6d71",
-  inkFaint: "#8b9a9d",
-  rule: "#dde4e3",
-  ruleSoft: "#eaefee",
-  surface: "#ffffff",
-  paper: "#f6f8f7",
-  accent: "#2a7d6f",
-  below: "#1f6f8b",
-  belowBg: "#e4eff3",
-  above: "#a8661c",
-  aboveBg: "#f7ede0",
-  warn: "#8a5a12",
+  ink: "#1b1815",
+  inkSoft: "#575046",
+  inkFaint: "#6f6759",
+  rule: "#e2dbce",
+  ruleSoft: "#eee9de",
+  surface: "#fdfcf8",
+  paper: "#f4f1ea",
+  accent: "#875d34",
+  below: "#a03c33",
+  belowBg: "#f7e9e5",
+  above: "#3f6b4a",
+  aboveBg: "#e7efe6",
+  warn: "#8a5f18",
+  ma1: "#8a5e25",
+  ma2: "#3a6d8c",
+  ma3: "#7b5d8f",
+  calm: "#3a6d8c",
+  stress: "#9d4c1b",
   dark: false,
 };
 

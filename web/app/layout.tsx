@@ -19,6 +19,7 @@
  */
 import type { ReactNode } from "react";
 import Tabs from "../components/Tabs";
+import ThemeToggle from "../components/ThemeToggle";
 
 export const metadata = {
   title: "Swing Tracker",
@@ -30,75 +31,177 @@ export const metadata = {
 // cause. Write .class-name in comments here, never `.class-name`. Cost twice on 2026-09-16.
 const CSS = `
   :root {
-    --paper:      #f6f8f7;
-    --surface:    #ffffff;
-    --ink:        #101719;
-    --ink-soft:   #5d6d71;
-    --ink-faint:  #8b9a9d;
-    --rule:       #dde4e3;
-    --rule-soft:  #eaefee;
-    --accent:     #2a7d6f;
-    /* Semantic, and deliberately not red/green. Below a norm means possibly cheap; above means
-       possibly stretched. Both are equally interesting, so neither may look like a failure. */
-    --below:      #1f6f8b;
-    --below-bg:   #e4eff3;
-    --above:      #a8661c;
-    --above-bg:   #f7ede0;
-    --warn:       #8a5a12;
-    --warn-bg:    #fbf2e2;
+    /* THE ATELIER PALETTE (Bodhi, 2026-09-19, decision 0052). Warm cream paper and warm near-black
+       ink, not the cool grey-green this page opened with. Every value below is a token because the
+       charts read these same names at runtime through lib/chart-theme.ts - see THEMING above. */
+    --paper:      #f4f1ea;
+    --surface:    #fdfcf8;
+    --ink:        #1b1815;
+    --ink-soft:   #575046;
+    --ink-faint:  #6f6759;
+    --rule:       #e2dbce;
+    --rule-soft:  #eee9de;
+    --accent:     #875d34;
+
+    /* VERDICTS ARE RED AND GREEN, AND THAT REVERSED AN EARLIER DECISION.
+       Until 2026-09-19 these were blue and ochre, on the reasoning that below a norm means possibly
+       cheap and above means possibly stretched, so neither should look like a failure. The design
+       spec pre-empts that objection rather than ignoring it: red and green here express the
+       RELATIONSHIP TO A RULE, not a recommendation, which is why this product still has no arrow, no
+       buy or sell, no rank and no composite score. Colour is never the only carrier - every judged
+       cell also has the 2.5px left rule, the norm printed in its heading, and the number itself.
+
+       MUTED, not signal red and signal green: these sit behind text and must stay legible at 13px,
+       which saturated versions do not. scripts/ci/check_contrast.sh enumerates every state against
+       its own background in both themes and fails under 4.5:1 - a tint that fails against its own
+       text is this palette's failure mode and it is not something to catch by eye. */
+    --below:      #a03c33;
+    --below-bg:   #f7e9e5;
+    --above:      #3f6b4a;
+    --above-bg:   #e7efe6;
+
+    --warn:       #8a5f18;
+    --warn-bg:    #f9f0dc;
     --err:        #9c3b2e;
+
+    /* THE INTENSITY SCALE. Calm and stressed, and these two exist so that red and green can keep
+       exactly one meaning across the product: a security against its norm.
+       VIX broke that. Its band is 16-30, so on the verdict scale a calm tape at 14 painted red and
+       a stressed one at 34 painted green - backwards to anyone who has looked at a volatility
+       chart, and read by the eye before the number beside it. Inverting VIX alone would have been
+       an exception inside the mapping, which is how a palette stops meaning anything; giving the
+       market's temperature its own two colours is not. Slate and amber, used by the VIX tile and
+       the regime strip and nowhere else. See lib/market.ts, above MARKET_TILES. */
+    --calm:       #3a6d8c;
+    --calm-bg:    #e6eef3;
+    --stress:     #9d4c1b;
+    --stress-bg:  #f9ebdd;
     /* Planned is lavender-neutral on purpose: adjacent to nothing else on the page, so the marker
        can never be misread as a verdict or as a warning. It is used in the column HEADING only -
        see .tag near the cell states for why the per-cell fill was dropped. */
     --plan:       #6a5f8c;
+
+    /* MOVING-AVERAGE OVERLAY LINES. THESE EXIST BECAUSE OF THE RED/GREEN SWAP, and the reason is
+       worth keeping: the three overlays used to draw in --accent, --below and --above, which was
+       harmless while those were teal, blue and ochre. The moment verdicts became red and green, the
+       50-day average would have drawn in verdict red and the 200-day in verdict green - colour with
+       no judgement behind it, on a chart where every other use of those two hues means a norm was
+       crossed. An overlay is a reference line, not a verdict, so it gets its own hues: warm brass,
+       slate, plum. Distinguishable from each other, and from both verdict colours. */
+    --ma1:        #8a5e25;
+    --ma2:        #3a6d8c;
+    --ma3:        #7b5d8f;
+
+    /* GROUP RAILS. One quiet hue per category band, drawn as a 3px rule along the top of the group
+       heading. This is what makes a 51-column table navigable: the eye finds REVENUE by colour and
+       position long before it can read nine small-caps labels. Desaturated on purpose - a rail is a
+       landmark, and a saturated one would compete with the judged cells underneath it.
+       FORWARD LOOK IS GREY, and that is not laziness: no vendor sells consensus at any tier, so
+       that band is permanently planned and a colour promising otherwise would be a lie. */
+    --g-price:     #7a6a55;
+    --g-rsi:       #3a6d8c;
+    --g-ma:        #5c7a6a;
+    --g-relative:  #8a6a3f;
+    --g-revenue:   #6b5f8c;
+    --g-profit:    #8a5f6a;
+    --g-valuation: #4f7a7a;
+    --g-quality:   #77773f;
+    --g-forward:   #93897c;
+
+    /* TYPE. Serif for titles, sans for interface labels, mono for every number - the numerals are
+       tabular everywhere so a column cannot jitter as values change. Named as tokens so the three
+       families are one decision; the serif degrades to whatever the platform has if the webfont
+       does not load, which is a fallback chain rather than a silent swap to sans. */
+    --serif:      "Spectral", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans:       "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --sans-cond:  "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif;
+    --mono:       ui-monospace, SFMono-Regular, Menlo, monospace;
+
     /* The edge shadow on the horizontal scroller. A scrim, not a colour: it darkens whatever cell
        background happens to be under it, which is the only thing that works over a table whose
        rows, bands and judged cells all paint differently. Heavier in dark mode - the same black at
-       .13 is invisible against #141d1f. */
-    --scrim:      rgba(16,23,25,.16);
-    --shadow:     0 1px 2px rgba(16,23,25,.06), 0 8px 24px -16px rgba(16,23,25,.28);
+       .13 is invisible against a dark surface. */
+    --scrim:      rgba(27,24,21,.16);
+    --shadow:     0 1px 2px rgba(27,24,21,.05), 0 10px 28px -18px rgba(27,24,21,.24);
   }
+
+  /* DARK IS DEEP WARM CHARCOAL AND SOFT IVORY, never pure black on pure white: the spec asks for
+     the same paper in a dim room, and #000 against #fff is a different material. Only tokens are
+     redefined here - a colour whose sole definition sits in one of these blocks silently fails in
+     the other state, which is the trap the THEMING note at the top of this file describes. */
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --paper:     #0d1416;
-      --surface:   #141d1f;
-      --ink:       #e7eeec;
-      --ink-soft:  #9aabad;
-      --ink-faint: #6b7d80;
-      --rule:      #243134;
-      --rule-soft: #1b2528;
-      --accent:    #4fb3a1;
-      --below:     #6fc0da;
-      --below-bg:  #16303a;
-      --above:     #e0a355;
-      --above-bg:  #392a16;
+      --paper:     #16130f;
+      --surface:   #1f1b16;
+      --ink:       #ece5d8;
+      --ink-soft:  #b7ad9d;
+      --ink-faint: #978e80;
+      --rule:      #332c24;
+      --rule-soft: #26211a;
+      --accent:    #c79a62;
+      --below:     #e2897b;
+      --below-bg:  #3a211d;
+      --above:     #82b68c;
+      --above-bg:  #1d3123;
       --warn:      #d9a55c;
       --warn-bg:   #332713;
       --err:       #e08878;
+      --calm:      #78b4d4;
+      --calm-bg:   #172b34;
+      --stress:    #e0a05c;
+      --stress-bg: #372213;
       --plan:      #a99cd0;
+      --ma1:       #d6a55e;
+      --ma2:       #78b4d4;
+      --ma3:       #b69bd0;
+      --g-price:     #a99781;
+      --g-rsi:       #79aac7;
+      --g-ma:        #8fb3a0;
+      --g-relative:  #c2a173;
+      --g-revenue:   #a396c6;
+      --g-profit:    #c295a1;
+      --g-valuation: #83b2b2;
+      --g-quality:   #adad72;
+      --g-forward:   #9c9287;
       --scrim:     rgba(0,0,0,.55);
-      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
     }
   }
   :root[data-theme="dark"] {
-    --paper:     #0d1416;
-    --surface:   #141d1f;
-    --ink:       #e7eeec;
-    --ink-soft:  #9aabad;
-    --ink-faint: #6b7d80;
-    --rule:      #243134;
-    --rule-soft: #1b2528;
-    --accent:    #4fb3a1;
-    --below:     #6fc0da;
-    --below-bg:  #16303a;
-    --above:     #e0a355;
-    --above-bg:  #392a16;
+    --paper:     #16130f;
+    --surface:   #1f1b16;
+    --ink:       #ece5d8;
+    --ink-soft:  #b7ad9d;
+    --ink-faint: #978e80;
+    --rule:      #332c24;
+    --rule-soft: #26211a;
+    --accent:    #c79a62;
+    --below:     #e2897b;
+    --below-bg:  #3a211d;
+    --above:     #82b68c;
+    --above-bg:  #1d3123;
     --warn:      #d9a55c;
     --warn-bg:   #332713;
     --err:       #e08878;
+    --calm:      #78b4d4;
+    --calm-bg:   #172b34;
+    --stress:    #e0a05c;
+    --stress-bg: #372213;
     --plan:      #a99cd0;
+    --ma1:       #d6a55e;
+    --ma2:       #78b4d4;
+    --ma3:       #b69bd0;
+    --g-price:     #a99781;
+    --g-rsi:       #79aac7;
+    --g-ma:        #8fb3a0;
+    --g-relative:  #c2a173;
+    --g-revenue:   #a396c6;
+    --g-profit:    #c295a1;
+    --g-valuation: #83b2b2;
+    --g-quality:   #adad72;
+    --g-forward:   #9c9287;
     --scrim:     rgba(0,0,0,.55);
-    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
   }
 
   * { box-sizing: border-box; }
@@ -106,9 +209,14 @@ const CSS = `
     margin: 0;
     background: var(--paper);
     color: var(--ink);
-    font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-family: var(--sans);
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
+    /* TABULAR EVERYWHERE, SET ONCE AND INHERITED. Nine rules used to ask for this individually and
+       the ones that did not were the ones that jittered: a column of proportional digits changes
+       width as its values change, which on a table read by scanning down a column is movement with
+       no meaning behind it. Inheriting it means a new number cannot forget. */
+    font-variant-numeric: tabular-nums;
   }
   main { max-width: 860px; margin: 0 auto; padding-block: 48px 72px; padding-inline: 20px; }
   /* Widened from 1500px on 2026-09-16, when relative strength made it sixteen columns.
@@ -128,20 +236,24 @@ const CSS = `
      symptom for one column set. Density is the point of this page (decision 0005). */
   main.wide { max-width: 1800px; padding-block: 28px 64px; }
 
-  h1 { font-family: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif; font-weight: 700;
-       font-size: clamp(26px, 5vw, 38px); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+  /* SERIF FOR TITLES. The spec's voice: a serif display face for the things that name the product
+     and its sections, sans for the interface around them, mono for every number. The distinction is
+     doing work rather than decorating - a serif line is never a control, so the reader learns that
+     anything in the serif is a title and everything clickable is not. */
+  h1 { font-family: var(--serif); font-weight: 600;
+       font-size: clamp(26px, 5vw, 38px); letter-spacing: -.01em; margin: 0; text-wrap: balance; }
   .sub { color: var(--ink-soft); font-size: 14px; margin: 5px 0 0; max-width: 58ch; }
   .muted { color: var(--ink-faint); }
-  .err { color: var(--err); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  .err { color: var(--err); font-family: var(--mono);
          font-size: 13px; word-break: break-word; }
 
   .head { display: flex; flex-wrap: wrap; gap: 18px 32px; align-items: flex-end;
           justify-content: space-between; padding-bottom: 16px; border-bottom: 2px solid var(--ink); }
   .status { display: flex; flex-wrap: wrap; gap: 10px 26px; }
   .stat { display: flex; flex-direction: column; gap: 1px; }
-  .stat-k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+  .stat-k { font-family: var(--sans-cond); font-size: 10.5px;
             letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
-  .stat-v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px;
+  .stat-v { font-family: var(--mono); font-size: 15px;
             font-weight: 500; font-variant-numeric: tabular-nums; }
   /* A stat that only appears when something is off should look like it. */
   .stat-v.warnv { color: var(--warn); }
@@ -167,12 +279,19 @@ const CSS = `
   .tile.above { background: var(--above-bg); color: var(--above); }
   .tile.below::before { background: var(--below); }
   .tile.above::before { background: var(--above); }
-  .tile-k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+  /* The intensity scale. Same shape as the two above - tint plus the 2.5px rule - because the tile
+     is making the same KIND of statement, that a value is outside a band we set. Only the
+     vocabulary differs. */
+  .tile.calm { background: var(--calm-bg); color: var(--calm); }
+  .tile.stress { background: var(--stress-bg); color: var(--stress); }
+  .tile.calm::before { background: var(--calm); }
+  .tile.stress::before { background: var(--stress); }
+  .tile-k { font-family: var(--sans-cond); font-size: 10.5px;
             letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
   .tile.mark .tile-k { color: inherit; opacity: .8; }
-  .tile-v { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 19px;
+  .tile-v { font-family: var(--mono); font-size: 19px;
             font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.25; }
-  .tile-d { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--ink-faint);
+  .tile-d { font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
             min-height: 14px; }
   .tile.mark .tile-d { color: inherit; opacity: .75; }
   .market-err { grid-column: 1 / -1; background: var(--surface); padding: 11px 14px;
@@ -180,7 +299,7 @@ const CSS = `
 
   .panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px;
            padding: 20px 22px; margin-top: 22px; box-shadow: var(--shadow); }
-  .panel h2 { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+  .panel h2 { font-family: var(--sans-cond); font-size: 11px;
               text-transform: uppercase; letter-spacing: .1em; color: var(--ink-faint);
               margin: 0 0 12px; font-weight: 600; }
   .panel p { margin: 0 0 8px; }
@@ -225,10 +344,10 @@ const CSS = `
              border: 1px solid var(--rule); border-radius: 4px; background: var(--surface);
              font: inherit; color: inherit; text-align: left; cursor: pointer; }
   .mh-head:hover { background: var(--rule-soft); }
-  .mh-t { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+  .mh-t { font-family: var(--sans-cond); font-size: 11px; font-weight: 600;
           letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
-  .mh-span { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--ink-faint); }
-  .mh-asof { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--warn);
+  .mh-span { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .mh-asof { font-family: var(--mono); font-size: 11px; color: var(--warn);
              margin-left: auto; }
   .mh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 1px;
              background: var(--rule); border: 1px solid var(--rule); border-radius: 4px;
@@ -242,9 +361,9 @@ const CSS = `
   .mh-fig.mh-breadth { grid-column: 2; grid-row: 2; }
   .mh-fig figcaption { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
                        margin-bottom: 6px; }
-  .mh-ft { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+  .mh-ft { font-family: var(--sans-cond); font-size: 11px; font-weight: 600;
            letter-spacing: .08em; text-transform: uppercase; }
-  .mh-fb { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--ink-faint); }
+  .mh-fb { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
   .mh-fs { font-size: 11.5px; color: var(--ink-faint); flex-basis: 100%; }
   /* The canvas box. min-width:0 on the figure and here is what stops a canvas from refusing to
      shrink inside a grid column - without it the panel widens the page instead of the chart
@@ -272,7 +391,7 @@ const CSS = `
             background: var(--surface); box-shadow: var(--shadow); }
   table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
   thead th { position: sticky; top: 0; z-index: 3; background: var(--surface);
-             font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 600; font-size: 11px;
+             font-family: var(--sans-cond); font-weight: 600; font-size: 11px;
              letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft);
              text-align: right; padding: 12px 12px 9px; border-bottom: 1.5px solid var(--rule);
              white-space: nowrap; }
@@ -308,6 +427,24 @@ const CSS = `
   thead tr.grp th.sym { border-bottom: none; }
   thead tr:not(.grp) th { top: 26px; }
 
+  /* THE GROUP RAILS. A 3px coloured rule along the top of each category heading, drawn as an inset
+     shadow rather than a border-top so it does not add to the 26px the label row's sticky offset is
+     written against - that literal and this height must not be able to disagree.
+
+     ONE RULE PER GROUP KEY, and the keys come from GROUPS in lib/columns.ts, where the heading cell
+     is rendered with className={g.key}. A group added there with no rail here gets no rail and
+     nothing complains, which is the shape of defect this project has now shipped three times, so
+     scripts/ci/check_contrast.sh enumerates GROUPS and fails on a key with no rule. */
+  thead tr.grp th.price      { box-shadow: inset 0 3px 0 var(--g-price); }
+  thead tr.grp th.rsi        { box-shadow: inset 0 3px 0 var(--g-rsi); }
+  thead tr.grp th.ma         { box-shadow: inset 0 3px 0 var(--g-ma); }
+  thead tr.grp th.relative   { box-shadow: inset 0 3px 0 var(--g-relative); }
+  thead tr.grp th.revenue    { box-shadow: inset 0 3px 0 var(--g-revenue); }
+  thead tr.grp th.profit     { box-shadow: inset 0 3px 0 var(--g-profit); }
+  thead tr.grp th.valuation  { box-shadow: inset 0 3px 0 var(--g-valuation); }
+  thead tr.grp th.quality    { box-shadow: inset 0 3px 0 var(--g-quality); }
+  thead tr.grp th.forward    { box-shadow: inset 0 3px 0 var(--g-forward); }
+
   /* The daily/weekly divider. One rule, full height, so the eye can tell at a glance which side of
      it a number lives on - "vs 21 EMA" appears on both and means different things. */
   thead th.grp-start, tbody td.grp-start { border-left: 1.5px solid var(--rule); }
@@ -315,25 +452,25 @@ const CSS = `
      colour so it does not read as a warning: RS being a session behind is the normal evening state,
      not a fault. */
   thead th .norm.asof { font-style: italic; }
-  thead th .norm { display: block; font-family: ui-monospace, Menlo, monospace; font-size: 9.5px;
+  thead th .norm { display: block; font-family: var(--mono); font-size: 9.5px;
                    letter-spacing: 0; text-transform: none; color: var(--ink-faint);
                    font-weight: 400; margin-top: 2px; }
 
-  tbody td { padding: 7px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  tbody td { padding: 7px 12px; font-family: var(--mono);
              font-size: 13px; text-align: right; border-bottom: 1px solid var(--rule-soft);
              white-space: nowrap; }
   tbody td.sym { position: sticky; left: 0; background: var(--surface); text-align: left;
                  font-weight: 600; font-size: 13.5px; z-index: 2; }
-  tbody td.sym .co { display: block; font-family: "IBM Plex Sans", sans-serif; font-weight: 400;
+  tbody td.sym .co { display: block; font-family: var(--sans); font-weight: 400;
                      font-size: 11px; color: var(--ink-faint); }
   tbody tr:hover td, tbody tr:hover td.sym { background: var(--rule-soft); }
 
   tr.band td { background: var(--paper); padding: 9px 12px 7px;
-               font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px; font-weight: 600;
+               font-family: var(--sans-cond); font-size: 11px; font-weight: 600;
                letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft);
                text-align: left; border-top: 1px solid var(--rule);
                border-bottom: 1px solid var(--rule); }
-  tr.band td .n { font-family: ui-monospace, Menlo, monospace; color: var(--ink-faint);
+  tr.band td .n { font-family: var(--mono); color: var(--ink-faint);
                   font-weight: 400; letter-spacing: 0; margin-left: 8px; }
 
   /* Severity in form as well as colour, so it survives greyscale and colourblindness.
@@ -354,13 +491,13 @@ const CSS = `
 
   .foot { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
           gap: 22px 34px; margin-top: 30px; }
-  .foot h2 { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+  .foot h2 { font-family: var(--sans-cond); font-size: 11px;
              letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
              margin: 0 0 8px; font-weight: 600; }
   .foot p { margin: 8px 0 0; font-size: 13px; color: var(--ink-soft); }
   .key { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 6px; }
   .chip { display: inline-block; padding: 1px 7px; border-radius: 2px; font-size: 11.5px;
-          font-family: ui-monospace, Menlo, monospace; font-weight: 500; border-left: 2.5px solid; }
+          font-family: var(--mono); font-weight: 500; border-left: 2.5px solid; }
   .chip.b { color: var(--below); background: var(--below-bg); border-color: var(--below); }
   .chip.a { color: var(--above); background: var(--above-bg); border-color: var(--above); }
   .chip.n { color: var(--ink-faint); background: transparent; border-color: var(--rule); }
@@ -368,11 +505,11 @@ const CSS = `
   dl div { display: flex; justify-content: space-between; gap: 14px; padding: 3px 0;
            border-bottom: 1px solid var(--rule-soft); }
   dt { color: var(--ink-soft); }
-  dd { margin: 0; font-family: ui-monospace, Menlo, monospace; color: var(--ink); }
+  dd { margin: 0; font-family: var(--mono); color: var(--ink); }
 
   .note { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--rule);
           font-size: 12.5px; color: var(--ink-faint); max-width: 78ch; }
-  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  code { font-family: var(--mono); font-size: 12.5px; }
   a { color: var(--accent); }
   a:focus-visible, :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .yes { color: var(--accent); }
@@ -387,16 +524,66 @@ const CSS = `
   .frame { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
            gap: 26px; padding: 0 20px; height: 48px; background: var(--surface);
            border-bottom: 1px solid var(--rule); }
-  .brand { font-family: "IBM Plex Sans Condensed", sans-serif; font-weight: 700; font-size: 14px;
-           letter-spacing: .02em; }
-  .tabs { display: flex; gap: 2px; }
-  .tab { display: flex; align-items: center; gap: 7px; height: 47px; padding: 0 14px;
-         font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--ink-faint);
-         text-decoration: none; border-bottom: 2px solid transparent; }
-  .tab:hover { color: var(--ink-soft); }
-  .tab.on { color: var(--ink); border-bottom-color: var(--accent); }
-  .tabicon { font-size: 13px; opacity: .7; }
-  main { padding-block: 24px 64px; }
+  .brand { font-family: var(--serif); font-weight: 600; font-size: 17px;
+           letter-spacing: 0; }
+
+  /* ---------------------------------------------------------------------
+     THE TABS FLOAT AT BOTTOM CENTRE, which is the spec's arrangement and not
+     a cosmetic move. The top bar is where the page identifies itself and the
+     table pins its two header rows; putting navigation there too meant three
+     competing sticky things in the top 74px of a page whose entire purpose is
+     vertical density. At the bottom the pill is in reach and out of the way.
+
+     FIXED, not sticky: it must not move when the table scrolls, and both
+     pages scroll their own containers rather than the body, so a sticky
+     element here would have nothing to stick to.
+
+     The blur is what lets it sit over a scrolling table without a box that
+     hides rows. Backdrop-filter is progressive - where it is unsupported the
+     translucent surface colour underneath still reads, which is why the
+     background is a colour-mix rather than transparent.
+     --------------------------------------------------------------------- */
+  .tabs { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+          z-index: 30; display: flex; gap: 3px; padding: 4px;
+          background: color-mix(in srgb, var(--surface) 88%, transparent);
+          -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+          border: 1px solid var(--rule); border-radius: 999px; box-shadow: var(--shadow); }
+  .tab { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 16px;
+         font-family: var(--sans-cond); font-size: 12px; font-weight: 600;
+         letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint);
+         text-decoration: none; border-radius: 999px; }
+  .tab:hover { color: var(--ink); background: var(--rule-soft); }
+  /* The active tab is a filled lozenge. In a pill of two there is no room for an understated
+     underline to be unmistakable, which is what the old top-bar treatment relied on. */
+  .tab.on { color: var(--paper); background: var(--ink); }
+  .tab.on:hover { color: var(--paper); background: var(--ink); }
+  .tabicon { font-size: 12px; opacity: .8; }
+
+  /* THEME TOGGLE, top right. Three states in one control - see components/ThemeToggle.tsx for why
+     it is three and not two: a two-state switch cannot express "follow the OS", which is what every
+     first visit is and what this page did exclusively until today. */
+  .themebtn { margin-left: auto; display: flex; align-items: center; gap: 7px;
+              padding: 4px 10px; font-family: var(--sans-cond); font-size: 10.5px;
+              font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+              color: var(--ink-faint); background: transparent;
+              border: 1px solid var(--rule); border-radius: 999px; cursor: pointer; }
+  .themebtn:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .themebtn .ti { font-size: 12px; line-height: 1; }
+  /* THE LABEL COMES FROM CSS, KEYED ON data-mode, and that is what keeps the button free of a
+     hydration mismatch: the markup is identical on the server and the client, and the attribute the
+     pre-paint script set decides what is painted. See components/ThemeToggle.tsx.
+     The bare :root rules are the fallback for a first paint before the script runs, and for a
+     viewer with JavaScript off - both of whom are on the system palette, which is what they say. */
+  :root .themebtn .ti::before { content: "\\25D0"; }
+  :root .themebtn .tl::before { content: "System"; }
+  :root[data-mode="light"] .themebtn .ti::before { content: "\\25CB"; }
+  :root[data-mode="light"] .themebtn .tl::before { content: "Light"; }
+  :root[data-mode="dark"] .themebtn .ti::before { content: "\\25CF"; }
+  :root[data-mode="dark"] .themebtn .tl::before { content: "Dark"; }
+
+  /* Room for the floating pill. The bottom padding is the pill's height plus its inset plus a
+     breath, so the last row of the table is readable rather than half under it. */
+  main { padding-block: 24px 96px; }
 
   /* ---------------------------------------------------------------------
      CONTROLS. One compact row: filter, preset segments, and a hint. They may
@@ -411,7 +598,7 @@ const CSS = `
   .find::placeholder { color: var(--ink-faint); }
   .presets { display: flex; gap: 1px; padding: 2px; background: var(--rule-soft);
              border-radius: 5px; flex: 0 0 auto; }
-  .seg { padding: 5px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+  .seg { padding: 5px 12px; font-family: var(--mono); font-size: 12px;
          color: var(--ink-soft); background: transparent; border: 0; border-radius: 4px;
          cursor: pointer; white-space: nowrap; }
   .seg:hover { color: var(--ink); }
@@ -427,7 +614,7 @@ const CSS = `
         border-radius: 2px; padding: 0 3px; }
   .dir { color: var(--accent); font-size: 10px; }
   thead th .norm.plan { color: var(--plan); font-style: normal; letter-spacing: .06em; }
-  thead tr.grp th .asof { display: block; font-family: ui-monospace, Menlo, monospace;
+  thead tr.grp th .asof { display: block; font-family: var(--mono);
                           font-size: 9px; font-style: italic; letter-spacing: 0;
                           text-transform: none; color: var(--ink-faint); }
 
@@ -466,19 +653,19 @@ const CSS = `
      There is no .tag.plan any more. Planned is a statement about the COLUMN, so it is made once in
      the column heading (thead th .norm.plan, above) rather than 312 times on the Value preset,
      which is what it came to on screen. Bodhi, 2026-09-18. */
-  .tag { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9px; letter-spacing: .08em;
+  .tag { font-family: var(--sans-cond); font-size: 9px; letter-spacing: .08em;
          text-transform: uppercase; padding: 1px 5px; border-radius: 2px; }
   .tag.na { color: var(--ink-faint); background: transparent; border: 1px dashed var(--rule); }
   /* The word "planned" where the footnote quotes a column heading, so the sentence points at
      something the reader can actually find on the screen above it. */
-  .planword { color: var(--plan); font-family: "IBM Plex Sans Condensed", sans-serif;
+  .planword { color: var(--plan); font-family: var(--sans-cond);
               font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
   /* No norm: a tracked value with no threshold. Outlined rather than tinted - we have no opinion. */
   td.st-no-norm .cellbtn { text-decoration: underline; text-decoration-style: dotted;
                            text-decoration-color: var(--rule); text-underline-offset: 4px; }
 
   /* Categorical chips: label and number are one fact, so they sit together. */
-  .chip { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 10.5px;
+  .chip { font-family: var(--sans-cond); font-size: 10.5px;
           letter-spacing: .04em; padding: 1px 6px; border-radius: 9px; background: var(--rule-soft);
           color: var(--ink-soft); }
   td.st-above .chip { background: var(--above-bg); color: var(--above); }
@@ -495,7 +682,7 @@ const CSS = `
            border: 1px solid var(--rule); border-radius: 8px; box-shadow: var(--shadow);
            padding: 20px 22px; }
   .sheethead { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-  .sheet h3 { margin: 0; font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 18px; }
+  .sheet h3 { margin: 0; font-family: var(--sans-cond); font-size: 18px; }
   .sheet .muted { margin: 2px 0 0; font-size: 12.5px; }
   .x { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--ink-faint);
        cursor: pointer; padding: 0 2px; }
@@ -504,9 +691,9 @@ const CSS = `
                 overflow: hidden; }
   .sheetstats > div { background: var(--surface); padding: 9px 12px; display: flex;
                       flex-direction: column; gap: 2px; }
-  .sheetstats .k { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9.5px;
+  .sheetstats .k { font-family: var(--sans-cond); font-size: 9.5px;
                    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
-  .sheetstats .v { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  .sheetstats .v { font-family: var(--mono); font-size: 14px; }
   .why { margin: 14px 0 0; font-size: 13px; }
   .sheet .note { margin-top: 14px; padding-top: 12px; font-size: 12px; }
 
@@ -550,14 +737,14 @@ const CSS = `
 
   .dd-head { position: sticky; top: 0; z-index: 4; background: var(--surface);
              padding: 11px 14px 9px; border-bottom: 1.5px solid var(--rule); }
-  .dd-sym { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px;
+  .dd-sym { font-family: var(--mono); font-size: 15px;
             font-weight: 600; display: flex; align-items: baseline; gap: 5px; }
   .dd-name { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dd-theme { font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 9.5px;
+  .dd-theme { font-family: var(--sans-cond); font-size: 9.5px;
               letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
               margin-top: 3px; }
-  .dd-behind { font-family: ui-monospace, Menlo, monospace; font-size: 10px; color: var(--warn);
+  .dd-behind { font-family: var(--mono); font-size: 10px; color: var(--warn);
                margin-top: 3px; }
   .tag.fund { color: var(--ink-faint); background: var(--rule-soft); border: 1px solid var(--rule);
               vertical-align: 2px; }
@@ -565,7 +752,7 @@ const CSS = `
   .dd-sec { padding: 11px 14px 13px; border-bottom: 1px solid var(--rule-soft); }
   .dd-sec:last-child { border-bottom: 0; }
   .dd-sec h3 { margin: 0; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
-               font-family: "IBM Plex Sans Condensed", sans-serif; font-size: 11px;
+               font-family: var(--sans-cond); font-size: 11px;
                font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
   /* THREE OUTCOMES, THREE TREATMENTS, keyed on what the panel RENDERS rather than on its params'
      statuses - see StockStrip's Section for the contradiction that produced ("planned" over
@@ -579,11 +766,11 @@ const CSS = `
   /* The n-a marker in a heading sits on the baseline of an uppercase label, so it needs the same
      nudge the ETF tag gets in the column header. */
   .dd-sec h3 .tag.na { vertical-align: 1px; }
-  .dd-sec h3 .asof { font-family: ui-monospace, Menlo, monospace; font-size: 9px; font-style: italic;
+  .dd-sec h3 .asof { font-family: var(--mono); font-size: 9px; font-style: italic;
                      letter-spacing: 0; text-transform: none; color: var(--ink-faint); }
   /* Explicit, and NOT inheriting the bare .plan rule above: that one is a list style, and at
      specificity 0,1,0 its padding-left would indent this marker by 18px. */
-  .dd-sec h3 .norm { font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; padding: 0;
+  .dd-sec h3 .norm { font-family: var(--mono); font-size: 9.5px; padding: 0;
                      letter-spacing: 0; text-transform: none; font-weight: 400; }
   .dd-sec h3 .norm.plan { color: var(--plan); letter-spacing: .06em; }
   /* NO .dd-sub RULE. The section's one-line description is the heading's title attribute now, not
@@ -632,7 +819,7 @@ const CSS = `
      single row would invite reading 3M as a third timeframe. */
   .pc-tf, .pc-range { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px;
                       overflow: hidden; }
-  .pc-tf .seg, .pc-range .seg { padding: 1px 7px; font-family: ui-monospace, Menlo, monospace;
+  .pc-tf .seg, .pc-range .seg { padding: 1px 7px; font-family: var(--mono);
                 font-size: 10px; letter-spacing: .06em; border: 0;
                 border-right: 1px solid var(--rule); background: none; color: var(--ink-faint);
                 cursor: pointer; }
@@ -641,11 +828,14 @@ const CSS = `
   /* The legend is three words, and each carries the colour its line is drawn in - so the overlay
      order cannot silently disagree with the chart. The three tokens are the same ones the chart
      reads through lib/chart-theme.ts, which is what keeps them equal in both themes. */
-  .pc-legend { display: inline-flex; gap: 9px; font-family: ui-monospace, Menlo, monospace;
+  .pc-legend { display: inline-flex; gap: 9px; font-family: var(--mono);
                font-size: 9px; letter-spacing: .04em; }
-  .pc-key.k0 { color: var(--accent); }
-  .pc-key.k1 { color: var(--below); }
-  .pc-key.k2 { color: var(--above); }
+  /* The legend keys carry the OVERLAY tokens, not the verdict ones, and must stay in the same order
+     as the colours array in components/StockChart.tsx - the legend is a claim about what is drawn on
+     the canvas beside it, and a mismatch here is a chart that lies quietly. */
+  .pc-key.k0 { color: var(--ma1); }
+  .pc-key.k1 { color: var(--ma2); }
+  .pc-key.k2 { color: var(--ma3); }
   /* An overlay this listing has too little history for. Struck rather than hidden, so the reader
      sees that the line is absent and not that the legend forgot it. ALAB, ARM and SNDK have fewer
      than 200 completed weeks, which is a fact about the listing and not a gap in the data. */
@@ -671,7 +861,7 @@ const CSS = `
      norm and never from a literal 30/70 - rsi_weekly is 40/70 today. */
   .dd-gauges { margin-top: 9px; display: grid; gap: 8px; }
   .dd-gauge { display: grid; grid-template-columns: 14px 1fr 48px 44px; align-items: center;
-              gap: 9px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+              gap: 9px; font-family: var(--mono); font-size: 12px;
               font-variant-numeric: tabular-nums; }
   .g-tf { font-size: 8.5px; letter-spacing: .08em; color: var(--ink-faint); text-align: center; }
   .g-track { position: relative; height: 7px; background: var(--rule-soft); border-radius: 2px; }
@@ -696,7 +886,7 @@ const CSS = `
      verdict - where there is one - by the number's own state colour. */
   .dd-bars { margin-top: 9px; display: grid; gap: 8px; }
   .dd-bar { display: grid; grid-template-columns: 38px 1fr 58px; align-items: center; gap: 9px;
-            font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+            font-family: var(--mono); font-size: 12px;
             font-variant-numeric: tabular-nums; }
   .b-lab { font-size: 9.5px; letter-spacing: .04em; color: var(--ink-faint); }
   .b-track { position: relative; height: 8px; background: var(--rule-soft); border-radius: 2px; }
@@ -719,9 +909,9 @@ const CSS = `
   .dd-rows .dd-row:last-child { border-bottom: 0; }
   .dd-row dt { display: flex; align-items: baseline; gap: 5px; color: var(--ink-soft);
                min-width: 0; }
-  .dd-row dd { margin: 0; font-family: ui-monospace, Menlo, monospace; white-space: nowrap;
+  .dd-row dd { margin: 0; font-family: var(--mono); white-space: nowrap;
                font-variant-numeric: tabular-nums; }
-  .dd-row dt .norm { font-family: ui-monospace, Menlo, monospace; font-size: 9px; padding: 0;
+  .dd-row dt .norm { font-family: var(--mono); font-size: 9px; padding: 0;
                      color: var(--ink-faint); }
   /* Severity in form as well as colour, the same 2.5px rule the grid draws on a judged cell. */
   .dd-row.mark { font-weight: 600; }
@@ -767,25 +957,60 @@ const CSS = `
   }
 `;
 
+/**
+ * The pre-paint theme script.
+ *
+ * RUNS BEFORE FIRST PAINT, which is the only place this can be done. Read the stored mode, set the
+ * two attributes the stylesheet and the toggle's label key off, and get out of the way. If it ran
+ * from an effect instead, a viewer who chose dark would see one painted frame of cream paper on
+ * every navigation — the flash is not a nicety, it is the whole reason the script exists.
+ *
+ * It duplicates the mapping in `components/ThemeToggle.tsx` (applyMode) because it cannot import it:
+ * this text is inlined into the document head and runs before any bundle. The duplication is four
+ * lines and is the reason the export is documented as shared.
+ *
+ * Kept as a plain double-quoted string. NO BACKTICKS and no template interpolation — the same
+ * hazard as the CSS above, in a place where the error would be a silent no-op instead of a build
+ * failure, because a script that throws leaves the attributes unset and the page merely follows the
+ * OS. The catch does exactly that on purpose.
+ */
+const THEME_SCRIPT =
+  '(function(){var e=document.documentElement;try{var m=localStorage.getItem("swing-theme");' +
+  'if(m!=="light"&&m!=="dark")m="system";e.setAttribute("data-mode",m);' +
+  'if(m==="system"){e.removeAttribute("data-theme")}else{e.setAttribute("data-theme",m)}}' +
+  'catch(x){e.setAttribute("data-mode","system")}})();';
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // suppressHydrationWarning because THEME_SCRIPT writes data-mode and data-theme onto this
+    // element before React hydrates. The attributes are deliberately not in the server markup —
+    // the server does not know the viewer's choice, and guessing would be the flash again.
+    <html lang="en" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
+        {/* Spectral is the serif for titles; the two Plex families are the interface and its
+            condensed labels. Numbers use the platform monospace, which needs no download. */}
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=Spectral:wght@400;600&display=swap"
         />
         <style dangerouslySetInnerHTML={{ __html: CSS }} />
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
         {/* The persistent application frame. Two tabs carry the entire product: Dashboard answers
             "what is happening across the universe", Deep Dive answers "what is happening inside
-            these names". No third workflow competes with those two. */}
+            these names". No third workflow competes with those two.
+
+            THE TABS ARE RENDERED HERE BUT DRAWN AT THE BOTTOM of the viewport — .tabs is fixed, see
+            the stylesheet. They stay inside the header element so the document order still reads
+            brand, navigation, theme, content, which is the order a keyboard and a screen reader
+            walk; only the painting moved. */}
         <header className="frame">
           <span className="brand">Swing Tracker</span>
           <Tabs />
+          <ThemeToggle />
         </header>
         {children}
       </body>
