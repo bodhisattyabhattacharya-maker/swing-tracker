@@ -1589,3 +1589,61 @@ summary, and summaries do. It says so in its own second line and defers to `FEAT
 append-only and therefore cannot. The alternative, generating it from the database, was considered
 and rejected: the useful half of that section is *why* something is blocked, and no query knows
 that.
+
+## 0052 — 2026-09-20 — The Atelier palette, and red/green reversed — with one scale that is not a verdict
+
+**Context:** Bodhi produced a 30-page visual specification for the finished product. Its palette is
+warm — cream paper, near-black warm ink, sparse soft shadows — where this page had been cool
+grey-green since 0005. It also colours verdicts **red and green**, which decision 0018 had
+explicitly rejected.
+
+**The reversal, and why the original reasoning does not survive it.** 0018's argument was that
+below a norm means possibly cheap and above means possibly stretched, both equally interesting, so
+neither may look like a failure. The spec answers that directly rather than ignoring it: *"Red and
+green express the relationship to a rule, not a recommendation. Never add arrows, buy, sell, ranks,
+or composite scores."* The tracker keeps every one of those prohibitions. What changes is only the
+hue carrying "outside the band", and the gain is real — the MA signal chips (Golden / Death, Bull /
+Bear, Rising / Falling) are read instantly in red and green and were near-unreadable in blue and
+ochre. Bodhi, 2026-09-19: *follow the design — muted red/green*.
+
+**Muted, because the numbers sit on the tint.** Signal red and signal green fail against 13px text.
+Every pairing is now enumerated by `scripts/ci/check_contrast.sh` against a 4.5:1 floor — the AA
+bar for normal text, which is the right bar here because these labels run 9–13px, not the 3:1
+large-text allowance.
+
+**Two things the swap broke that a screenshot would not have shown.**
+
+*The moving-average overlays.* They drew in `--accent`, `--below` and `--above`, harmless while
+those were teal, blue and ochre. The moment verdicts became red and green, the 50-day average would
+have been verdict red and the 200-day verdict green — colour with no judgement behind it, on a page
+where those two hues mean a norm was crossed. Overlays now have `--ma1/--ma2/--ma3`: brass, slate,
+plum. They are reference lines, not verdicts.
+
+*VIX.* Its band is 16–30, so under "red is below the band, green is above" a calm tape at 14 paints
+red and a stressed one at 34 paints green — backwards to anyone who has looked at a volatility
+chart, and read by the eye before the number beside it. **Inverting VIX alone was rejected**: an
+exception inside a mapping is how a palette stops meaning anything. Instead a market tile now
+declares its **scale**. `verdict` is the ordinary red/green pair every security metric uses;
+`intensity` is calm-to-stressed in slate and amber, used by the VIX tile and the regime strip and
+nothing else. Red and green keep exactly one meaning product-wide, and the market's temperature
+stops borrowing a security's vocabulary. Term structure stays on the verdict scale and is correct
+there — below zero is backwardation, and backwardation in red is right. (Bodhi chose this over
+inverting VIX and over leaving it uniform, 2026-09-20.)
+
+**A theme toggle, which 0047 had deferred to v2.** Three positions, not two: system → light → dark.
+A two-position switch cannot express "follow the OS", which is what every first visit is and what
+this page did exclusively until now. The state lives on the document as `data-theme` and
+`data-mode`, written by a script that runs **before first paint** — from an effect it would flash
+the wrong palette on every navigation — and the button renders no state of its own, so its label
+comes from CSS keyed on the attribute and there is no hydration mismatch to suppress. `chart-theme.ts`
+needed no change at all: its MutationObserver on `data-theme` was wired on 2026-09-18 while nothing
+set that attribute, and those four speculative lines were the entire integration.
+
+**The palette also fixed an accessibility defect it did not cause.** `--ink-faint` had been 2.5–3.0:1
+against its own surfaces since 0005 and is used at 9–11px throughout. Measuring every pairing is
+what surfaced it. The three ink levels were re-spaced to 14.6 / 6.6 / 4.6 in light and 12.8 / 7.2 /
+4.9 in dark, so the hierarchy survives and the floor is met.
+
+**One claim made true.** `chart-theme.ts` has said since it was written that "the check below fails
+the build if these drift from the stylesheet". No such check existed. `check_contrast.sh` now
+compares its FALLBACK to the `:root` block value for value, both directions.

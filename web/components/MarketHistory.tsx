@@ -223,12 +223,17 @@ function Chart(
       // white surface a strip of 91 inside sessions and 33 below sessions was indistinguishable
       // from the panel itself. Only the 2 "above" sessions were visible, and a chart built to show
       // three regimes showed one. A tint that works as a background does not work as a mark.
+      // THE INTENSITY SCALE, NOT THE VERDICT ONE. This strip is the VIX tile's colouring in
+      // timeline form, and it moved off red/green on 2026-09-20 for the reason recorded above
+      // MARKET_TILES in lib/market.ts: with verdicts at muted red and green, "below the band" is a
+      // calm tape and would have painted red, "above" a stressed one painting green. Slate for calm,
+      // amber for stressed; the middle stays the neutral rule colour it always was.
       const colourFor = (r: MarketRow) => {
         switch (regimeOf(r.vix)) {
           case "below":
-            return theme.below;
+            return theme.calm;
           case "above":
-            return theme.above;
+            return theme.stress;
           case "inside":
             return theme.rule;
           default:

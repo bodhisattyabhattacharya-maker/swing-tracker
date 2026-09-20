@@ -291,7 +291,12 @@ function Plot(
 
     // The averages, always drawn, always full width. Sparse by construction — `stitch` omits a bar
     // whose average does not exist yet rather than carrying the previous one forward.
-    const colours = [theme.accent, theme.below, theme.above];
+    // THE OVERLAY HUES, NOT THE VERDICT ONES. This array used to be [accent, below, above], which
+    // was fine while those were teal, blue and ochre; with verdicts now muted red and green
+    // (decision 0052) it would have drawn the 50-day average in the colour that means "below its
+    // norm" everywhere else on the page. Order must match .pc-key.k0/k1/k2 in app/layout.tsx, which
+    // is what the legend beside this canvas is coloured from.
+    const colours = [theme.ma1, theme.ma2, theme.ma3];
     OVERLAYS[series.tf].forEach((spec, i) => {
       const pts = series.overlays[spec.key] ?? [];
       if (pts.length === 0) return;

@@ -98,7 +98,14 @@ function MarketBlock(
       {MARKET_TILES.map((t) => {
         const c = by.get(t.param);
         const v = c?.verdict ?? null;
-        const cls = v === "below" || v === "above" ? `tile mark ${v}` : "tile";
+        // The verdict names a DIRECTION; the tile's scale decides what that direction is called in
+        // colour. On the verdict scale below/above are the red/green pair every security metric
+        // uses; on the intensity scale they are calm/stressed, which is VIX and nothing else today.
+        // See the note above MARKET_TILES for why VIX is not simply inverted.
+        const tone = v === "below" || v === "above"
+          ? (t.scale === "intensity" ? (v === "below" ? "calm" : "stress") : v)
+          : null;
+        const cls = tone ? `tile mark ${tone}` : "tile";
         const asOf = c?.as_of ?? null;
         return (
           <div key={t.param} className={cls} title={t.hint}>
