@@ -126,7 +126,7 @@ omission three times. There is no user-led refresh by design, so the schedule is
 `public.recursive_indicators` (0030); norms, flags and `grid_cells` across both timeframes with
 weekly joined by date arithmetic that cannot see the future (0032); `rs_cells` (relative strength
 at 63/126/252 **bars**), `signal_cells` (MA stack, both crosses with bars since, both slopes),
-`market_context` and its matview `market_history`; pipeline-based staleness (0026) and
+`market_context` and its matview `market_history`; pipeline-based staleness (0026), measured against the SCHEDULE rather than a stopwatch since 0056 - the flat 30-hour count was true for a quarter of every week because the ingest does not run at weekends - and
 per-symbol coverage (`symbols_priced` / `symbols_behind`, 0045).
 
 **Interface.** The **Dashboard** at `/` — 53 names banded by theme, a two-tier sticky header, four

@@ -45,6 +45,24 @@ function freshnessUnknown(status: Status | null): boolean {
   return !!status && (status.hours_since_success === undefined || status.is_stale === undefined);
 }
 
+/**
+ * "Monday evening" — a scheduled run named the way a person would say it.
+ *
+ * Deliberately not the full timestamp. The banner is read by someone deciding whether to worry,
+ * and "the ingest scheduled for Monday evening did not complete" answers that; the exact instant
+ * is on /status for whoever is actually debugging it. Falls back to the raw value rather than
+ * guessing if the string is not a date we can parse — an unreadable timestamp in a banner about
+ * reliability should look wrong, not plausible.
+ */
+function fmtRun(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const day = d.toLocaleDateString("en-GB", { weekday: "long", timeZone: "UTC" });
+  const h = d.getUTCHours();
+  const part = h < 5 ? "night" : h < 12 ? "morning" : h < 17 ? "afternoon" : "evening";
+  return `${day} ${part}`;
+}
+
 function freshness(status: Status | null): string {
   if (!status) return "unknown";
   if (freshnessUnknown(status)) return "unknown";
@@ -245,14 +263,27 @@ export default async function Dashboard() {
         : status?.is_stale
         ? (
           <div className="banner stale">
+            {/* NAMES THE RUN THAT WAS MISSED, not the hours elapsed.
+                Until 2026-09-20 this said "last completed N hours ago… it should run every weekday
+                evening" — and on a Sunday it said that about a Friday run that had completed
+                perfectly, because the rule was a flat 30-hour count on a pipeline that does not
+                run at weekends (decision 0056). It was wrong for 42 of every 168 hours.
+                Now `is_stale` is schedule-aware, so reaching this branch means a scheduled run
+                genuinely did not complete, and the useful sentence says WHICH one. The hour count
+                stays as the secondary fact; it was never the actionable part. */}
             <b>
-              {typeof status.hours_since_success === "number"
-                ? `The daily ingest last completed ${Math.round(status.hours_since_success)} hours ago.`
-                : "The daily ingest has never completed successfully."}
+              {status.last_success_at === null || status.last_success_at === undefined
+                ? "The daily ingest has never completed successfully."
+                : status.last_expected_at
+                ? `The ingest scheduled for ${fmtRun(status.last_expected_at)} did not complete.`
+                : "A scheduled ingest did not complete."}
             </b>{" "}
-            It should run every weekday evening, and the schedule is the only way data moves — there
-            is no refresh button. The numbers below are real; they are just not as current as they
-            should be. Newest bar: {status.data_through ?? "none"}.
+            The schedule is the only way data moves — there is no refresh button. The numbers below
+            are real; they are just not as current as they should be. Newest bar:{" "}
+            {status.data_through ?? "none"}
+            {typeof status.hours_since_success === "number"
+              ? `, last successful run ${Math.round(status.hours_since_success)}h ago.`
+              : "."}
           </div>
         )
         : null}

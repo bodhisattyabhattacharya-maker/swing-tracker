@@ -59,6 +59,44 @@ end
 $fn2$;
 \o
 
+-- ---------------------------------------------------------------------------
+-- The scheduled cron expression, or null where pg_cron is not installed.
+--
+-- DYNAMIC SQL, AND NOT BY PREFERENCE. A plain `select schedule from cron.job` inside a guarded
+-- `case` still fails: Postgres resolves relation names when it PARSES the statement, long before
+-- any branch is evaluated, so on a database without pg_cron - which is every CI database - the
+-- reference takes down the whole file, not just this check. Found by running it.
+--
+-- Same reason `pg_temp.plan_of` above is a function: some things cannot be expressions.
+-- ---------------------------------------------------------------------------
+\o /dev/null
+create or replace function pg_temp.scheduled_cron(job text) returns text
+language plpgsql stable as $fn$
+declare out text;
+begin
+  if to_regclass('cron.job') is null then return null; end if;
+  execute 'select schedule from cron.job where jobname = $1' into out using job;
+  return out;
+end $fn$;
+\o
+
+-- ---------------------------------------------------------------------------
+-- STALENESS IS SCHEDULE-AWARE (migration 20260920223000, decision 0056).
+--
+-- The rule it replaced was `hours_since_success > 30`, which on a pipeline that only runs Monday
+-- to Friday was true for 42 of every 168 hours - a quarter of all wall-clock time, every week,
+-- with nothing wrong. Measured, not estimated: an hour-by-hour simulation of a perfectly healthy
+-- week is in the PR that introduced this.
+--
+-- Three things to hold, and the third is the one a fix like this gets wrong:
+--   1. The schedule it reasons from is the schedule the job runs on. `flags.ingest_cron` is a
+--      duplicate of `cron.job.schedule`; a duplicate that cannot drift silently is a different
+--      thing from a duplicate, which is the VIX_BAND argument.
+--   2. A weekend, and a Monday before the evening fire, are quiet.
+--   3. **A genuinely missed run is still loud.** A fix for a false positive that goes silent on
+--      real failures has made the page worse, not better.
+-- ---------------------------------------------------------------------------
+
 with expected as (
   select e.d, e.param, e.expected,
          case e.param
@@ -979,6 +1017,93 @@ shape as (
            'the banner asks for a date and a symbol count; the dashboard asks for it on every revalidation'
   ) t
 ),
+schedule_aware as (
+  select * from (
+    select 'staleness'::text as section,
+           'flags.ingest_cron matches the scheduled job'::text as check_name,
+           case
+             -- Null means pg_cron is absent (every CI database). Skipped, not failed: asserting
+             -- against a scheduler that is not installed would fail for the wrong reason.
+             when pg_temp.scheduled_cron('swing-ingest-daily') is null then 'PASS'
+             when pg_temp.scheduled_cron('swing-ingest-daily')
+                  = (select value #>> '{}' from public.flags where key = 'ingest_cron') then 'PASS'
+             else 'FAIL' end as status,
+           coalesce((select value #>> '{}' from public.flags where key = 'ingest_cron'), 'unset')
+             as expected_v,
+           coalesce(pg_temp.scheduled_cron('swing-ingest-daily'), 'pg_cron absent, skipped')
+             as actual_v,
+           'the flag is what the rule reasons from; drift means the page judges against a schedule nothing runs on'::text as note
+
+    -- ---- quiet when it should be quiet ------------------------------------
+    union all
+    select 'staleness', 'Sunday expects Friday''s fire, not an hour count',
+           case when public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, '30 22 * * 1-5', 60)
+                     = '2026-09-18 22:30+00'::timestamptz then 'PASS' else 'FAIL' end,
+           '2026-09-18 22:30+00',
+           coalesce(public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, '30 22 * * 1-5', 60)::text, 'null'),
+           'the exact moment the old rule reported stale on a healthy pipeline: 47 hours, all of it weekend'
+    union all
+    select 'staleness', 'Monday before the fire still expects Friday',
+           case when public.previous_scheduled_ingest('2026-09-21 12:00+00'::timestamptz, '30 22 * * 1-5', 60)
+                     = '2026-09-18 22:30+00'::timestamptz then 'PASS' else 'FAIL' end,
+           '2026-09-18 22:30+00',
+           coalesce(public.previous_scheduled_ingest('2026-09-21 12:00+00'::timestamptz, '30 22 * * 1-5', 60)::text, 'null'),
+           '61 hours after Friday and correctly silent - Monday''s run is not owed until the evening'
+    union all
+    select 'staleness', 'the grace window is respected',
+           case when public.previous_scheduled_ingest('2026-09-21 22:35+00'::timestamptz, '30 22 * * 1-5', 60)
+                     = '2026-09-18 22:30+00'::timestamptz then 'PASS' else 'FAIL' end,
+           '2026-09-18 22:30+00',
+           coalesce(public.previous_scheduled_ingest('2026-09-21 22:35+00'::timestamptz, '30 22 * * 1-5', 60)::text, 'null'),
+           'five minutes after the fire the run is still running; without grace the page flashes stale every weekday'
+
+    -- ---- loud when it should be loud ---------------------------------------
+    union all
+    select 'staleness', 'after Monday''s fire, a missed run is owed',
+           case when public.previous_scheduled_ingest('2026-09-21 23:35+00'::timestamptz, '30 22 * * 1-5', 60)
+                     = '2026-09-21 22:30+00'::timestamptz then 'PASS' else 'FAIL' end,
+           '2026-09-21 22:30+00',
+           coalesce(public.previous_scheduled_ingest('2026-09-21 23:35+00'::timestamptz, '30 22 * * 1-5', 60)::text, 'null'),
+           'the case a fix for a false positive breaks by going quiet; this is what stops that'
+    union all
+    select 'staleness', 'a Friday success is stale by Tuesday',
+           case when ('2026-09-18 22:45+00'::timestamptz
+                      < public.previous_scheduled_ingest('2026-09-22 12:00+00'::timestamptz, '30 22 * * 1-5', 60))
+                then 'PASS' else 'FAIL' end,
+           'true',
+           ('2026-09-18 22:45+00'::timestamptz
+            < public.previous_scheduled_ingest('2026-09-22 12:00+00'::timestamptz, '30 22 * * 1-5', 60))::text,
+           'Monday''s run never happened, so by Tuesday the last success predates the last owed fire'
+
+    -- ---- declines rather than guessing --------------------------------------
+    -- Asserted on the PURE form, which is why it exists: no test has to mutate public.flags and
+    -- put it back, which is the kind of test that passes for the wrong reason.
+    union all
+    select 'staleness', 'an unparseable schedule declines instead of guessing',
+           case when (select count(*) from (values
+                        ('*/15 * * * *'), ('30 22 * * MON-FRI'), ('30 22 * * 1,3,5'),
+                        ('99 99 * * 1-5'), ('garbage'), ('')
+                      ) c(x)
+                      where public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, c.x, 60)
+                            is not null) = 0
+                then 'PASS' else 'FAIL' end,
+           '0 of 6 guess',
+           (select count(*)::text from (values
+              ('*/15 * * * *'), ('30 22 * * MON-FRI'), ('30 22 * * 1,3,5'),
+              ('99 99 * * 1-5'), ('garbage'), ('')
+            ) c(x)
+            where public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, c.x, 60) is not null)
+           || ' of 6 returned a fire',
+           'a null reads as "cannot judge" in grid_status; inventing an alarm from a parse failure would be a second false positive'
+    union all
+    select 'staleness', 'a schedule it does understand is not declined',
+           case when public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, '30 22 * * 1-5', 60)
+                     is not null then 'PASS' else 'FAIL' end,
+           'not null',
+           coalesce(public.previous_scheduled_ingest('2026-09-20 21:45+00'::timestamptz, '30 22 * * 1-5', 60)::text, 'null'),
+           'the other half of the check above: declining everything would also pass it'
+  ) t
+),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
   union all
@@ -987,6 +1112,8 @@ all_rows as (
   select section, check_name, status, expected_v, actual_v, note from degenerate
   union all
   select section, check_name, status, expected_v, actual_v, note from shape
+  union all
+  select section, check_name, status, expected_v, actual_v, note from schedule_aware
 )
 select * from (
   select 0 as ord, * from all_rows
