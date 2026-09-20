@@ -41,13 +41,28 @@ export const MARKET_TILES: Array<{
   hint: string;
   /** Omitted means "verdict" — the ordinary red/green pair every security metric uses. */
   scale?: TileScale;
+  /**
+   * The line under the value: what this number IS, in three or four words.
+   *
+   * Two forms, because two kinds of tile. `states` names each side of the norm, so the reader is
+   * told which side this value fell on without decoding the colour — the spec asks for exactly
+   * that, and it is also what makes the tile legible in greyscale. `note` is a fixed phrase for a
+   * tile with no norm, where there is no side to be on and the useful thing to say is what the
+   * number measures.
+   */
+  states?: { below: string; normal: string; above: string };
+  note?: string;
 }> = [
   { param: "vix", label: "VIX", digits: 2, signed: false, suffix: "", scale: "intensity",
+    states: { below: "calm · below band", normal: "in band", above: "stressed · above band" },
     hint: "16–30 is the band we hedge in; above it is where scaling out gets considered." },
   { param: "term_structure", label: "VIX term structure", digits: 1, signed: true, suffix: "%",
+    states: { below: "backwardation", normal: "contango", above: "contango" },
     hint: "3-month VIX over spot. Negative is backwardation — the market pricing near-term stress." },
   { param: "spx_close", label: "S&P 500", digits: 2, signed: false, suffix: "",
+    note: "the relative-strength base",
     hint: "The base every relative-strength number on the grid is measured against." },
   { param: "breadth_pct", label: "Breadth", digits: 0, signed: false, suffix: "%",
-    hint: "Share of the 43 COMPANIES above their own 50-day average. Funds are excluded — a basket of our own names would count them twice." },
+    note: "above own SMA200",
+    hint: "Share of the ELIGIBLE companies above their own 200-day average — eligible meaning it has 200 bars, which is fewer than the 43 we track for a newly listed name. Funds are excluded; a basket of our own names would count them twice." },
 ];

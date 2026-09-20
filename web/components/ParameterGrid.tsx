@@ -22,12 +22,16 @@
  *
  * No score, no ranking, no composite. Every column is independently sorted and independently
  * coloured against its own norm. Colour expresses a relationship to a threshold we set, never a
- * recommendation — which is why the palette is blue and ochre rather than red and green.
+ * recommendation. The palette is muted red and green (decision 0052, which reversed 0018): red is
+ * below the band, green is above, and neither is a verdict on the company — the tracker has no
+ * opinion about whether cheap is good. Colour is never the only carrier: every judged cell also has
+ * the 2.5px left rule, the norm printed in its heading, and the number itself.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CellHistoryChart from "./CellHistoryChart";
 import { HISTORY_PARAMS } from "../lib/cell-history";
+import Sparkline from "./Sparkline";
 import {
   COLOURED,
   type CellLike,
@@ -50,6 +54,32 @@ export interface GridRow extends Security {
   name: string;
   theme: string;
   bellwether: boolean;
+}
+
+/**
+ * What to call the members of a theme band: stocks, funds, or the neutral "names".
+ *
+ * Measured from the rows rather than assumed. Every theme but one holds companies, and the one
+ * that does not — ETFs — is the band where "10 stocks" would be most obviously wrong.
+ */
+export function bandNoun(list: Array<{ is_fund: boolean }>): string {
+  if (list.length === 0) return "names";
+  const funds = list.filter((r) => r.is_fund).length;
+  if (funds === 0) return list.length === 1 ? "stock" : "stocks";
+  if (funds === list.length) return list.length === 1 ? "fund" : "funds";
+  return "names";
+}
+
+/**
+ * " · AVGO bellwether", or an empty string.
+ *
+ * Returns the FIRST bellwether. A theme with two would be a config error rather than a display
+ * problem — `config/watchlist.yml` is where that is decided — and printing both here would hide
+ * it behind something that looks deliberate.
+ */
+export function bellwetherOf(list: Array<{ symbol: string; bellwether: boolean }>): string {
+  const b = list.find((r) => r.bellwether);
+  return b ? ` \u00b7 ${b.symbol} bellwether` : "";
 }
 
 export interface Norm {
@@ -338,7 +368,15 @@ function Theme(
           <button className="bandbtn" onClick={onToggle} aria-expanded={!collapsed}>
             <span className="chev">{collapsed ? "▸" : "▾"}</span>
             {THEME_LABELS[theme] ?? theme}
-            <span className="n">{list.length} {list.length === 1 ? "name" : "names"}</span>
+            {/* "6 STOCKS · AVGO BELLWETHER", from the spec.
+                THE NOUN IS MEASURED, NOT ASSUMED. The spec's mockups say STOCKS because every
+                theme in them holds companies; ours does not — the ETFs theme is ten funds, and
+                calling those stocks would be wrong on the one band where it is easiest to notice.
+                So the word follows what is actually in the band, and "names" survives for a mixed
+                one, which is what this said everywhere before today.
+                The bellwether is named rather than only marked with a ◆ on its row: the band is
+                collapsible, and when it is collapsed the ◆ is not on screen to be found. */}
+            <span className="n">{list.length} {bandNoun(list)}{bellwetherOf(list)}</span>
           </button>
         </td>
       </tr>
@@ -423,7 +461,20 @@ function Cell(
           : null}
       </>
     );
-  } else if (col.render === "sparkline") body = <span className="dash">—</span>;
+  } else if (col.render === "sparkline") {
+    body = <Sparkline values={cell?.series ?? []} label={col.label} />;
+  } else if (col.render === "rank") {
+    // RANK OVER PEER COUNT. The denominator is omitted rather than guessed when the cell does not
+    // carry one — a rank printed over an invented total would be worse than a rank printed alone.
+    body = (
+      <>
+        <span className="rank-n">{cell?.value}</span>
+        {typeof cell?.peers === "number"
+          ? <span className="rank-of">/ {cell.peers}</span>
+          : null}
+      </>
+    );
+  }
   else {
     body = (
       <>

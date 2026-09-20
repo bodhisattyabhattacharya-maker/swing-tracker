@@ -98,9 +98,10 @@ const CSS = `
        landmark, and a saturated one would compete with the judged cells underneath it.
        FORWARD LOOK IS GREY, and that is not laziness: no vendor sells consensus at any tier, so
        that band is permanently planned and a colour promising otherwise would be a lie. */
-    --g-price:     #7a6a55;
-    --g-rsi:       #3a6d8c;
-    --g-ma:        #5c7a6a;
+    --g-price:      #7a6a55;
+    --g-techdaily:  #3a6d8c;
+    --g-techweekly: #1f4d5c;
+    --g-ma:         #5c7a6a;
     --g-relative:  #8a6a3f;
     --g-revenue:   #6b5f8c;
     --g-profit:    #8a5f6a;
@@ -154,9 +155,10 @@ const CSS = `
       --ma1:       #d6a55e;
       --ma2:       #78b4d4;
       --ma3:       #b69bd0;
-      --g-price:     #a99781;
-      --g-rsi:       #79aac7;
-      --g-ma:        #8fb3a0;
+      --g-price:      #a99781;
+      --g-techdaily:  #79aac7;
+      --g-techweekly: #4d8a9e;
+      --g-ma:         #8fb3a0;
       --g-relative:  #c2a173;
       --g-revenue:   #a396c6;
       --g-profit:    #c295a1;
@@ -191,9 +193,10 @@ const CSS = `
     --ma1:       #d6a55e;
     --ma2:       #78b4d4;
     --ma3:       #b69bd0;
-    --g-price:     #a99781;
-    --g-rsi:       #79aac7;
-    --g-ma:        #8fb3a0;
+    --g-price:      #a99781;
+    --g-techdaily:  #79aac7;
+    --g-techweekly: #4d8a9e;
+    --g-ma:         #8fb3a0;
     --g-relative:  #c2a173;
     --g-revenue:   #a396c6;
     --g-profit:    #c295a1;
@@ -291,6 +294,9 @@ const CSS = `
   .tile.mark .tile-k { color: inherit; opacity: .8; }
   .tile-v { font-family: var(--mono); font-size: 19px;
             font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.25; }
+  .tile-s { font-family: var(--sans-cond); font-size: 10px; letter-spacing: .07em;
+            text-transform: uppercase; color: var(--ink-faint); min-height: 14px; }
+  .tile.mark .tile-s { color: inherit; opacity: .85; }
   .tile-d { font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
             min-height: 14px; }
   .tile.mark .tile-d { color: inherit; opacity: .75; }
@@ -436,7 +442,12 @@ const CSS = `
      nothing complains, which is the shape of defect this project has now shipped three times, so
      scripts/ci/check_contrast.sh enumerates GROUPS and fails on a key with no rule. */
   thead tr.grp th.price      { box-shadow: inset 0 3px 0 var(--g-price); }
-  thead tr.grp th.rsi        { box-shadow: inset 0 3px 0 var(--g-rsi); }
+  /* The two technicals bands are two depths of ONE hue, on purpose: they are the same kind of
+     reading at two timeframes, and a reader who learns that slate means "where the price sits
+     against an average" should not have to learn it twice. Every other band is its own hue
+     because every other band is its own kind of question. */
+  thead tr.grp th.techdaily  { box-shadow: inset 0 3px 0 var(--g-techdaily); }
+  thead tr.grp th.techweekly { box-shadow: inset 0 3px 0 var(--g-techweekly); }
   thead tr.grp th.ma         { box-shadow: inset 0 3px 0 var(--g-ma); }
   thead tr.grp th.relative   { box-shadow: inset 0 3px 0 var(--g-relative); }
   thead tr.grp th.revenue    { box-shadow: inset 0 3px 0 var(--g-revenue); }
@@ -487,7 +498,7 @@ const CSS = `
   tbody td.st-below::before { background: var(--below); }
   tbody td.st-above::before { background: var(--above); }
   .bell { color: var(--accent); font-size: 10px; vertical-align: 3px; margin-left: 3px; }
-  .warm { color: var(--warn); margin-left: 2px; }
+  .warm { color: var(--ink-faint); margin-left: 2px; }
 
   .foot { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
           gap: 22px 34px; margin-top: 30px; }
@@ -643,7 +654,14 @@ const CSS = `
              font: inherit; color: inherit; text-align: right; cursor: pointer; }
   td.st-null, td.st-na, td.st-planned, td.st-no-norm { color: var(--ink-faint); }
   td.st-normal { color: var(--ink); }
-  td.st-warmup { color: var(--warn); }
+  /* WARM-UP IS A PATTERN, NOT A COLOUR (the spec, 2026-09-20). The value exists and is shown; what
+     is missing is the right to judge it, because the indicator has not seen enough bars yet. Ochre
+     text said that in the same channel a verdict uses, so a warm-up cell read as a third verdict.
+     A hatch says "provisional" in a channel nothing else on this page uses, and it survives
+     greyscale and every form of colour blindness, which is the argument the eight-state model was
+     built on. The asterisk stays as the textual carrier and loses its colour. */
+  td.st-warmup { color: var(--ink); background-image: repeating-linear-gradient(
+    -45deg, transparent 0 3px, var(--rule-soft) 3px 5px); }
   .dash { color: var(--ink-faint); }
   .unit { font-size: 10px; color: var(--ink-faint); margin-left: 1px; }
 
@@ -671,6 +689,27 @@ const CSS = `
   td.st-above .chip { background: var(--above-bg); color: var(--above); }
   td.st-below .chip { background: var(--below-bg); color: var(--below); }
   .chipnum { margin-left: 6px; font-size: 11.5px; color: var(--ink-faint); }
+
+  /* THE EIGHT-QUARTER TRACE. Neutral ink, always — see components/Sparkline.tsx. The newest
+     quarter is marked by WEIGHT, not by hue: full ink against seven muted bars. Colouring a
+     falling series would make it a verdict, and the cell already carries a verdict of its own in
+     its background, which the trace must not argue with. */
+  .spark { display: inline-block; vertical-align: -3px; overflow: visible; }
+  .spark-b { fill: var(--ink-faint); }
+  .spark-b.last { fill: var(--ink); }
+  .spark-zero { stroke: var(--rule); stroke-width: 1; }
+  /* Inside a judged cell the trace picks up that cell's colour, so a red cell does not contain a
+     grey chart floating on top of it. The verdict is still the cell's, not the trace's. */
+  td.st-below .spark-b, td.st-above .spark-b,
+  .dd-sec .st-below .spark-b, .dd-sec .st-above .spark-b { fill: currentColor; opacity: .45; }
+  td.st-below .spark-b.last, td.st-above .spark-b.last,
+  .dd-sec .st-below .spark-b.last, .dd-sec .st-above .spark-b.last { opacity: 1; }
+
+  /* RANK IS A FRACTION, NOT A NUMBER. "5" alone is not a fact — fifth of six is a different
+     statement from fifth of forty. The denominator is set smaller and faint so the rank still
+     reads first. */
+  .rank-n { font-weight: 600; }
+  .rank-of { color: var(--ink-faint); font-size: 11px; margin-left: 1px; }
 
   /* ---------------------------------------------------------------------
      CELL DETAIL SHEET. Opens over the table without leaving it. On a phone
@@ -931,7 +970,10 @@ const CSS = `
   .dd-sec .st-below { color: var(--below); }
   .dd-sec .st-above { color: var(--above); }
   .dd-sec .st-normal { color: var(--ink); }
-  .dd-sec .st-warmup { color: var(--warn); }
+  /* The strip's warm-up carries the same hatch as the grid's - see td.st-warmup. Its own rule,
+     because a strip row is a div and none of the grid's selectors reach it. */
+  .dd-sec .st-warmup { color: var(--ink); background-image: repeating-linear-gradient(
+    -45deg, transparent 0 3px, var(--rule-soft) 3px 5px); }
   .dd-sec .st-null, .dd-sec .st-planned, .dd-sec .st-no-norm { color: var(--ink-faint); }
   /* THERE IS NO .dd-sec .st-na RULE, deliberately, and that absence is checked. A section whose
      every param is inapplicable collapses to one sentence (see sectionRender), so no strip element

@@ -1121,3 +1121,49 @@ against its own surfaces since the first palette, at 9–11px. Fixed here; see 0
 
 **Not verified here:** Spectral does not load in the sandbox, which has no route to Google Fonts, so
 every screenshot shows the fallback serif. The check asserts a serif resolved, not that Spectral did.
+
+## 2026-09-20 — Ten bands, the spec's order, and two renderers that cannot disagree
+
+**What:** the header takes the visual specification's ten category bands. The standalone RSI band
+is gone; `TECHNICALS · DAILY` and `TECHNICALS · WEEKLY` hold the measurements split by timeframe,
+and `MA SIGNALS` keeps only the five derived signals. Same 51 columns, and because `columnsFor`
+sorts by band and then by declaration order, every preset picked up the new order for free.
+
+Theme bands now read **`2 STOCKS · AVGO BELLWETHER`**, with the noun measured from the rows rather
+than assumed — the ETFs band says `10 FUNDS`, which is the one place "stocks" would have been most
+obviously wrong. Market tiles gain a descriptor line: `IN BAND`, `CONTANGO`, `ABOVE OWN SMA200`, so
+a tile is readable without decoding its colour. Warm-up cells become a **hatch** instead of ochre
+text, because ochre said "provisional" in the same channel a verdict uses.
+
+**Two render kinds built for data that does not exist yet.** `rank` draws `5 / 6` — rank over peer
+count, the denominator travelling with the rank from the same window that computed it. `sparkline`
+draws the eight-quarter trace: neutral ink, newest quarter marked by weight not hue, a hole left as
+a hole because a quarter a company did not report is not a zero. Both are **unreachable until Stage
+F** — every column carrying them is planned, and both renderers test `planned` first — and
+`check_render_kinds.sh` prints that fact on every run rather than leaving it in a comment.
+
+**How:** decision 0053. `lib/sparkline.ts` is a new pure module holding the trace geometry, shared
+by the grid cell and the strip row so the two cannot draw it differently; `components/Sparkline.tsx`
+is the SVG. `CellLike` gains `series` and `peers`, both documented as Stage F.
+
+**Verified by:** `scripts/ci/check_render_kinds.sh`, new and negative-tested five ways — every kind
+in the union used by a column, an explicit branch in **both** renderers for every kind except the
+documented fall-through, the two renderers handling the same set, every payload field declared on
+`CellLike`, and a printed reachability table. In a browser: the ten bands read off the header in
+order with ten distinct rails and spans summing to 51, the theme bands checked for their count and
+bellwether, the four tiles checked for a descriptor and for **equal height** — a line that appears
+on one tile and not another is what makes a row of tiles ragged — and the warm-up cell's
+`background-image` read back as a repeating gradient. The other four web checks still pass.
+
+**The geometry harness earned itself immediately.** Ten cases, two broken: an all-zero series put
+every bar one pixel below the frame, and an all-negative series drew all eight outside it, because
+the scale ran from the most negative value to the least and left zero above the top of the box.
+Neither would have been visible until Stage F, by which time the cause would have been buried under
+a data migration.
+
+**And a wrong tooltip.** The Breadth tile said "above their own 50-day average". The SQL filters on
+`sma200` and `DEFINITIONS.md` says SMA200; the tile was the only thing that disagreed. Found by
+reading the migration before writing a descriptor for it.
+
+**Also corrected:** two file headers shipped yesterday still said "the palette is blue and ochre
+rather than red and green", which stopped being true in the same PR that shipped them.

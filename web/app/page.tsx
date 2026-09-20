@@ -114,6 +114,18 @@ function MarketBlock(
               {formatValue(c?.value ?? null, t.digits, t.signed)}
               {c?.value === null || c?.value === undefined ? "" : t.suffix}
             </span>
+            {/* WHAT THIS NUMBER IS, IN WORDS, on its own reserved line. The states triple names
+                the side of the norm this value fell on, so the tile is readable without decoding
+                the colour — which is what makes it survive greyscale, and what the spec asks for.
+                Reserved even when empty, for the same reason .tile-d is: these four tiles are a
+                row, and a line that appears on one of them makes that tile taller than the rest.
+                Kept separate from the date line rather than sharing one, because at 10px the two
+                together wrap at the narrow end of the tile grid, and wrapping is the height. */}
+            <span className="tile-s">
+              {t.states && (v === "below" || v === "normal" || v === "above")
+                ? t.states[v]
+                : t.note ?? "\u00a0"}
+            </span>
             <span className="tile-d">
               {asOf && asOf !== gridDate ? `as of ${asOf}` : c?.has_norm === false ? "no norm" : " "}
             </span>
