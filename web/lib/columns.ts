@@ -330,9 +330,15 @@ export const PRESETS: Array<{ key: PresetKey; label: string; params: string[] | 
     key: "technicals",
     label: "Technicals",
     params: [
-      "rsi_hourly", "rsi_daily", "rsi_weekly",
-      "ma_stack", "cross_50_200", "cross_21_50",
+      "rsi_hourly", "rsi_daily",
       "close_vs_ema21d", "close_vs_sma50d", "close_vs_sma200d",
+      // The three weekly vs-average columns, added 2026-09-20. Without them this preset showed a
+      // TECHNICALS · WEEKLY band one column wide - accurate, since it did list rsi_weekly, but a
+      // band heading over a single column in the preset actually named "Technicals" read as an
+      // oversight. It was: the ten-band split gave the weekly readings a heading of their own and
+      // this preset was not revisited.
+      "rsi_weekly", "close_vs_ema21w", "close_vs_sma30w", "close_vs_sma200w",
+      "ma_stack", "cross_50_200", "cross_21_50",
       "sma50_slope", "sma200_slope",
       "pct_off_52w_high", "pct_off_high_stored", "volume_ratio",
     ],

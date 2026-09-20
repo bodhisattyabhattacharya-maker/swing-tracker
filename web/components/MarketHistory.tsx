@@ -33,6 +33,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AreaSeries,
+  BaselineSeries,
   type ISeriesApi,
   type IChartApi,
   HistogramSeries,
@@ -52,10 +53,14 @@ import {
   type MarketRow,
   ma20Points,
   points,
+  bandRects,
+  type RegimeBand,
   regimeCounts,
   regimeOf,
+  regimesPresent,
   spanLabel,
   VIX_BAND,
+  windowStats,
 } from "../lib/market-history";
 
 export interface Props {
@@ -81,6 +86,8 @@ export default function MarketHistory({ rows, error, gridDate }: Props) {
 
   const last = rows.length > 0 ? rows[rows.length - 1].d ?? null : null;
   const counts = regimeCounts(rows);
+  const present = regimesPresent(rows);
+  const stats = windowStats(rows);
 
   return (
     <section className="mh">
@@ -129,12 +136,43 @@ export default function MarketHistory({ rows, error, gridDate }: Props) {
                     </figure>
                   ))}
                 </div>
+                {/* WHAT THE WINDOW DID, in eight readings and counts. Two of them are counts
+                    because the charts are worst at counts: the term-structure line visibly dips
+                    below zero, but whether that was four sessions or fourteen cannot be read off
+                    it without tracing. See windowStats in lib/market-history.ts. */}
+                <dl className="mh-stats">
+                  {stats.map((st) => (
+                    <div key={st.key} className="mh-stat">
+                      <dt>{st.label}</dt>
+                      <dd>
+                        {st.value}
+                        {st.note ? <span className="mh-stat-n">{st.note}</span> : null}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
                 <p className="note mh-note">
-                  {counts.inside} sessions inside the VIX band, {counts.below} below it,{" "}
-                  {counts.above} above.
-                  {counts.unknown > 0
-                    ? ` ${counts.unknown} with no VIX publication, drawn as gaps rather than joined up.`
-                    : ""}{" "}
+                  <span className="mh-legend">
+                    {/* Only the bands with sessions in them. The SCALE still has five and the
+                        strip draws all five; what is conditional is this line. A legend entry
+                        reading "stress 0" would describe nothing, permanently. */}
+                    {present.map(({ band, count }) => (
+                      <span key={band.key} className="mh-leg">
+                        <i className={`mh-swatch r-${band.key}`} />
+                        {band.label} <b>{count}</b>
+                        <span className="mh-leg-r">{band.range}</span>
+                      </span>
+                    ))}
+                    {counts.unknown > 0
+                      ? (
+                        <span className="mh-leg">
+                          <i className="mh-swatch r-unknown" />
+                          no VIX publication <b>{counts.unknown}</b>
+                          <span className="mh-leg-r">drawn as gaps</span>
+                        </span>
+                      )
+                      : null}
+                  </span>
                   The 20-bar average starts at its {MA20_MIN_BARS}th session, not its first — before
                   that it is mostly its own seed, so it is not drawn.
                 </p>
@@ -163,6 +201,34 @@ function Chart(
 ) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
+  // Held so the band overlay can ask the VIX series where a price is. Only the VIX chart sets it.
+  const vixSeries = useRef<ISeriesApi<"Line"> | null>(null);
+  const [bands, setBands] = useState<Array<RegimeBand & { top: number; height: number }>>([]);
+  const [inset, setInset] = useState(0);
+
+  /**
+   * Place the regime tints behind the VIX line.
+   *
+   * HTML OVER THE CANVAS, NOT A CANVAS PRIMITIVE. Lightweight Charts has no horizontal band, and
+   * the two ways to fake one on the canvas are both worse: a filled series would appear in the
+   * crosshair readout as a value the reader can hover, and a thick price line cannot carry a
+   * label. These are five rectangles and five words that never animate, which is what HTML is
+   * for; the chart's own background is transparent, so they show through.
+   *
+   * Recomputed rather than remembered. The price scale is auto-fitted to the data, so the same
+   * band is at a different height whenever the window or the width changes.
+   */
+  const syncBands = useCallback(() => {
+    if (kind !== "vix") return;
+    const c = chart.current;
+    const sv = vixSeries.current;
+    if (!c || !sv) return;
+    // The plot stops above the time axis; without this the lowest band would run under the dates.
+    const plotBottom = height - c.timeScale().height();
+    setBands(bandRects((price) => sv.priceToCoordinate(price), 0, plotBottom));
+    // And stops short of the price axis on the right, or a tint would sit under its labels.
+    setInset(c.priceScale("right").width());
+  }, [kind, height]);
 
   const build = useCallback(() => {
     const el = box.current;
@@ -184,6 +250,7 @@ function Chart(
         lastValueVisible: false,
       });
       vix.setData(points(rows, "vix"));
+      vixSeries.current = vix;
       // The norm band, as two threshold lines on the series that HAS a norm. Same two numbers as
       // the VIX tile's colouring, from lib/market-history.ts, which CI pins to config/norms.yml.
       // No `title`. `axisLabelVisible` already prints the value on the price axis; a title printed
@@ -216,32 +283,30 @@ function Chart(
         lastValueVisible: false,
         priceFormat: { type: "volume" },
       });
-      // FULL-SATURATION TONES, NOT THE -bg TINTS, and this was a correction made on screen.
+      // FULL-SATURATION TONES, NOT THE -bg TINTS. Learned on screen when this strip had three
+      // states rather than five: the first version used the cell-background tints, which are
+      // near-white by design because they sit behind dark text, and on a pale panel a strip of 91
+      // ordinary sessions and 33 calm ones was indistinguishable from the panel itself. Only the
+      // 2 sessions above the band showed. A chart built to display a distribution displayed one
+      // value of it. A tint that works as a background does not work as a mark, and that holds
+      // for all five bands now.
       //
-      // The first version used --below-bg for "below" and --rule-soft for "inside". Both are
-      // near-white by design - they are cell backgrounds, meant to sit behind dark text - so on a
-      // white surface a strip of 91 inside sessions and 33 below sessions was indistinguishable
-      // from the panel itself. Only the 2 "above" sessions were visible, and a chart built to show
-      // three regimes showed one. A tint that works as a background does not work as a mark.
-      // THE INTENSITY SCALE, NOT THE VERDICT ONE. This strip is the VIX tile's colouring in
-      // timeline form, and it moved off red/green on 2026-09-20 for the reason recorded above
-      // MARKET_TILES in lib/market.ts: with verdicts at muted red and green, "below the band" is a
-      // calm tape and would have painted red, "above" a stressed one painting green. Slate for calm,
-      // amber for stressed; the middle stays the neutral rule colour it always was.
-      const colourFor = (r: MarketRow) => {
-        switch (regimeOf(r.vix)) {
-          case "below":
-            return theme.calm;
-          case "above":
-            return theme.stress;
-          case "inside":
-            return theme.rule;
-          default:
-            // A session with no VIX publication. Transparent, so the gap is a gap - the same rule
-            // the line charts follow by skipping the point rather than bridging it.
-            return "rgba(0,0,0,0)";
-        }
+      // THE INTENSITY RAMP, NOT THE VERDICT PAIR. Five bands since 2026-09-20 (decision 0054),
+      // anchored at its ends on --calm and --stress so the strip is the VIX tile's colouring in
+      // timeline form rather than a second vocabulary that resembles it. Red and green are
+      // reserved for "outside a norm we set": with verdicts at muted red and green, a calm tape
+      // would have painted red and a stressed one green. See the note above MARKET_TILES.
+      const REGIME_INK: Record<string, string> = {
+        calm: theme.regCalm,
+        normal: theme.regNormal,
+        high: theme.regHigh,
+        stress: theme.regStress,
+        extreme: theme.regExtreme,
+        // A session with no VIX publication. Transparent, so the gap is a gap - the same rule the
+        // line charts follow by skipping the point rather than bridging it.
+        unknown: "rgba(0,0,0,0)",
       };
+      const colourFor = (r: MarketRow) => REGIME_INK[regimeOf(r.vix)] ?? REGIME_INK.unknown;
       strip.setData(
         rows
           .filter((r) => !!r.d)
@@ -257,32 +322,58 @@ function Chart(
     }
 
     if (kind === "term") {
-      // An area anchored at zero. Contango and backwardation are not "more" and "less" of one
-      // thing - they are two states - so the crossing is the feature and zero is where it belongs.
-      const term = c.addSeries(AreaSeries, {
-        lineColor: theme.ink,
-        topColor: theme.aboveBg,
-        bottomColor: theme.belowBg,
+      // A BASELINE SERIES, NOT AN AREA, AND THE DIFFERENCE WAS A REAL DEFECT.
+      //
+      // This was an AreaSeries with topColor/bottomColor set to the verdict tints and a comment
+      // saying it was "anchored at zero". It was not. An AreaSeries fills from the line down to
+      // the BOTTOM OF THE PANE and paints that fill as a vertical gradient from topColor to
+      // bottomColor, so the colours described a pixel's height in the box and nothing else: a
+      // session at +29.5% and one at -5.7% got the same treatment. The chart's own comment, the
+      // spec and the reader all believed it said something about the sign. It did not.
+      //
+      // BaselineSeries splits at baseValue and colours the two sides separately, which is the
+      // thing that was meant all along. Backwardation now reads as a muted stress fill and
+      // contango as a near-neutral one - deliberately unequal, because backwardation is the rare
+      // state worth noticing (6 of the 126 sessions in the current window) and contango is the
+      // background condition, not an achievement.
+      const term = c.addSeries(BaselineSeries, {
+        baseValue: { type: "price", price: 0 },
+        topLineColor: theme.ink,
+        topFillColor1: theme.ruleSoft,
+        topFillColor2: theme.ruleSoft,
+        bottomLineColor: theme.stress,
+        bottomFillColor1: theme.stressBg,
+        bottomFillColor2: theme.stressBg,
         lineWidth: 2,
         priceLineVisible: false,
         lastValueVisible: false,
       });
       term.setData(points(rows, "term_structure"));
+      // THE ZERO LINE IS THE REFERENCE, so it is drawn in ink rather than in the faint grey it had.
+      // Every other horizontal on this chart is a grid line; this one is the thing the fills are
+      // measured against, and at --ink-faint it was the same weight as the gridlines behind it.
       term.createPriceLine({
         price: 0,
-        color: theme.inkFaint,
+        color: theme.ink,
         lineWidth: 1,
         lineStyle: LineStyle.Solid,
         axisLabelVisible: true,
-        title: "0",
+        title: "",
       });
     }
 
     if (kind === "breadth") {
       // TWO SCALES, because these are two units: a percentage of our own watchlist and an index
       // level. Forcing them onto one axis would make the shapes comparable and the values nonsense.
-      const breadth = c.addSeries(LineSeries, {
-        color: theme.accent,
+      // AN AREA FOR BREADTH, A LINE FOR THE INDEX, because they are not the same kind of
+      // quantity. Breadth is a share of a fixed population - it has a floor at 0 and a ceiling at
+      // 100, so the filled region below it means something: that is the part of the watchlist
+      // above its own average. An index level has no meaningful zero to fill down to, so filling
+      // it would draw a large shape whose area is an artefact of where the axis happens to start.
+      const breadth = c.addSeries(AreaSeries, {
+        lineColor: theme.accent,
+        topColor: theme.aboveBg,
+        bottomColor: "rgba(0,0,0,0)",
         lineWidth: 2,
         priceScaleId: "left",
         priceLineVisible: false,
@@ -308,7 +399,11 @@ function Chart(
     }
 
     c.timeScale().fitContent();
-  }, [kind, rows, theme, height]);
+    // After a frame, not now: the price scale has not been laid out yet at this point, so
+    // priceToCoordinate returns coordinates from the previous fit - which on the first build is
+    // no fit at all, and every band lands at zero height and is dropped.
+    requestAnimationFrame(syncBands);
+  }, [kind, rows, theme, height, syncBands]);
 
   useEffect(() => {
     build();
@@ -322,7 +417,11 @@ function Chart(
         build();
         return;
       }
-      if (w > 0) c.applyOptions({ width: w });
+      if (w > 0) {
+        c.applyOptions({ width: w });
+        // A width change re-fits the price scale, so the bands move with it.
+        requestAnimationFrame(syncBands);
+      }
     });
     ro.observe(el);
     return () => {
@@ -330,7 +429,29 @@ function Chart(
       chart.current?.remove();
       chart.current = null;
     };
-  }, [build]);
+  }, [build, syncBands]);
 
-  return <div className="mh-canvas" ref={box} style={{ height }} />;
+  return (
+    <div className="mh-canvas" style={{ height }}>
+      {bands.length > 0
+        ? (
+          <div className="mh-bands" style={{ right: inset }} aria-hidden="true">
+            {bands.map((b) => (
+              <div
+                key={b.key}
+                className={`mh-band r-${b.key}`}
+                style={{ top: b.top, height: b.height }}
+              >
+                {/* The name only when the band is tall enough to hold it. A 9px band with a 9px
+                    label in it is two overlapping marks, and the legend under the panel names
+                    every band that occurred anyway. */}
+                {b.height >= 16 ? <span className="mh-band-l">{b.label}</span> : null}
+              </div>
+            ))}
+          </div>
+        )
+        : null}
+      <div className="mh-plot" ref={box} />
+    </div>
+  );
 }
