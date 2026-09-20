@@ -74,6 +74,11 @@ flags:
   # stale. Measures the pipeline, not the gap to the newest bar — otherwise a market holiday reads
   # as a failure and the banner cries wolf. 30 = one daily cycle plus six hours of slack.
   # Replaced stale_days_price on 2026-09-13; see the header of 20260913200000_freshness_from_runs.
+  # VESTIGIAL SINCE 2026-09-20 (decision 0056). is_stale no longer reads this: it compares the
+  # last successful run against the last SCHEDULED fire, because a flat hour count was true for
+  # 42 of every 168 hours on a pipeline that does not run at weekends. Still published by
+  # grid_status beside hours_since_success, and `create or replace view` cannot drop a column.
+  # Changing this number now changes nothing. The schedule lives in flags.ingest_cron.
   pipeline_stale_after_hours: 30
   stale_days_searched:   14
   min_bars_warning:      true   # suppress a value below its warm-up floor

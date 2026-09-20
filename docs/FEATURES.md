@@ -1267,3 +1267,43 @@ comment is what stopped anyone counting. It names all of them now.
 `MAX_PICKED` itself, so raising the constant to 100,000 satisfied it — caught by a negative test
 that passed when it should have failed. It asserts an absolute ceiling now, and the lesson
 generalises: an assertion that reads the same constant the code reads is not a test of anything.
+
+## 2026-09-20 — The stale banner stops crying wolf every weekend
+
+**What:** `grid_status.is_stale` is schedule-aware. It was `hours_since_success > 30` — a flat
+wall-clock count on a pipeline scheduled `30 22 * * 1-5`. On a healthy week, simulated hour by
+hour, that rule reported stale for **42 of every 168 hours (25%)**, every weekend and most of
+Monday, with nothing wrong. It now reports stale when no successful daily run has happened since
+the most recent scheduled fire that should already have finished.
+
+The banner names the run instead of the elapsed time: **"The ingest scheduled for Monday evening
+did not complete."** `grid_status` publishes `last_expected_at` for it.
+
+**How:** decision 0056, migration `20260920223000_stale_on_schedule.sql`.
+`public.previous_scheduled_ingest` exists in two forms — a pure one taking a moment, a cron
+expression and a grace window, and a one-argument one that reads `flags.ingest_cron` and
+`flags.ingest_grace_minutes` and delegates. The split is so the decline path can be asserted
+without a test mutating `public.flags`. The parser understands minute, hour and a day-of-week `*`
+or `A-B`, and returns null on anything else; `is_stale` reads null as "cannot judge", never as
+"stale".
+
+**Verified by:** eight new checks in `scripts/ci/check_formulas.sql`, run inside the repo's real
+database gate against a throwaway Postgres with all 23 migrations and the fixture applied —
+**99 of 99 checks pass**. They cover both directions: a Sunday and a Monday-before-the-fire are
+quiet, the grace window is respected, and — the case a fix like this breaks — a genuinely missed
+Monday run is still loud by Monday night and still loud on Tuesday. The cron-drift check compares
+`flags.ingest_cron` against `cron.job.schedule` and ran a real comparison, not a skip, because
+`bootstrap.sql` stubs a `cron.job` table. Negative-tested five ways: inflating the grace to 48h
+fails all eight; a parser that stops declining fails five; dropping the day-of-week filter fails
+four; drifting the flag fails the drift check alone.
+
+**Two things found while building it.**
+
+The cron-drift check first referenced `cron.job` inside a `case` guarded on `pg_extension`.
+Postgres resolves relation names at **parse** time, so on a database without pg_cron — every CI
+database — that one reference would have taken down the entire formula gate rather than failing
+its own check. Caught by running it; it uses dynamic SQL now.
+
+And the market-holiday worry raised before the fix was chosen turned out to be a non-issue,
+checked rather than assumed: a holiday run fires, finds no bars and finishes ok, which is correct
+because there was no session to fetch. Recorded so nobody re-opens it.

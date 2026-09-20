@@ -113,9 +113,22 @@ export interface Status {
   /** Hours since the daily ingest last completed successfully. null means it never has. */
   hours_since_success?: number | null;
   last_success_at?: string | null;
+  /**
+   * VESTIGIAL SINCE 2026-09-20, AND STILL PUBLISHED. The staleness rule no longer reads it: it
+   * compares the last success against the last scheduled fire instead (decision 0056). The column
+   * stays because `create or replace view` cannot drop one, and it is still worth showing beside
+   * `hours_since_success` so a reader can see how long it has actually been.
+   */
   stale_after_hours?: number | null;
   /** The verdict, and it measures the PIPELINE. See the grid_status view header. */
   is_stale?: boolean | null;
+  /**
+   * The most recent scheduled ingest that should already have finished, or null when the schedule
+   * could not be read. This is what `is_stale` compares `last_success_at` against, and it lets the
+   * banner name the run that was missed rather than quote an hour count — "Monday evening's ingest
+   * did not complete" is actionable in a way that "47 hours ago" is not.
+   */
+  last_expected_at?: string | null;
   /** The LAST run, which is a different question from the last GOOD run — showing both is what
    *  distinguishes "nothing has run" from "it ran and failed". */
   last_run_at?: string | null;

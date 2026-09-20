@@ -1825,3 +1825,70 @@ column"; this answers "which columns, in what order", and they have changed for 
 in three of the last four stages. It also has **no runtime imports at all**, which is what lets
 the check load the real code rather than a transpiled copy — `deep-dive.ts` imports `./columns`
 extensionless, which a bundler resolves and a plain `node` does not.
+
+## 0056 — 2026-09-20 — Staleness is measured against the schedule, not a stopwatch
+
+**Context:** on Sunday 2026-09-20 the dashboard read "47h ago · stale" and carried the banner
+"The daily ingest last completed 47 hours ago. It should run every weekday evening." It had. The
+ingest is scheduled `30 22 * * 1-5`; it ran Friday at 22:45 UTC and wrote Friday's bar, which was
+the last completed trading session. Nothing was wrong.
+
+**The rule was `hours_since_success > 30`** — a flat wall-clock count, on a pipeline that does not
+run at weekends. Measured rather than estimated, by simulating a perfectly healthy week hour by
+hour: the old rule reports stale for **42 of every 168 hours — 25% of all wall-clock time, every
+week, always falsely.** From Friday's fire the threshold trips at 04:30 Sunday and stays tripped
+until Monday's fire at 22:30.
+
+That is the worst failure mode an alarm has. One that cries wolf on a fixed, predictable schedule
+trains the reader to discount it, so the Tuesday it means something the banner has already been
+ignored for two days. The page's stated contract is that it must not hide staleness; an alarm
+nobody reads hides it just as effectively as no alarm.
+
+**The rule now:** stale when no successful daily run has happened since the most recent SCHEDULED
+fire that should already have finished. A grace window (`flags.ingest_grace_minutes`, 60) covers
+the gap between firing at 22:30 and finishing around 22:45 — without it the page would flash
+stale for fifteen minutes every weekday, which is the same bug at a smaller scale.
+
+**Three cases, and the order matters.** Never succeeded → stale, always; that is the one
+unambiguous case and coalescing it away would hide the page having never worked. Schedule
+unreadable → **not** stale; inventing an alarm out of a parse failure would be a second false
+positive on top of the one being removed. Otherwise → compare the last success against the last
+owed fire.
+
+**The schedule is duplicated, and pinned.** `flags.ingest_cron` holds the same expression
+`cron.schedule` is called with, and `check_formulas.sql` asserts the two are equal. Same argument
+as `VIX_BAND` being pinned to `config/norms.yml`: a duplicate that cannot drift silently is a
+different thing from a duplicate. The parser reads minute, hour and a day-of-week `*` or `A-B`,
+and **declines** — returns null — on anything else, including a list, a step, or named days.
+
+**Split into two functions so the decline path is testable.** The three-argument form is pure:
+moment, cron expression, grace. The one-argument form reads the flags and delegates. That costs a
+function and buys assertions about unparseable schedules that do not have to mutate
+`public.flags` and put it back — the kind of test that passes for the wrong reason. Same shape as
+`bandRects` taking a mapping function rather than a chart.
+
+**What this deliberately does not do.** It does not consult a trading calendar. A run on a market
+holiday fires, finds no new bars, and finishes ok — which is correct, because there was no session
+to fetch, and `is_stale` measures the PIPELINE (0026). Checked before choosing this fix rather
+than assumed. `days_behind`, `symbols_priced` and `symbols_behind` remain the fields that speak
+about the DATA.
+
+**A hole this does not close,** named so it is not mistaken for closed: if the vendor returns no
+bars on a real trading day without erroring, the run finishes ok, `last_success_at` advances, and
+this rule says fresh while the data is a day behind. `symbols_priced`/`symbols_behind` (0049) are
+what catch that, per symbol rather than globally.
+
+**Rejected:** raising the threshold past a weekend (~74h). One line, no migration — and it blinds
+the page to a genuine two-day outage mid-week, which is the case the alarm exists for. Also
+rejected for now: measuring the data against a trading calendar, which is more correct and needs
+a calendar the project does not have.
+
+**The banner now names the run.** "The ingest scheduled for Monday evening did not complete" is
+actionable; "47 hours ago" was not, and was usually wrong. `grid_status` publishes
+`last_expected_at` for it.
+
+**Found while building it:** the cron-drift check referenced `cron.job` inside a guarded `case`,
+and Postgres resolves relation names at PARSE time — on a database without pg_cron, which is
+every CI database, that one reference would have failed the entire formula gate, not just its own
+check. Caught by running it. It uses dynamic SQL now, the same way the file's existing `plan_of`
+helper wraps `EXPLAIN` for the same reason.
