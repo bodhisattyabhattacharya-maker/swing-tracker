@@ -105,7 +105,7 @@ FEATURES wins — this one is a summary and summaries rot.*
 | | |
 |---|---|
 | Securities | **53** — 43 companies and 10 ETFs, in **9** themes; plus 3 index series that are never rows |
-| Column catalogue | **51** — **22 live**, 29 planned. 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
+| Column catalogue | **51** — **22 live**, 29 planned, in **10 category bands** (0053). 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
 | Norms | **15**, in `config/norms.yml`, synced to the database and compared there |
 | Bars held | **63,579** daily equity bars over 5 years (2021-10-11 →), **8,063** index rows over 11 years — FRED goes back further than the equity plan |
 | Matviews | **4**: `daily_features`, `weekly_features`, `daily_signals`, `market_history` |
@@ -136,6 +136,8 @@ five years of history (0048), and the four market-history charts (0046, 0047). T
 them live, with a price panel that reads its own bars on scroll and draws candles or a line
 depending on how many fit (0049, 0050). The deployment check at `/status`.
 
+**The header is ten bands** in the spec's order (0053): Price, Technicals · daily, Technicals · weekly, MA signals, Relative, Revenue, Profit, Valuation, Quality, Forward look — measurements split by timeframe, derived signals on their own, which is also a clean split by render kind. Theme bands name their count and bellwether; market tiles carry a descriptor line; warm-up is a hatch rather than ochre text.
+
 **The skin** is the visual specification's: warm cream paper and near-black warm ink, deep
 warm charcoal in dark, serif titles, condensed-sans labels, monospace tabular numbers, a floating
 bottom-centre tab pill, a coloured rail per category band, and a three-position theme control
@@ -156,7 +158,11 @@ that cannot occur); `check_contrast.sh` (0052) resolves the palette as a browser
 every foreground/background pairing in **both** themes against a 4.5:1 floor, asserts the two dark
 token blocks are identical, that every `var()` resolves, that every group has a rail and every tile
 scale has rules — and none exists for a scale no tile declares — and that the charts' fallback
-palette has not drifted from the stylesheet.
+palette has not drifted from the stylesheet; `check_render_kinds.sh` (0053) requires every render
+kind to have an explicit branch in **both** the grid and the strip — a kind with no branch draws as
+a plausible number in silence — requires the two renderers to handle the same set, and prints which
+kinds are reachable, since a kind whose every column is `planned` cannot appear however well it is
+written.
 
 ### Not built
 

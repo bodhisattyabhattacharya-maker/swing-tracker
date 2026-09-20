@@ -1647,3 +1647,62 @@ what surfaced it. The three ink levels were re-spaced to 14.6 / 6.6 / 4.6 in lig
 **One claim made true.** `chart-theme.ts` has said since it was written that "the check below fails
 the build if these drift from the stylesheet". No such check existed. `check_contrast.sh` now
 compares its FALLBACK to the `:root` block value for value, both directions.
+
+## 0053 — 2026-09-20 — Ten bands, four render kinds, and two renderers that cannot disagree
+
+**Context:** the visual specification's header has ten category bands; this grid had nine. It also
+shows a sector rank as a fraction and revenue and EPS as eight-quarter traces, neither of which
+this build could draw. Bodhi settled both open questions on 2026-09-20.
+
+**Ten bands, and the split is not cosmetic.** The standalone RSI band is retired. `TECHNICALS ·
+DAILY` takes RSI hourly, RSI daily and the three daily vs-average columns; `TECHNICALS · WEEKLY`
+takes RSI weekly and the three weekly ones; `MA SIGNALS` keeps only the five derived signals — the
+stack, both crosses, both slopes. 6+5+4+5+5+5+5+6+4+6 = 51, the same columns in a different order.
+
+The line it draws is between a MEASUREMENT of where the price sits and a STATEMENT about what the
+averages are doing, which turns out to be the same line as the render kind: every technicals column
+is a number, every MA-signals column is a chip. Splitting the measurements by timeframe matters
+because `vs 21 EMA` exists on both sides and means different things — it used to be distinguished
+by a small `[D]` or `[W]` beside the label and a full-height rule somewhere inside an eleven-column
+band. The band heading says it now.
+
+**Two sector ranks, not one, and they stay in RELATIVE.** The screenshots show a single `SECTOR
+RANK` column in the PRICE band; the written spec lists valuation rank and margin rank separately,
+and the catalogue has had both since 0040. The spec's own tie-break is that the screenshots win on
+arrangement and the prose wins on which metrics exist, so both survive. A single blended rank was
+rejected on its own terms: blending a valuation percentile with a margin percentile is a composite
+score, and this product does not make one.
+
+**`rank` is a render kind rather than a formatted number.** A bare "5" is not a fact — fifth of six
+and fifth of forty are different statements — so the denominator travels with the rank, on the
+cell, from the same window that computed it. Counting the peer group separately in the page would
+be a second source for one number, which is how two numbers that must agree stop agreeing.
+
+**The sparkline is built now and cannot be seen until Stage F, deliberately.** Both renderers test
+`planned` before they test the render kind, and every sparkline and rank column is planned until
+the financials ingest lands. Rather than leave that as a comment, `scripts/ci/check_render_kinds.sh`
+prints the reachability of every kind on every run, so the two unreachable ones are a stated fact
+that changes on its own when those columns go live. What IS verifiable today is the arithmetic, and
+`lib/sparkline.ts` is a pure module for exactly that reason — the harness exercised ten cases and
+**two of them were broken**: an all-zero series put every bar one pixel below the frame, and an
+all-negative series drew all eight bars outside it entirely, because the scale ran from the most
+negative value to the least and left zero above the top. The scale now always contains zero at both
+ends and the minimum-height clamp has a direction.
+
+**And the check that matters more than either.** `Render` has four members and the fall-through in
+both renderers is `number`. Add a fifth, give it to a column, forget the branch, and that column
+renders as a plausible-looking number in silence. The check now requires an explicit branch in both
+renderers for every kind except the fall-through, requires the two renderers to handle the same
+set — a kind handled in the grid and not the strip is one column reading two ways in two tabs — and
+requires the `CellLike` field each kind reads to exist.
+
+**Warm-up becomes a hatch.** The spec asks for a patterned neutral fill and it is right: ochre text
+said "provisional" in the same channel a verdict uses, so a warm-up cell read as a third verdict. A
+hatch uses a channel nothing else on the page uses and survives greyscale, which is the argument
+the eight-state model was built on in 0043.
+
+**One thing this found that it was not looking for.** The Breadth tile's tooltip said "above their
+own 50-day average". The SQL filters on `sma200`, and `docs/DEFINITIONS.md` has always said SMA200.
+The tooltip was the only place that was wrong, and it was wrong to a reader rather than to a
+formula — which is why the sweep that found it was reading the migration before writing a
+descriptor, not running a test.

@@ -23,12 +23,14 @@
  *
  * No score, no ranking, no composite, and no ordering by any parameter — `stripOrder` sorts by
  * theme and then alphabetically for exactly that reason. Colour means "outside a threshold you
- * set", which is why the palette is blue and ochre rather than red and green. A section that cannot
+ * set", and the muted red/green palette says which side of that threshold, never what to do about
+ * it (decision 0052). A section that cannot
  * render says which of three things is stopping it, in words, and never shows an empty frame.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import StockChart from "./StockChart";
+import Sparkline from "./Sparkline";
 import {
   COLOURED,
   type CellLike,
@@ -517,7 +519,16 @@ function Payload(
       </>
     );
   }
-  if (col.render === "sparkline") return <span className="dash">—</span>;
+  if (col.render === "sparkline") return <Sparkline values={cell?.series ?? []} label={col.label} />;
+  if (col.render === "rank") {
+    // Same treatment as the grid. The denominator is omitted, never invented, when absent.
+    return (
+      <>
+        <span className="rank-n">{cell?.value}</span>
+        {typeof cell?.peers === "number" ? <span className="rank-of">/ {cell.peers}</span> : null}
+      </>
+    );
+  }
   return (
     <>
       {formatValue(cell?.value, col.digits, col.signed)}

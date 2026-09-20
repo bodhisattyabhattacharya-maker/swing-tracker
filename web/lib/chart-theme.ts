@@ -9,9 +9,9 @@
  *
  * Lightweight Charts is canvas. It cannot read a CSS custom property, so every colour it draws has
  * to be handed to it as a literal string. The obvious move is to type the hex codes into the chart
- * options — and that creates a second palette, which is how a chart ends up ochre while the cell
- * beside it means the same thing in a different ochre. Worse, it silently breaks the moment the
- * page is in dark mode, because the literal does not change.
+ * options — and that creates a second palette, which is how a chart ends up one shade of green
+ * while the cell beside it means the same thing in a different green. Worse, it silently breaks
+ * the moment the page is in dark mode, because the literal does not change.
  *
  * So the colours are READ FROM THE PAGE at runtime: one probe of `getComputedStyle` on the root
  * element gives whatever the cascade actually resolved, in whichever mode is active. There is one
@@ -181,9 +181,9 @@ export function isDarkSurface(colour: string): boolean {
 /**
  * Subscribe to anything that could change the resolved palette, and call back with the new one.
  *
- * Two triggers, because there are two ways the tokens move: the OS colour scheme (today) and a
- * `data-theme` attribute on the root (the v2 toggle). Wiring both now costs four lines and means
- * the toggle needs no change here.
+ * Two triggers, because there are two ways the tokens move: the OS colour scheme, and a
+ * `data-theme` attribute on the root, which `components/ThemeToggle.tsx` writes. Both are live;
+ * see the header for why the second was wired two days before anything set it.
  *
  * Returns an unsubscribe function. Safe to call on the server, where it does nothing.
  */

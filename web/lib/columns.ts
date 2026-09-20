@@ -35,18 +35,43 @@ export type Source = "cells" | "rs" | "signals" | "fundamentals" | "forward";
 /** Whether the parameter exists in the database today. */
 export type Status = "live" | "planned";
 
-/** How a value is rendered. `chip` is a categorical label, optionally with a number beside it. */
-export type Render = "number" | "chip" | "sparkline";
+/**
+ * How a value is rendered. Four kinds, and each carries its payload in a DIFFERENT field of
+ * `CellLike` — see `cellState`, where getting that wrong would call a populated cell empty.
+ *
+ *   number     `value`             the ordinary case
+ *   chip       `label` + `tone`    a categorical signal, optionally with a number beside it
+ *   sparkline  `series`            eight quarters, oldest first
+ *   rank       `value` + `peers`   a position inside a peer group, rendered as a fraction
+ *
+ * `rank` exists rather than reusing `number` because a bare "5" is not a fact: fifth of six and
+ * fifth of forty are different statements, and the denominator has to travel with the rank. It
+ * comes off the same window function that computes the rank, not counted separately in the page —
+ * two sources for one fact is how they end up disagreeing.
+ */
+export type Render = "number" | "chip" | "sparkline" | "rank";
 
 export interface Group {
   key: string;
   label: string;
 }
 
-/** The category row of the two-tier header. Order here is the order on screen. */
+/**
+ * The category row of the two-tier header. **Order here is the order on screen**, for every preset
+ * — `columnsFor` sorts by this and then by declaration order, so a preset cannot hold a second,
+ * disagreeing order of its own.
+ *
+ * TEN BANDS SINCE 2026-09-20, from the visual spec (decision 0053). The standalone RSI band is
+ * gone: RSI is a technical reading like the three vs-average columns beside it, and separating it
+ * meant the daily and weekly readings of the same thing sat in different places while "vs 21 EMA"
+ * appeared twice inside one eleven-column band. The split is now measurement (daily / weekly)
+ * versus derived signal, which is also a clean split by render kind — every technicals column is a
+ * number and every MA-signals column is a chip.
+ */
 export const GROUPS: Group[] = [
   { key: "price", label: "Price" },
-  { key: "rsi", label: "RSI" },
+  { key: "techdaily", label: "Technicals · daily" },
+  { key: "techweekly", label: "Technicals · weekly" },
   { key: "ma", label: "MA signals" },
   { key: "relative", label: "Relative" },
   { key: "revenue", label: "Revenue" },
@@ -116,18 +141,45 @@ export const COLUMNS: Column[] = [
     status: "live", render: "number", digits: 2, signed: false, suffix: "×",
     hint: "Today's volume over its own 50-day average, which includes today." },
 
-  // ---- RSI ---------------------------------------------------------------
-  { param: "rsi_hourly", label: "RSI 14", group: "rsi", timeframe: "hourly", source: "cells",
+  // ---- Technicals, daily -------------------------------------------------
+  //
+  // THE TWO TECHNICALS BANDS AND THE MA SIGNALS BAND WERE ONE BAND UNTIL 2026-09-20, and the split
+  // is the spec's (decision 0053). It draws a real line: these columns are MEASUREMENTS — where
+  // the price sits right now relative to something — while the MA signals band below holds
+  // DERIVED STATEMENTS about the averages themselves, which is why every one of those renders as a
+  // chip and every one of these as a number.
+  //
+  // Splitting by timeframe rather than keeping one technicals band matters because "vs 21 EMA"
+  // appears on both sides and means different things. It had a [D] or [W] marker beside it and a
+  // full-height rule somewhere in the middle of eleven columns; now the band heading says it.
+  { param: "rsi_hourly", label: "RSI 14", group: "techdaily", timeframe: "hourly", source: "cells",
     status: "planned", render: "number", digits: 1, signed: false,
     hint: "Blocked on session-aligned hourly bars: the vendor's hours start on the clock, TradingView's on the 09:30 open, and the 30/70 threshold moves with the alignment." },
-  { param: "rsi_daily", label: "RSI 14", group: "rsi", timeframe: "daily", source: "cells",
+  { param: "rsi_daily", label: "RSI 14", group: "techdaily", timeframe: "daily", source: "cells",
     status: "live", render: "number", digits: 1, signed: false,
     hint: "Wilder's smoothing, not a simple average of gains and losses." },
-  { param: "rsi_weekly", label: "RSI 14", group: "rsi", timeframe: "weekly", source: "cells",
+  { param: "close_vs_ema21d", label: "vs 21 EMA", group: "techdaily", timeframe: "daily", source: "cells",
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
+  { param: "close_vs_sma50d", label: "vs 50 SMA", group: "techdaily", timeframe: "daily", source: "cells",
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
+  { param: "close_vs_sma200d", label: "vs 200 SMA", group: "techdaily", timeframe: "daily", source: "cells",
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
+
+  // ---- Technicals, weekly ------------------------------------------------
+  { param: "rsi_weekly", label: "RSI 14", group: "techweekly", timeframe: "weekly", source: "cells",
     status: "live", render: "number", digits: 1, signed: false,
     hint: "On completed weekly bars. Constant Monday to Friday; it steps on the week boundary." },
+  { param: "close_vs_ema21w", label: "vs 21 EMA", group: "techweekly", timeframe: "weekly", source: "cells",
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
+  { param: "close_vs_sma30w", label: "vs 30W SMA", group: "techweekly", timeframe: "weekly", source: "cells",
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
+  { param: "close_vs_sma200w", label: "vs 200W SMA", group: "techweekly", timeframe: "weekly",
+    source: "cells", status: "live", render: "number", digits: 1, signed: true, suffix: "%",
+    hint: "Uncoloured by design: 87–90% of name-weeks sit above +10 in every year we hold, so a band there flags nine rows in ten." },
 
   // ---- MA signals --------------------------------------------------------
+  // What the averages are doing, as opposed to where the price sits against them. All five are
+  // chips because all five are categorical or a rate, not a level.
   { param: "ma_stack", label: "MA stack", group: "ma", timeframe: "daily", source: "signals",
     status: "live", render: "chip", digits: 0, signed: false,
     hint: "Full bull is close > EMA21 > SMA50 > SMA200; Full bear is the exact reverse; everything else is Mixed." },
@@ -137,24 +189,11 @@ export const COLUMNS: Column[] = [
   { param: "cross_21_50", label: "21×50", group: "ma", timeframe: "daily", source: "signals",
     status: "live", render: "chip", digits: 0, signed: false,
     hint: "Bull or Bear, with trading bars since. The faster pair — it turns over far more often than 50×200." },
-  { param: "close_vs_ema21d", label: "vs 21 EMA", group: "ma", timeframe: "daily", source: "cells",
-    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
-  { param: "close_vs_sma50d", label: "vs 50 SMA", group: "ma", timeframe: "daily", source: "cells",
-    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
-  { param: "close_vs_sma200d", label: "vs 200 SMA", group: "ma", timeframe: "daily", source: "cells",
-    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
   { param: "sma50_slope", label: "50 slope", group: "ma", timeframe: "daily", source: "signals",
     status: "live", render: "chip", digits: 2, signed: true, suffix: "%/wk",
     hint: "Change in the AVERAGE over five trading bars — the trend of the trend, not of price." },
   { param: "sma200_slope", label: "200 slope", group: "ma", timeframe: "daily", source: "signals",
     status: "live", render: "chip", digits: 2, signed: true, suffix: "%/wk" },
-  { param: "close_vs_ema21w", label: "vs 21 EMA", group: "ma", timeframe: "weekly", source: "cells",
-    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
-  { param: "close_vs_sma30w", label: "vs 30W SMA", group: "ma", timeframe: "weekly", source: "cells",
-    status: "live", render: "number", digits: 1, signed: true, suffix: "%" },
-  { param: "close_vs_sma200w", label: "vs 200W SMA", group: "ma", timeframe: "weekly",
-    source: "cells", status: "live", render: "number", digits: 1, signed: true, suffix: "%",
-    hint: "Uncoloured by design: 87–90% of name-weeks sit above +10 in every year we hold, so a band there flags nine rows in ten." },
 
   // ---- Relative ----------------------------------------------------------
   { param: "rs_vs_spx_63b", label: "vs SPX 63b", group: "relative", timeframe: "daily", source: "rs",
@@ -165,11 +204,11 @@ export const COLUMNS: Column[] = [
   { param: "rs_vs_spx_252b", label: "vs SPX 252b", group: "relative", timeframe: "daily",
     source: "rs", status: "live", render: "number", digits: 1, signed: true, suffix: "pp" },
   { param: "valuation_rank", label: "Valuation rank", group: "relative", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 0, signed: false,
+    source: "fundamentals", status: "planned", render: "rank", digits: 0, signed: false,
     applies: rankableOnly,
     hint: "Where its FCF yield sits inside its own theme. Blank for a theme that is not a peer group — that is not missing data." },
   { param: "margin_rank", label: "Margin rank", group: "relative", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 0, signed: false,
+    source: "fundamentals", status: "planned", render: "rank", digits: 0, signed: false,
     applies: rankableOnly,
     hint: "Same, on trailing gross margin. Separates executing well from riding a good cycle." },
 
@@ -397,14 +436,36 @@ export interface CellLike {
   /** Only signal cells carry these. */
   label?: string | null;
   tone?: string | null;
+  /**
+   * Only sparkline cells carry this: the last eight quarters, oldest first, with `null` for a
+   * quarter the company did not report.
+   *
+   * NOTHING POPULATES IT YET. The financials ingest is Stage F, so today both sparkline columns
+   * are `planned` and their cells never reach the renderer. It is declared here rather than added
+   * later because the alternative is a component with no caller, and `scripts/ci/check_render_kinds.sh`
+   * records which render kinds are reachable so this cannot be quietly forgotten.
+   */
+  series?: (number | null)[] | null;
+  /**
+   * Only rank cells carry this: how many securities were in the peer group the rank was taken
+   * over. Same Stage F caveat as `series` — it comes from the `count(*) over (partition by theme)`
+   * beside the `percent_rank()`, so the rank and its denominator cannot disagree.
+   */
+  peers?: number | null;
 }
 
 export function cellState(col: Column, sec: Security, cell: CellLike | undefined): CellState {
   if (col.applies && !col.applies(sec)) return "na";
   if (col.status === "planned") return "planned";
-  // A signal cell's payload is its label; a numeric cell's is its value.
+  // EACH RENDER KIND CARRIES ITS PAYLOAD IN A DIFFERENT FIELD, so "is this cell empty" is a
+  // different question for each. A signal cell's payload is its label, a trace's is its series,
+  // and a number's is its value. Testing `value` for all three would call a fully populated
+  // eight-quarter trace "null", because a sparkline cell has no scalar value at all — latent
+  // until Stage F lands the data, which is exactly when it would have been hardest to find.
   const empty = col.render === "chip"
     ? cell?.label === null || cell?.label === undefined
+    : col.render === "sparkline"
+    ? !cell?.series?.some((v) => typeof v === "number" && Number.isFinite(v))
     : cell?.value === null || cell?.value === undefined;
   if (empty) return "null";
   if (cell?.suppressed_warmup) return "warmup";
