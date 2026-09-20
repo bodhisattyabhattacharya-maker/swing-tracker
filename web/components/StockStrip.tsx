@@ -45,6 +45,15 @@ import {
 import {
   barGeometry,
   COLUMN_WIDTH,
+  defaultColumns,
+  drop,
+  EMPTY_SELECTION,
+  parseSelection,
+  pick,
+  resolveSelection,
+  type Selection,
+  serialiseSelection,
+  togglePin,
   gaugeGeometry,
   RESOLVED,
   type ResolvedSection,
@@ -79,10 +88,46 @@ export default function StockStrip(
   { rows, cells, norms, gridDate, rsAsOf, unavailable, behind }: Props,
 ) {
   const [filter, setFilter] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // ---------------------------------------------------------------------
+  // THE SELECTION LIVES IN THE URL, READ AFTER MOUNT (decision 0055).
+  //
+  // Not through the framework's `searchParams`: that would mark /deep-dive dynamic and every
+  // visit would pay for a server render. The page stays statically prerendered with its
+  // 15-minute revalidate, the server renders the DEFAULT columns, and this reads the address bar
+  // once the browser has one.
+  //
+  // `hydrated` exists so the first client render matches the server's. Reading location during
+  // render would produce different markup on the two sides, which React resolves by throwing away
+  // the server's — the whole static page, to reorder some columns. One effect, one reflow, only
+  // when the URL actually carries a selection.
+  // ---------------------------------------------------------------------
+  const [sel, setSel] = useState<Selection>(EMPTY_SELECTION);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setSel(parseSelection(window.location.search));
+    setHydrated(true);
+  }, []);
+
+  // Written back with replaceState, not pushState: picking a name is adjusting a view, not
+  // navigating. Twelve clicks building a selection should leave the back button pointing at
+  // wherever the reader came from, not at eleven intermediate strips.
+  useEffect(() => {
+    if (!hydrated) return;
+    const next = window.location.pathname + serialiseSelection(sel) + window.location.hash;
+    if (next !== window.location.pathname + window.location.search + window.location.hash) {
+      window.history.replaceState(null, "", next);
+    }
+  }, [sel, hydrated]);
   const normByParam = useMemo(() => new Map(norms.map((n) => [n.param, n])), [norms]);
   const behindSet = useMemo(() => new Set(behind), [behind]);
 
-  const ordered = useMemo(() => stripOrder(rows), [rows]);
+  // The picked columns, or the bellwether default. The text filter still applies on top: the
+  // picker chooses WHICH names are in the strip, the filter is a way of finding one inside it.
+  const resolved = useMemo(() => resolveSelection(rows, sel), [rows, sel]);
+  const ordered = resolved.columns;
+  const pinnedSet = useMemo(() => new Set(sel.pinned), [sel.pinned]);
   const q = filter.trim().toLowerCase();
   const visible = useMemo(
     () =>
@@ -93,7 +138,13 @@ export default function StockStrip(
         : ordered,
     [ordered, q],
   );
-  const starts = useMemo(() => themeStarts(visible), [visible]);
+  // The theme rules are drawn only in the default view. In a picked strip the columns are in the
+  // reader's order, so "where the theme changes" is not a boundary in anything - it would draw a
+  // rule between two arbitrary neighbours and imply a grouping that is not there.
+  const starts = useMemo(
+    () => resolved.isDefault ? themeStarts(visible) : new Set<string>(),
+    [visible, resolved.isDefault],
+  );
 
   // ---------------------------------------------------------------------
   // The right-edge scrim, and it is the same mechanism as the grid's.
@@ -136,11 +187,57 @@ export default function StockStrip(
           onChange={(e) => setFilter(e.target.value)}
           aria-label="Filter by symbol or company"
         />
+        <button
+          className={pickerOpen ? "seg on" : "seg"}
+          onClick={() => setPickerOpen((v) => !v)}
+          aria-expanded={pickerOpen}
+        >
+          Choose names <span className="pick-n">{ordered.length}</span>
+        </button>
+        {!resolved.isDefault
+          ? (
+            <button className="seg" onClick={() => setSel(EMPTY_SELECTION)}>
+              Reset to bellwethers
+            </button>
+          )
+          : null}
         <span className="hint">
-          {visible.length} of {rows.length} names · scroll sideways · every column is the same
-          {" "}{COLUMN_WIDTH}px so sections line up across names
+          {resolved.isDefault
+            ? `the ${ordered.length} bellwethers, one per theme`
+            : `${visible.length} of ${ordered.length} chosen`}
+          {" · "}every column is the same {COLUMN_WIDTH}px so sections line up across names
         </span>
       </div>
+
+      {/* A SYMBOL THE URL NAMED THAT WE DO NOT TRACK. Said out loud rather than dropped: a link
+          that silently shows four columns when it names five is worse than one that says so.
+          Its own class, not `stale`. The staleness banner above is about the DATA being a day
+          behind; this is about the LINK naming something we do not track. Two different facts
+          wearing one class is how a reader - and a test - conflates them. */}
+      {resolved.unknown.length > 0
+        ? (
+          <div className="banner unknown-syms">
+            <b>{resolved.unknown.join(", ")} {resolved.unknown.length === 1 ? "is" : "are"} not on
+            the watchlist.</b>{" "}
+            {resolved.isDefault
+              ? "Nothing in the link matched, so this is the default view."
+              : "The rest of the link was used."}
+          </div>
+        )
+        : null}
+
+      {pickerOpen
+        ? (
+          <Picker
+            all={rows}
+            sel={sel}
+            shown={ordered}
+            pinned={pinnedSet}
+            onChange={setSel}
+            onClose={() => setPickerOpen(false)}
+          />
+        )
+        : null}
 
       {unavailable.length > 0
         ? (
@@ -174,6 +271,9 @@ export default function StockStrip(
                     rsAsOf={rsAsOf}
                     gridDate={gridDate}
                     isBehind={behindSet.has(r.symbol)}
+                    pinned={pinnedSet.has(r.symbol)}
+                    onPin={() => setSel((c) => togglePin(c, r.symbol, rows))}
+                    onDrop={() => setSel((c) => drop(c, r.symbol, rows))}
                   />
                 ))}
               </div>
@@ -184,9 +284,101 @@ export default function StockStrip(
   );
 }
 
+/**
+ * The picker: every tracked name, grouped by theme, with what is shown ticked.
+ *
+ * GROUPED BY THEME AND NOT BY THE CURRENT ORDER. The strip may be in whatever order the reader
+ * dragged it into, but the place you go to FIND a name is a place where AVGO is next to NVDA.
+ * Those are two different jobs and they want two different arrangements.
+ *
+ * Ticking adds to the end of the order rather than slotting the name into its theme position:
+ * "picked fourth" is the only thing the reader told us, so it is the only thing we can honour.
+ */
+function Picker(
+  { all, sel, shown, pinned, onChange, onClose }: {
+    all: StripSecurity[];
+    sel: Selection;
+    shown: StripSecurity[];
+    pinned: Set<string>;
+    onChange: (s: Selection) => void;
+    onClose: () => void;
+  },
+) {
+  const [q, setQ] = useState("");
+  const shownSet = useMemo(() => new Set(shown.map((s) => s.symbol)), [shown]);
+  const needle = q.trim().toLowerCase();
+
+  const byTheme = useMemo(() => {
+    const m = new Map<string, StripSecurity[]>();
+    for (const s of stripOrder(all)) {
+      if (needle && !s.symbol.toLowerCase().includes(needle) && !s.name.toLowerCase().includes(needle)) {
+        continue;
+      }
+      if (!m.has(s.theme)) m.set(s.theme, []);
+      m.get(s.theme)!.push(s);
+    }
+    return [...m.entries()];
+  }, [all, needle]);
+
+  return (
+    <div className="picker">
+      <div className="picker-bar">
+        <input
+          className="find"
+          placeholder="Find a name…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Find a name to add"
+          autoFocus
+        />
+        <button
+          className="seg"
+          onClick={() => onChange({ picked: all.map((s) => s.symbol), pinned: sel.pinned })}
+          title={`All ${all.length} names — ${all.length * COLUMN_WIDTH}px of scroll`}
+        >
+          Select all {all.length}
+        </button>
+        <button className="seg" onClick={() => onChange({ picked: [], pinned: [] })}>
+          Back to bellwethers
+        </button>
+        <button className="seg" onClick={onClose}>Done</button>
+      </div>
+
+      {byTheme.length === 0
+        ? <p className="note">No name matches “{q}”.</p>
+        : (
+          <div className="picker-grid">
+            {byTheme.map(([theme, list]) => (
+              <div key={theme} className="picker-theme">
+                <div className="picker-th">{THEME_LABELS[theme] ?? theme}</div>
+                {list.map((s) => {
+                  const on = shownSet.has(s.symbol);
+                  return (
+                    <label key={s.symbol} className={on ? "picker-item on" : "picker-item"}>
+                      <input
+                        type="checkbox"
+                        checked={on}
+                        onChange={() =>
+                          onChange(on ? drop(sel, s.symbol, all) : pick(sel, s.symbol, all))}
+                      />
+                      <span className="picker-sym">{s.symbol}</span>
+                      {s.bellwether ? <span className="bell" title="Bellwether">◆</span> : null}
+                      {pinned.has(s.symbol) ? <span className="picker-pin">pinned</span> : null}
+                      <span className="picker-co">{s.name}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
 /** One stock's column: a header, then the eight sections in order. */
 function StockColumn(
-  { sec, cells, normByParam, themeStart, rsAsOf, gridDate, isBehind }: {
+  { sec, cells, normByParam, themeStart, rsAsOf, gridDate, isBehind, pinned, onPin, onDrop }: {
     sec: StripSecurity;
     cells: Record<string, CellLike>;
     normByParam: Map<string, Norm>;
@@ -194,6 +386,9 @@ function StockColumn(
     rsAsOf: string | null;
     gridDate: string | null;
     isBehind: boolean;
+    pinned: boolean;
+    onPin: () => void;
+    onDrop: () => void;
   },
 ) {
   return (
@@ -209,6 +404,21 @@ function StockColumn(
         </div>
         <div className="dd-name">{sec.name}</div>
         <div className="dd-theme">{THEME_LABELS[sec.theme] ?? sec.theme}</div>
+        {/* Pin and remove sit in the column, not in the picker, because this is where the reader
+            is when they decide. Removing from a list of 53 means finding the name again first. */}
+        <div className="dd-acts">
+          <button
+            className={pinned ? "dd-act on" : "dd-act"}
+            onClick={onPin}
+            title={pinned ? "Unpin — returns it to its place in your order" : "Pin to the left"}
+            aria-pressed={pinned}
+          >
+            {pinned ? "pinned" : "pin"}
+          </button>
+          <button className="dd-act" onClick={onDrop} title="Remove this column">
+            remove
+          </button>
+        </div>
         {/* A name the ingest deferred is showing its last complete day, and saying so HERE as well
             as in the page banner is not redundant: the banner names a count, and a reader looking
             at one column needs to know whether THIS one is the stale one. */}

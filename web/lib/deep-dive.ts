@@ -44,6 +44,28 @@ import { COLUMNS, type Column, type Security } from "./columns";
  * prevent. 53 names at 420px is a 22,260px scroll, which is expected and is why the strip has its
  * own horizontal scroller rather than relying on the page.
  */
+// WHICH COLUMNS AND IN WHAT ORDER MOVED TO lib/selection.ts on 2026-09-20 (decision 0055).
+// This file answers "what is in a column"; that one answers "which columns". Re-exported here so
+// existing callers are unaffected and so there is one line saying where they went.
+export {
+  defaultColumns,
+  drop,
+  EMPTY_SELECTION,
+  MAX_PICKED,
+  parseSelection,
+  PIN_PARAM,
+  pick,
+  type ResolvedSelection,
+  resolveSelection,
+  SELECT_PARAM,
+  type Selection,
+  serialiseSelection,
+  type StripSecurity,
+  stripOrder,
+  themeStarts,
+  togglePin,
+} from "./selection";
+
 export const COLUMN_WIDTH = 420;
 
 /** How a section renders. Each is a different component branch, not a styling variant. */
@@ -439,34 +461,3 @@ export function barGeometry(value: number | null | undefined): BarGeometry | nul
 // ---------------------------------------------------------------------------
 // Ordering the strip.
 // ---------------------------------------------------------------------------
-
-export interface StripSecurity extends Security {
-  name: string;
-  theme: string;
-  bellwether: boolean;
-}
-
-/**
- * The order the columns appear in.
- *
- * Bellwethers first within a theme, then alphabetically, and themes in the order the ticker read
- * already returned them. NOT sorted by any parameter: this product has no score and no ranking
- * (hard constraint 1), and a strip ordered by RSI would be a ranking with extra steps. The theme
- * grouping is the only ordering that carries no verdict.
- */
-export function stripOrder(secs: StripSecurity[]): StripSecurity[] {
-  const themeRank = new Map<string, number>();
-  for (const s of secs) if (!themeRank.has(s.theme)) themeRank.set(s.theme, themeRank.size);
-  return secs.slice().sort((a, b) =>
-    (themeRank.get(a.theme) ?? 99) - (themeRank.get(b.theme) ?? 99) ||
-    Number(b.bellwether) - Number(a.bellwether) ||
-    a.symbol.localeCompare(b.symbol)
-  );
-}
-
-/** Where a theme changes, so the strip can rule between blocks the way the grid bands its rows. */
-export function themeStarts(secs: StripSecurity[]): Set<string> {
-  return new Set(
-    secs.filter((s, i) => i === 0 || s.theme !== secs[i - 1].theme).map((s) => s.symbol),
-  );
-}

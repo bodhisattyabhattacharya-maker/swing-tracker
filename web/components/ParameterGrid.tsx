@@ -71,15 +71,18 @@ export function bandNoun(list: Array<{ is_fund: boolean }>): string {
 }
 
 /**
- * " · AVGO bellwether", or an empty string.
+ * " · AVGO bellwether", or " · AVGO, NVDA bellwethers", or an empty string.
  *
- * Returns the FIRST bellwether. A theme with two would be a config error rather than a display
- * problem — `config/watchlist.yml` is where that is decided — and printing both here would hide
- * it behind something that looks deliberate.
+ * NAMES ALL OF THEM. This returned only the first until 2026-09-20, on a comment asserting that a
+ * theme with two "would be a config error". It is not: `config/watchlist.yml` gives ai-silicon
+ * both AVGO and NVDA, and mega-cap-tech both AAPL and MSFT — two of seven themes, 9 bellwethers
+ * in all. The band had been quietly printing "AVGO bellwether" over a theme where NVDA is equally
+ * one, and the comment is what stopped anyone looking. Counted, not assumed, this time.
  */
 export function bellwetherOf(list: Array<{ symbol: string; bellwether: boolean }>): string {
-  const b = list.find((r) => r.bellwether);
-  return b ? ` \u00b7 ${b.symbol} bellwether` : "";
+  const b = list.filter((r) => r.bellwether).map((r) => r.symbol);
+  if (b.length === 0) return "";
+  return ` \u00b7 ${b.join(", ")} bellwether${b.length === 1 ? "" : "s"}`;
 }
 
 export interface Norm {

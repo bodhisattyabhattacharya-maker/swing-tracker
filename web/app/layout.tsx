@@ -858,6 +858,51 @@ const CSS = `
      same statement rotated 90 degrees. */
   .dd-col.theme-start { border-left: 1.5px solid var(--rule); }
 
+  /* PIN AND REMOVE, in the column header where the decision is made. Quiet until the header is
+     hovered or one of them is focused: they are always available, but a pair of buttons repeated
+     across every column at full strength would compete with the symbol, which is the one thing
+     on this page that must never be crowded. Focus-within keeps them reachable by keyboard, where
+     there is no hover to rely on. */
+  .dd-acts { display: flex; gap: 6px; margin-top: 5px; opacity: 0; transition: opacity .12s; }
+  .dd-head:hover .dd-acts, .dd-head:focus-within .dd-acts, .dd-acts:has(.on) { opacity: 1; }
+  .dd-act { font-family: var(--sans-cond); font-size: 9.5px; letter-spacing: .08em;
+            text-transform: uppercase; color: var(--ink-faint); background: none;
+            border: 1px solid var(--rule); padding: 2px 6px; cursor: pointer; }
+  .dd-act:hover { color: var(--ink); border-color: var(--ink-faint); }
+  .dd-act.on { color: var(--accent); border-color: var(--accent); }
+
+  /* The count on the picker button, so "Choose names 9" reads as a state and not a command. */
+  .pick-n { font-family: var(--mono); margin-left: 6px; color: var(--ink-faint); }
+  .seg.on .pick-n { color: inherit; }
+
+  /* THE PICKER. Grouped by theme even though the strip may not be — finding a name and arranging
+     the strip are different jobs and want different arrangements. */
+  .picker { border: 1px solid var(--rule); background: var(--surface); padding: 12px 14px;
+            margin-top: 12px; }
+  .picker-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+                margin-bottom: 12px; }
+  .picker-bar .find { flex: 1 1 220px; min-width: 160px; }
+  /* COLUMNS, NOT A GRID. A grid puts every theme in a row whose height is the tallest member of
+     that row, and ETFs has ten names against Semi equipment's one - which pushed the short groups
+     onto a second row with 300px of white space above them. Multi-column flow packs them instead.
+     break-inside keeps a theme's names with their heading. */
+  .picker-grid { column-width: 215px; column-gap: 20px; }
+  .picker-theme { min-width: 0; break-inside: avoid; margin-bottom: 14px;
+                  -webkit-column-break-inside: avoid; }
+  .picker-th { font-family: var(--sans-cond); font-size: 9.5px; letter-spacing: .1em;
+               text-transform: uppercase; color: var(--ink-faint);
+               border-bottom: 1px solid var(--rule-soft); padding-bottom: 3px; margin-bottom: 4px; }
+  .picker-item { display: flex; align-items: baseline; gap: 6px; padding: 3px 2px;
+                 cursor: pointer; font-size: 12.5px; min-width: 0; }
+  .picker-item:hover { background: var(--paper); }
+  .picker-item input { margin: 0; align-self: center; flex: 0 0 auto; accent-color: var(--accent); }
+  .picker-sym { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+  .picker-item.on .picker-sym { color: var(--accent); }
+  .picker-pin { font-family: var(--sans-cond); font-size: 9px; letter-spacing: .08em;
+                text-transform: uppercase; color: var(--accent); }
+  .picker-co { color: var(--ink-faint); font-size: 11.5px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
   .dd-head { position: sticky; top: 0; z-index: 4; background: var(--surface);
              padding: 11px 14px 9px; border-bottom: 1.5px solid var(--rule); }
   .dd-sym { font-family: var(--mono); font-size: 15px;
