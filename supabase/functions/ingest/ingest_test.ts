@@ -26,6 +26,7 @@ const assertThrows = (fn: () => unknown, includes: string) =>
 
 import {
   autoFullCap,
+  FUNDAMENTALS_LIMIT,
   HOURLY_LIMIT_FULL,
   HOURLY_LIMIT_INCREMENTAL,
   inShard,
@@ -895,7 +896,7 @@ Deno.test("every scope resolves to a universe, or explicitly to none", () => {
   for (const scope of SCOPES) {
     const u = universeFor(scope);
     assertEquals(
-      u === null || u === "all" || u === "equities" || u === "indices",
+      u === null || u === "all" || u === "equities" || u === "indices" || u === "companies",
       true,
       `scope ${scope} resolved to ${String(u)}`,
     );
@@ -912,6 +913,21 @@ Deno.test("indices is index-only, and is NOT reachable through `all`", () => {
 
 Deno.test("hourly excludes indices, because FRED has no intraday series to ask for", () => {
   assertEquals(universeFor("hourly"), "equities");
+});
+
+Deno.test("fundamentals covers operating companies only, and is NOT reachable through `all`", () => {
+  // An ETF has no income statement; asking SEC for one would be a wasted request or a wrong CIK.
+  assertEquals(universeFor("fundamentals"), "companies");
+  // `all` is the nightly price run. SEC work has its own clock (decision 0059), like hourly.
+  assert(universeFor("all") !== "companies");
+});
+
+Deno.test("planLimit: fundamentals has its own per-run cap, and an explicit limit still wins", () => {
+  assertEquals(planLimit(false, null, "fundamentals"), FUNDAMENTALS_LIMIT);
+  assertEquals(planLimit(true, null, "fundamentals"), FUNDAMENTALS_LIMIT);
+  assertEquals(planLimit(false, "2", "fundamentals"), 2);
+  // It is a count of 1-5 MB documents per run, not of companies checked, so it is small on purpose.
+  assert(FUNDAMENTALS_LIMIT <= 10);
 });
 
 Deno.test("the ticker sync does no bar work", () => {

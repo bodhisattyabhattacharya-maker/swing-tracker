@@ -276,6 +276,14 @@ counts as (
        select 1 from public.hourly_session_bars group by symbol, d having count(*) > 7) x) as hourly_overfull,
     (select count(*) from public.hourly_features
       where rsi_hourly is not null and (rsi_hourly < 0 or rsi_hourly > 100))              as hourly_rsi_out_of_range,
+    -- SEC fundamentals (decision 0059). Informational until Stage F2 puts them on the grid.
+    (select count(*) from public.sec_filers)                                              as sec_filers,
+    (select count(*) from public.tickers where active and not is_index and not is_fund)   as sec_companies,
+    (select string_agg(t.symbol, ', ' order by t.symbol) from public.tickers t
+      where t.active and not t.is_index and not t.is_fund
+        and not exists (select 1 from public.sec_quarters q
+                        where q.symbol = t.symbol and q.item = 'revenue'
+                          and q.period_end >= current_date - 200))                        as sec_no_recent_revenue,
     -- Range and sign checks on the derived columns.
     (select count(*) from public.daily_features
       where rsi_daily is not null and (rsi_daily < 0 or rsi_daily > 100))                 as rsi_out_of_range,
@@ -575,6 +583,14 @@ invariant_rows as (
            '0', hourly_rsi_out_of_range::text,
            'same function as daily; out of range here means the inputs, not the formula'
       from counts
+    union all
+    select 'info', 'SEC: operating companies with a CIK on file',
+           'PASS', '(informational)', sec_filers::text || ' of ' || sec_companies::text,
+           'fills on the first fundamentals run; a company short of it has no ticker match at SEC' from counts
+    union all
+    select 'info', 'SEC: companies with no revenue quarter ending in the last 200 days',
+           'PASS', '(informational)', coalesce(sec_no_recent_revenue, 'none'),
+           'expected: ASML (20-F, annual only) and TSM (SEC data ends 2024) - anything else is a tag or ingest gap' from counts
     union all
     select 'coverage', 'no symbol went from current yesterday to missing today',
            case when symbols_regressed = 0 then 'PASS' else 'FAIL' end,

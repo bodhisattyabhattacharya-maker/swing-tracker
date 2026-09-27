@@ -11,6 +11,9 @@
  *          schedule: one-minute bars are ~200x the payload of a daily top-up, and folding them
  *          into the nightly `all` run would put the equities back behind a wall clock they only
  *          just got out from under (the eleven names deferred on 2026-09-18).
+ *          `fundamentals` (decision 0059) is SEC EDGAR, not bars: for each operating company it
+ *          checks the newest periodic filing and, only when there is one it has not stored, fetches
+ *          the companyfacts document into `sec_facts`. Its own schedule; not part of `all`.
  *          ?symbols=MU,NVDA                           restrict to these (default: every active row)
  *          ?full=1                                    force the full range, not incremental
  *          ?limit=10                                  max symbols fetched this run (default 10)
@@ -89,6 +92,19 @@ import { polygon } from "./polygon.ts";
 import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
 import { fetchNorms } from "./norms.ts";
+import {
+  companyFactsUrl,
+  extractFacts,
+  latestPeriodic,
+  mapCompanyTickers,
+  SEC_FACTS_WAIT_DAYS,
+  SEC_MIN_INTERVAL_MS,
+  SEC_SOURCE,
+  secJson,
+  submissionsUrl,
+  TICKERS_URL,
+  validUserAgent,
+} from "./sec.ts";
 
 /**
  * Providers in routing order. The first one whose `supports()` returns true wins, so order
@@ -268,6 +284,8 @@ async function activeSymbols(sb: SupabaseClient, only: string[] | null, universe
     // thing the morning catch-up run needs. Three named cases beat a flag answering two questions.
     if (universe === "equities") q = q.eq("is_index", false);
     if (universe === "indices") q = q.eq("is_index", true);
+    // Filers only: an ETF is a trust with no income statement, and an index is not a company.
+    if (universe === "companies") q = q.eq("is_index", false).eq("is_fund", false);
     if (only) q = q.in("symbol", only);
     const { data, error } = await q.order("symbol");
     if (error) throw new Error(`tickers read: ${error.message}`);
@@ -434,6 +452,187 @@ async function ingestBars(
   return result;
 }
 
+
+// ---------------------------------------------------------------------------
+// Fundamentals: SEC EDGAR companyfacts -> sec_facts (decision 0059)
+// ---------------------------------------------------------------------------
+
+interface FundamentalsResult {
+  /** Rows upserted per symbol. */
+  counts: Record<string, number>;
+  errors: Record<string, string>;
+  /** Needed a fetch, did not get one this run: over the limit, skipped by offset, or after a 429. */
+  deferred: string[];
+  /** Checked and already current: the newest periodic filing is the one stored. */
+  current: string[];
+  /** The filing is in submissions but not yet in companyfacts; stored what exists, will retry. */
+  lagging: string[];
+  written: number;
+  dropped: number;
+  conflicts: number;
+  rate_limited?: true;
+}
+
+/**
+ * The daily EDGAR pass. Per company: one small `submissions` request; a companyfacts request only if
+ * the newest periodic filing differs from the one recorded in `sec_filers` (or `full=1`).
+ *
+ * `last_accn` is advanced ONLY when that accession actually appears in the companyfacts document.
+ * SEC's own processing can put a filing into submissions before its facts reach companyfacts; if we
+ * advanced anyway, the company would read as current and that quarter would never arrive. Recorded
+ * as `lagging` instead, and retried next run - for up to SEC_FACTS_WAIT_DAYS, after which a filing
+ * that still has no facts (a 10-K/A adding only Part III) is accepted as carrying none.
+ */
+async function ingestFundamentals(
+  sb: SupabaseClient,
+  symbols: string[],
+  forceFull: boolean,
+  limit: number,
+  offset: number,
+): Promise<FundamentalsResult> {
+  const result: FundamentalsResult = {
+    counts: {},
+    errors: {},
+    deferred: [],
+    current: [],
+    lagging: [],
+    written: 0,
+    dropped: 0,
+    conflicts: 0,
+  };
+
+  // The contact line SEC requires. From a secret - this repo is public - and checked before any
+  // request: a malformed one earns SEC's 403 "Request Rate Threshold Exceeded" page, and repeated
+  // bad requests are how an IP gets blocked. Throwing here makes the whole run not-ok and says why.
+  const ua = Deno.env.get("SEC_USER_AGENT");
+  if (!validUserAgent(ua)) {
+    throw new Error('SEC_USER_AGENT secret is missing or not "Name email" - no SEC request was sent');
+  }
+
+  let lastRequestAt = 0;
+  const pace = async () => {
+    const since = Date.now() - lastRequestAt;
+    if (since < SEC_MIN_INTERVAL_MS) await sleep(SEC_MIN_INTERVAL_MS - since);
+    lastRequestAt = Date.now();
+  };
+
+  // What to keep: the concept whitelist lives in the database so a label fix is a migration.
+  const whitelist = await retryRead("sec_concept_map read", async () => {
+    const { data, error } = await sb.from("sec_concept_map").select("taxonomy, concept");
+    if (error) throw new Error(`sec_concept_map read: ${error.message}`);
+    return new Set((data ?? []).map((r) => `${r.taxonomy}/${r.concept}`));
+  });
+  if (whitelist.size === 0) throw new Error("sec_concept_map is empty - nothing would be kept");
+
+  // CIKs we already know, and what each company's newest stored filing is.
+  const filers = await retryRead("sec_filers read", async () => {
+    const { data, error } = await sb.from("sec_filers").select("symbol, cik, last_accn").in("symbol", symbols);
+    if (error) throw new Error(`sec_filers read: ${error.message}`);
+    return new Map((data ?? []).map((r) => [r.symbol as string, { cik: r.cik as number, lastAccn: r.last_accn as string | null }]));
+  });
+
+  // Unknown CIKs: one request for SEC's ticker file, only when needed.
+  const unknown = symbols.filter((s) => !filers.has(s));
+  if (unknown.length > 0) {
+    await pace();
+    const found = mapCompanyTickers(await secJson(TICKERS_URL, ua, "company_tickers"), unknown);
+    const rows = Object.entries(found).map(([symbol, cik]) => ({ symbol, cik }));
+    if (rows.length) await upsertChunked(sb, "sec_filers", rows, "symbol");
+    for (const { symbol, cik } of rows) filers.set(symbol, { cik, lastAccn: null });
+    for (const s of unknown) if (!(s in found)) result.errors[s] = "no SEC CIK for this ticker in company_tickers.json";
+  }
+
+  let fetched = 0;
+  let skippedByOffset = 0;
+
+  for (let i = 0; i < symbols.length; i++) {
+    const symbol = symbols[i];
+    const f = filers.get(symbol);
+    if (!f) continue; // already recorded as an error above
+
+    // A forced run re-fetches everything anyway, so offset and limit are decided BEFORE spending a
+    // submissions request on a company this run will not fetch - a hand-walked backfill of 43 would
+    // otherwise pay 43 checks per slice for 5 fetches.
+    if (forceFull) {
+      if (skippedByOffset < offset) {
+        skippedByOffset++;
+        result.deferred.push(symbol);
+        continue;
+      }
+      if (fetched >= limit) {
+        result.deferred.push(symbol);
+        continue;
+      }
+    }
+
+    try {
+      await pace();
+      const latest = latestPeriodic(await secJson(submissionsUrl(f.cik), ua, `${symbol}/submissions`));
+      if (!latest) {
+        result.errors[symbol] = "no periodic filing (10-K/10-Q/20-F/40-F) in SEC's recent window";
+        continue;
+      }
+      const needed = forceFull || f.lastAccn !== latest.accn;
+      if (!needed) {
+        result.current.push(symbol);
+        continue;
+      }
+      // `offset` walks a backfill by hand, exactly as for bars: skip the first N that need work.
+      if (!forceFull && skippedByOffset < offset) {
+        skippedByOffset++;
+        result.deferred.push(symbol);
+        continue;
+      }
+      if (!forceFull && fetched >= limit) {
+        result.deferred.push(symbol);
+        continue;
+      }
+      fetched++;
+
+      console.log(`fundamentals ${symbol} (CIK ${f.cik}) via ${SEC_SOURCE}: newest ${latest.form} ${latest.accn}`);
+      await pace();
+      const doc = await secJson(companyFactsUrl(f.cik), ua, `${symbol}/companyfacts`);
+      const ex = extractFacts(doc, symbol, f.cik, whitelist);
+      await upsertChunked(sb, "sec_facts", ex.rows, "symbol,taxonomy,concept,unit,period_start,period_end,accn");
+      result.counts[symbol] = ex.rows.length;
+      result.written += ex.rows.length;
+      result.dropped += ex.dropped;
+      result.conflicts += ex.conflicts;
+
+      // See the function header: advance only if the filing has reached companyfacts - OR if it is
+      // old enough that it never will. Some periodic filings carry no statement facts at all: a 6-K
+      // press release, a 10-K/A that only adds Part III. Waiting on those forever would re-fetch a
+      // multi-megabyte document every day for nothing. Ten days is far past SEC's normal lag
+      // (a day or two) and short enough that a real lag is still retried.
+      const arrived = ex.accessions.has(latest.accn);
+      const ageDays = (Date.now() - Date.parse(`${latest.filed}T00:00:00Z`)) / 86_400_000;
+      const settled = arrived || ageDays > SEC_FACTS_WAIT_DAYS;
+      if (!settled) result.lagging.push(symbol);
+      const { error } = await sb.from("sec_filers").update({
+        last_accn: settled ? latest.accn : f.lastAccn,
+        last_form: latest.form,
+        last_filed: latest.filed,
+        facts_fetched_at: new Date().toISOString(),
+        fact_rows: ex.rows.length,
+      }).eq("symbol", symbol);
+      if (error) throw new Error(`sec_filers update: ${error.message}`);
+      console.log(
+        `  ${symbol}: ${ex.rows.length} facts` +
+          (arrived ? "" : settled ? ` - ${latest.form} ${latest.accn} carries no statement facts` : " - newest filing not in companyfacts yet"),
+      );
+    } catch (e) {
+      result.errors[symbol] = e instanceof Error ? e.message : String(e);
+      console.error(`  ${symbol} FAILED: ${result.errors[symbol]}`);
+      if (e instanceof RateLimitError) {
+        result.rate_limited = true;
+        for (const s of symbols.slice(i + 1)) result.deferred.push(s);
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -460,7 +659,11 @@ Deno.serve(async (req) => {
   // defaulting both to the same number would either throttle routine runs or get a backfill killed
   // halfway. An explicit ?limit= still overrides.
   // Hourly has its own defaults, because its per-symbol cost is a different order of magnitude.
-  const limit = planLimit(forceFull, url.searchParams.get("limit"), scope === "hourly" ? "hourly" : "daily");
+  const limit = planLimit(
+    forceFull,
+    url.searchParams.get("limit"),
+    scope === "hourly" ? "hourly" : scope === "fundamentals" ? "fundamentals" : "daily",
+  );
   // Skip the first N of the planned work. Only useful for one-time deepening - see the header.
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
   let shard: { k: number; n: number } | null;
@@ -476,7 +679,11 @@ Deno.serve(async (req) => {
   // Open the run row first so a crash mid-way still leaves a started-but-unfinished record.
   const { data: run, error: runErr } = await sb
     .from("ingest_runs")
-    .insert({ source: PROVIDERS.map((p) => p.name).join("+"), scope, triggered_by: triggeredBy })
+    .insert({
+      source: scope === "fundamentals" ? SEC_SOURCE : PROVIDERS.map((p) => p.name).join("+"),
+      scope,
+      triggered_by: triggeredBy,
+    })
     .select("id")
     .single();
   if (runErr) return json({ error: `ingest_runs insert: ${runErr.message}` }, 500);
@@ -534,6 +741,16 @@ Deno.serve(async (req) => {
       written += r.written;
       rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `hourly:${s}`));
+    }
+    if (scope === "fundamentals") {
+      // Writes `detail.fundamentals`, never `detail.daily` - same reasoning as `indices` above: the
+      // pipeline-staleness clock must only move when prices arrive.
+      const syms = inShard(await activeSymbols(sb, only, universeFor(scope)!), shard);
+      const r = await ingestFundamentals(sb, syms, forceFull, limit, offset);
+      out.fundamentals = r;
+      written += r.written;
+      rateLimited ||= r.rate_limited === true;
+      problems.push(...Object.keys(r.errors).map((s) => `fundamentals:${s}`));
     }
   } catch (e) {
     // Watchlist or table-level failure: the run is not ok, and the message is the detail.

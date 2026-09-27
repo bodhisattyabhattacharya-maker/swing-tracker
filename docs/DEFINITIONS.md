@@ -435,8 +435,10 @@ has been compared with the chart.
 
 ## 7. Fundamentals — settled
 
-Settled 2026-09-16, decision 0040. **Nothing here is built yet**; this is the contract the
-implementation has to meet, written before the code so the code cannot quietly decide it.
+Settled 2026-09-16, decision 0040. **The source layer is built** (decision 0059: SEC EDGAR into
+`sec_facts`, see "Where the numbers come from" below); **the parameters are not** — they are Stage F2.
+This is the contract that implementation has to meet, written before the code so the code cannot
+quietly decide it.
 
 **The principle that decides most of them** is §5 above: *we compute from GAAP filings via SEC XBRL,
 and we cannot match a consumer app that buys adjusted vendor data.* Wherever the choice was "the
@@ -456,6 +458,24 @@ with it the backtesting property decision 0002 exists to protect.
 | **EV / Sales** | `EV / TTM revenue`, where `EV = market cap + total debt (leases included) − cash − short-term investments` | revenue = 0 |
 | **Revenue growth** | **Quarterly** revenue, year-over-year, **as reported**. `rev_acceleration` is the change in that growth rate. | no year-ago quarter filed |
 | **Share count change** | Year-over-year % change in `dei:EntityCommonStockSharesOutstanding` — the **cover-page** count. Negative is buyback, positive is dilution. | no year-ago filing |
+
+### Where the numbers come from (decision 0059)
+
+- **SEC EDGAR companyfacts**, stored as filed in `sec_facts`: every value, with its filing date and
+  accession. A restatement is another row with a later filing date; a concept not filed has no row.
+- **A tag is resolved per period and per filing** through `sec_concept_map`, highest priority first.
+  Tags change over time (AMZN's capex, 2017; MU's debt, 2025), so a company-wide choice would be wrong
+  on one side of every change.
+- **The current view takes the newest filing for each period** (`sec_item_latest`). A backtest must
+  instead take the newest filing on or before its own date — that function is Stage F2.
+- **Quarters** (`sec_quarters`): a reported three-month value where one exists; otherwise the
+  difference of consecutive year-to-date values with the same start — Q2 = H1 − Q1, Q3 = 9M − H1,
+  **Q4 = FY − 9M**. Cash-flow quarters always come this way, because 10-Qs file them year to date. A
+  difference that does not span 75–105 days is not a quarter and is not published. **Per-share
+  differences are approximate** (the share counts behind FY and 9M EPS differ) and are flagged.
+- **Currency is carried, not converted:** ASML files in EUR. Conversion happens where a ratio needs it.
+- **Known gaps:** TSM (SEC data ends 2024), ASML (annual only), MSFT D&A (company-specific tag). These
+  are nulls with a reason, per `sec_coverage`, until the analyst vendor supplies them.
 
 ### The four choices that were genuinely open, and what was chosen
 

@@ -92,3 +92,8 @@ Shared vocabulary. Cheap file; it stops two people building two meanings for one
 | **Session-aligned hour** | An hourly bar that starts at the 09:30 ET open rather than on the clock: seven a session, the last 15:30–16:00, extended hours excluded, 13:00 close on half days. What TradingView draws and what `rsi_hourly` is computed on. Built from one-minute bars (`session.ts`); the vendor's own hour aggregates are clock-aligned and are not used. Decision 0058. |
 | **Closing hour** | The session-aligned hour that ends a day's session (`closes_session`). A day's hourly value is RSI as of this bar; no closing hour, no value. |
 | **Shard** | `?shard=k/n` on the ingest: take every n-th symbol from the k-th, chosen before the plan is built. How the two scheduled hourly jobs split the equities. Distinct from `offset`, which skips planned work and is for hand-run deepening only. |
+| **CIK** | SEC's Central Index Key — a company's permanent filer number. `sec_filers` maps each ticker to one, from SEC's `company_tickers.json`. |
+| **companyfacts** | SEC's per-company JSON of every XBRL fact the company has filed in a standard taxonomy, each with its period, value, form, accession and filing date. The source of `sec_facts`. |
+| **Accession number** | The ID of one SEC filing. A period filed in two filings has two facts with two accessions — which is how a restatement is visible. |
+| **Item (fundamentals)** | A named quantity — revenue, capex, D&A — that one or more XBRL concepts can stand for. `sec_concept_map` lists them in fallback order, resolved per period and filing. |
+| **Derived quarter** | A quarter computed as the difference of two year-to-date values sharing a start (Q4 = FY − 9M). `sec_quarters.derived`; `approximate` when the item is per-share. |

@@ -2024,3 +2024,53 @@ or two.
 **What CI cannot prove:** that the alignment matches TradingView. `session_test.ts` pins every edge
 (DST Mondays, early close, extended hours, bucket edges, settling) against hand-computed offsets, but
 the reference is the chart. Three MU hourly goldens, read by hand, close that — DEFINITIONS.md §6.
+
+## 0059 — 2026-09-27 — Fundamentals come from SEC EDGAR, stored raw and point-in-time; a vendor only for what SEC cannot give
+
+**Context:** Stage F was planned on the Massive Financials & Ratios add-on ($29/month) with four
+acceptance probes. Bodhi doubted it and asked for a comparison with FMP. The research (Project doc
+`swing-tracker-fundamentals-vendor-research-2026-09-27.md`) found Massive's own documentation fails
+three of the four probes before a key is bought: its `filing_date` is "the date of the most recent
+SEC filing that included this period's data" — restatements overwrite; an unreported concept "comes
+back as 0.0 rather than absent"; and its source is 10-K/10-Q XBRL, so the 20-F filers are likely
+absent. It has no operating-lease field, and analyst data is $99/month per Benzinga dataset.
+
+**Decided: SEC EDGAR for fundamentals, free.** A probe on production the same day (Project doc
+`swing-tracker-edgar-probe-2026-09-27.md`) confirmed what decision 0002 assumed: companyfacts keeps
+every filed value with its own filing date and accession — Apple's diluted EPS has 25 periods whose
+value differs between filings, all present — and a concept not filed has no fact rather than a zero.
+All 43 companies map to a CIK. ARM files 10-Qs. The gaps are two: **TSM's SEC data ends 2024-12-31**
+and **ASML files annual 20-Fs only**. Those two, and the six Forward Look columns, go to one paid vendor
+(FMP Premium or EODHD), to be chosen after free-tier probes.
+
+**Built as an edge-function scope storing raw facts** (Bodhi's choice of three; the others were one
+request per concept per company, ~1,000 requests a run, and fetching and parsing in Postgres, which
+timed out on five documents in the probe). `scope=fundamentals` checks each company's `submissions`
+(~0.2 MB) and fetches the 1–5 MB companyfacts only when a newer periodic filing exists. Every value of
+~37 whitelisted concepts lands in `sec_facts`, untouched; `sec_concept_map` says which concepts stand
+for which item, in fallback order.
+
+**Tag fallback is per period and per filing, not per company.** Measured: AMZN's capex tag changed in
+2017, MU's debt tag in 2025. A per-company choice would lose one side of every change. Alternates are
+listed only where they are true synonyms — `LongTermDebt` (a total) is a separate item from its current
+and non-current parts, because summing a total with its own parts is the double count this layer must
+not make possible.
+
+**Quarters are derived in SQL, and say so.** 10-Q cash flow is year-to-date and Q4 is never filed, so
+`sec_quarters` takes a reported three-month value where one exists and otherwise differences
+consecutive year-to-date values sharing a start — Q4 = FY − 9M. A difference that does not span 75–105
+days is not published: a missing 10-Q produces no quarter rather than a half-year labelled as one.
+Per-share differences are flagged `approximate` (share counts differ between the two denominators).
+
+**Three things chosen while building, recorded because each is a judgment:**
+- `last_accn` advances only when that filing's facts appear in companyfacts, so SEC's own lag is
+  retried — but only for ten days, after which a filing with no statement facts (a Part-III 10-K/A) is
+  accepted as carrying none rather than re-fetched forever.
+- 6-K does not trigger a fetch. ASML files them for buyback updates most weeks; none carry statement
+  facts. The cost is TSM's XBRL 6-Ks, and TSM's SEC data is stale anyway.
+- The SEC contact line is the `SEC_USER_AGENT` secret, checked before any request. The first probe sent
+  a placeholder and got SEC's 403 "Request Rate Threshold Exceeded" page; repeated, that is how an IP is
+  blocked.
+
+**Not decided here:** the fundamental parameters themselves (Stage F2), the as-of function a backtest
+needs (the views are the current view), and the analyst vendor.

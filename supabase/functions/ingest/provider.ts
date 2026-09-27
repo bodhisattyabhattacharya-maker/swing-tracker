@@ -166,12 +166,13 @@ const DEFAULT_LIMIT_FULL = 15;
 export function planLimit(
   forceFull: boolean,
   explicit: string | null,
-  kind: "daily" | "hourly" = "daily",
+  kind: "daily" | "hourly" | "fundamentals" = "daily",
 ): number {
   if (explicit !== null && explicit !== "") {
     const n = Number(explicit);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
+  if (kind === "fundamentals") return FUNDAMENTALS_LIMIT;
   if (kind === "hourly") return forceFull ? HOURLY_LIMIT_FULL : HOURLY_LIMIT_INCREMENTAL;
   return forceFull ? DEFAULT_LIMIT_FULL : DEFAULT_LIMIT_INCREMENTAL;
 }
@@ -201,6 +202,21 @@ export function planLimit(
  * `hourly_capacity` in ingest_test.ts pins shards x limit against the watchlist either way.
  */
 export const HOURLY_LIMIT_INCREMENTAL = 30;
+
+/**
+ * FUNDAMENTALS: companyfacts documents fetched per run (decision 0059). NOT the number of companies
+ * checked - every company in the run's shard gets a cheap `submissions` check (~0.2 MB) and only those
+ * with a new periodic filing, or none stored yet, get the 1-5 MB companyfacts document.
+ *
+ * 5 IS A GUESS WITH A REASON, not a measurement. The ceiling that matters is the 2 s CPU budget
+ * (measured on hourly, 2026-09-27): a 90-day minute fetch of ~60,000 rows cost ~0.12 s. A 5 MB
+ * companyfacts document is a similar JSON.parse plus a whitelist scan, so assume ~0.15-0.25 s; five is
+ * ~1 s with room for 20-odd submissions checks. The first backfill run is the measurement - read the
+ * function logs for "CPU Time exceeded" and the run's timing, then revise here.
+ *
+ * Same value full or incremental: a forced run is the same work per document.
+ */
+export const FUNDAMENTALS_LIMIT = 5;
 export const HOURLY_LIMIT_FULL = 6;
 
 /**
@@ -261,15 +277,15 @@ export function inShard<T>(items: T[], shard: { k: number; n: number } | null): 
 // touch" is the same kind of decision one level up.
 // ---------------------------------------------------------------------------
 
-export type Scope = "tickers" | "daily" | "hourly" | "indices" | "all";
+export type Scope = "tickers" | "daily" | "hourly" | "indices" | "all" | "fundamentals";
 
-export const SCOPES: readonly Scope[] = ["tickers", "daily", "hourly", "indices", "all"] as const;
+export const SCOPES: readonly Scope[] = ["tickers", "daily", "hourly", "indices", "all", "fundamentals"] as const;
 
 export function isScope(v: string): v is Scope {
   return (SCOPES as readonly string[]).includes(v);
 }
 
-export type Universe = "all" | "equities" | "indices";
+export type Universe = "all" | "equities" | "indices" | "companies";
 
 /**
  * Which symbols a scope's BAR work covers, or null when it does no bar work.
@@ -296,6 +312,10 @@ export function universeFor(scope: Scope): Universe | null {
       return "equities";
     case "indices":
       return "indices";
+    // Operating companies only: an ETF has no income statement and an index is not a filer.
+    // Added with decision 0059. NOT part of `all`, for the same reason hourly is not.
+    case "fundamentals":
+      return "companies";
     case "tickers":
       return null;
   }

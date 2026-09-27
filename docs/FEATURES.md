@@ -1412,3 +1412,34 @@ already inside it and are unchanged.
 
 **Verified by:** `scripts/ci/run.sh` green (10 goldens MISSING in CI by design, was 7); `deno test`
 98 pass; the golden query run against production: 3 PASS.
+
+## 2026-09-27 — SEC EDGAR fundamentals, raw and point-in-time (Stage F1)
+
+**What:** a new ingest scope, `fundamentals`, keeps an SEC-sourced fact table current for the 43
+operating companies. Nothing on the grid changes yet — Stage F2 builds the parameters on top.
+- `sec_facts`: every filed value of ~37 whitelisted XBRL concepts, with filing date and accession.
+  Restatements are extra rows, never overwrites; an unreported concept has no row, never a zero.
+- `sec_concept_map`: which concepts stand for which item (revenue, diluted EPS, D&A, capex, debt,
+  leases, cash, short-term investments, equity, cover-page shares…), in fallback order, per period.
+- Views: `sec_item_latest` (newest filing per period), `sec_quarters` (reported quarters, else
+  year-to-date differences — Q4 = FY − 9M, cash-flow quarters from YTD; derived and approximate
+  flagged), `sec_coverage` (per company and item: newest period and which tags supplied it).
+- Two daily jobs, `swing-ingest-sec-a/-b` at 11:20 and 11:40 UTC, sharded. A company is re-fetched
+  only when SEC shows a newer 10-K/10-Q/20-F/40-F.
+
+**How:** decision 0059. `supabase/functions/ingest/sec.ts` (new; pure parts tested) and a
+`fundamentals` branch in `index.ts`; migration `20260928100000_sec_fundamentals.sql`. The SEC contact
+line comes from the `SEC_USER_AGENT` secret.
+
+**Verified by:** `sec_test.ts`, 14 tests (restated values kept beside originals, bad facts dropped not
+zeroed, 6-Ks never trigger, the placeholder User-Agent refused). Ingest suite 114 pass. Database gate:
+11 new `sec` checks against hand-built facts — restatement, reported-beats-derived, Q3/Q4 derivation,
+YTD cash flow, a gap producing no quarter, per-period tag fallback, per-share `approximate`, units,
+coverage shape, sharded schedule — negative-tested three ways (each break fails its own check).
+
+**Known gaps, by measurement:** TSM (SEC data ends 2024-12-31) and ASML (annual 20-F only) need the
+analyst vendor for quarters; Microsoft's D&A is filed under a company tag companyfacts does not carry.
+`sec_coverage` shows each.
+
+**Not verified yet:** the edge function's own reach to SEC (the probe ran from Postgres) and its CPU
+per document — the first backfill run measures both.
