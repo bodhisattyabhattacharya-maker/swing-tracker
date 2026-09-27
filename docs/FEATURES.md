@@ -1307,3 +1307,55 @@ its own check. Caught by running it; it uses dynamic SQL now.
 And the market-holiday worry raised before the fix was chosen turned out to be a non-issue,
 checked rather than assumed: a holiday run fires, finds no bars and finishes ok, which is correct
 because there was no session to fetch. Recorded so nobody re-opens it.
+
+## 2026-09-27 — The Deep Dive's remaining spec items
+
+**What:** five things, finishing the Deep Dive work the picker started.
+
+**MA signals sits directly under the price chart**, before RSI — statements about the same lines
+the chart just drew, read next to it.
+
+**One jump row for the whole strip.** Every section is at the same height on every name, so
+jumping to Fundamentals jumps there in all columns at once. Deliberately not one row per card:
+that would be 424 chips at 53 names to do what eight do. Flagged as a departure from the spec.
+
+**Latest close and the day change in each column header**, in neutral ink — a day's move is not a
+reading against a norm we set. There is no day-change parameter, so `fetchGrid` gains one windowed
+read of `daily_features` reduced to **each symbol's own last two closes**. Per symbol, not per
+date: on 2026-09-18 eleven names were a day behind, and a shared-date comparison would have
+measured their change against a bar two sessions old without saying so. A symbol with one stored
+bar reads "no prior close" rather than a confident 0.00%.
+
+**Price-stat mini-plots**: a marker on each stat's own measured range, with the norm drawn as a
+notch — the only mark on the rule that carries an opinion. 1.0 on the volume track is dotted
+instead, because a ratio against a name's own average is true by construction rather than chosen.
+**Above 5y low gets no track**: measured at 120% to 5,350% across the watchlist, it has no linear
+scale that shows both ends, and a log one would mean something different from the four beside it.
+
+**Overlay chips are toggles now, with three states.** On, off-by-choice, and **unavailable** —
+this name has too little history for that average. The strike-through used to mean the third and
+now means only the third; the reader's own choice is a hollow swatch. ALAB, ARM and SNDK have
+fewer than 200 completed weeks, and collapsing the two absences would blame the reader for a data
+limit.
+
+**How:** decision 0057. `lib/statplot.ts` is a new pure module with no runtime imports, so the
+check exercises the real arithmetic; spans measured against the live watchlist on 2026-09-27.
+
+**Verified by:** `scripts/ci/check_stat_tracks.sh`, new, 60 assertions, negative-tested six ways —
+breaking the clamp flag fails 10, shrinking a span fails the arithmetic, giving above-5y-low a
+track fails 2, adding a stat to the section without deciding its track fails 2, and an off-by-a-
+factor in the placement fails 11. All **eight** web checks pass. In a browser: section order reads
+`price > ma > rsi`, eight jump chips exist and exactly zero live inside a column, clicking one
+scrolls, every header's price and change agree with each other (a dash never sits beside a
+confident percentage), four tracks render with markers inside their own rules plus a notch and a
+reference, above-5y-low has none, and toggling an overlay puts it in `off` **without** the
+strike-through that means something else.
+
+**Two comments corrected while being written.** The previous-close reducer claimed to assert its
+row ordering and did not — it now compares dates, because taking the second row of an ascending
+window returns a fortnight-old close as "yesterday", wrong by weeks and plausible on screen. And
+the new check's header claimed it verified that spans fit the data; it runs without a database and
+cannot. It verifies that a misfit is visible, which is a smaller and true claim.
+
+**Also:** a third backtick-in-the-CSS-literal, caught immediately by both guards built for it last
+week, each naming the line.

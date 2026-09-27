@@ -1892,3 +1892,64 @@ and Postgres resolves relation names at PARSE time — on a database without pg_
 every CI database, that one reference would have failed the entire formula gate, not just its own
 check. Caught by running it. It uses dynamic SQL now, the same way the file's existing `plan_of`
 helper wraps `EXPLAIN` for the same reason.
+
+## 0057 — 2026-09-27 — The Deep Dive's remaining spec items, and three things that had to be measured first
+
+**Context:** the five items left from the Deep Dive spec after the picker shipped. Three needed no
+decision; two did, and I had said at the picker handover that none did. Investigating proved that
+wrong, which is why the questions came before the code.
+
+**MA signals moves directly under the price chart, before RSI.** The stack, the crosses and the
+slopes are statements about the same lines the chart above just drew, so reading them next to it
+costs no eye travel. RSI is a different instrument and used to sit in between.
+
+**The jump row is ONE row for the whole strip, not one per card, and that is a deliberate
+departure from the spec.** Every section sits at the same height on every name — the property the
+420px fixed column exists to guarantee — so scrolling to Fundamentals scrolls to Fundamentals in
+every column at once. A chip row inside each card would be eight chips multiplied by the
+watchlist: **424 of them at 53 names, to do what eight do.** That arithmetic is the one this
+project has been caught by three times. Flagged rather than done quietly; the per-card version is
+the same handler with the row moved.
+
+**Latest price and change: one server read, because there is no day-change parameter.**
+`prev_close` lives inside the RSI computation as a local variable; nothing publishes it. Three
+routes were measured. A per-column fetch costs 9 requests on the default view and 53 with
+everything selected. Deriving it from the price series the chart already pulls costs nothing but
+leaves most headers blank until their column is scrolled into view, because the chart lazy-loads —
+and the header is the first thing read. So `fetchGrid` gains one windowed read of `daily_features`
+reduced to **each symbol's own last two closes**, which is what makes it correct for a name the
+ingest deferred: asking for "the close on data_through minus one" would have given the eleven
+names behind on 2026-09-18 a change measured against a bar two sessions old, silently.
+
+The change is drawn in **neutral ink, not the verdict pair.** A day's move is not a reading
+against a norm we set, and colouring it red or green would make it look like one.
+
+**Stat tracks: a marker on each stat's own measured range.** The ends are display constants and
+mean nothing; the **notch** is the norm and is the only mark carrying an opinion — the same
+distinction the regime scale draws between a norm and a display cut. 1.0 on the volume track is a
+third thing again: true by construction, since the ratio is against the name's own average, so it
+is drawn dotted rather than as a threshold someone chose.
+
+**`pct_above_low_stored` gets no track, and the measurement decided that.** It spans **120% to
+5,350%** across the watchlist — a factor of 45. There is no linear scale on which both ends say
+anything: put 5,350 at the right edge and every other name is a tick in the first 2% of the rule.
+A log scale would fix the spread and break the row, because a marker halfway along one track would
+then mean something different from a marker halfway along the four beside it. Recorded in
+`UNTRACKED` with the reason, so the absence is a decision rather than a gap someone fills in later
+without measuring.
+
+**Overlay chips become toggles, and gain a third state.** A line can be absent for two entirely
+different reasons and they must not look alike: the reader switched it off, or **this name has too
+little history for it** — ALAB has 130 completed weeks and a 200-week average needs 200. The
+struck-through styling had meant the second; it now means only the second, and the reader's own
+choice is a hollow swatch with no strike. Collapsing them would hand those three names a legend
+that blames the reader for a data limit.
+
+**Two comments corrected while writing them.** The previous-close reducer's comment claimed it
+asserted the row ordering; it did not, it trusted `order=symbol.asc,d.desc` and took the second
+row. Taking the second row of an *ascending* window returns a close from two weeks ago as
+"yesterday" — wrong by weeks and entirely plausible on screen. It compares dates now, so the
+comment is true. And `check_stat_tracks.sh` opened by claiming a track "must be able to hold the
+values it will be asked to plot"; it runs without a database and cannot verify fit at all. What it
+verifies is that a misfit is **visible** — clamped, flagged, and styled as pinned — rather than
+drawn as an ordinary marker sitting at an end.

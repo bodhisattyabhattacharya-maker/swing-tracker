@@ -191,6 +191,20 @@ export interface GridData {
   history: MarketHistoryRow[];
   historyError: string | null;
   /**
+   * The previous session's close per symbol, so the Deep Dive header can show a day change.
+   *
+   * THERE IS NO DAY-CHANGE PARAMETER, and this is why this read exists. `prev_close` lives inside
+   * the RSI computation in `20260913064000_daily_features.sql` as a local variable; nothing
+   * publishes it. The alternatives were a per-column fetch (9 requests on the default Deep Dive
+   * view, 53 with everything selected) or deriving it from the price series the chart already
+   * pulls — which lazy-loads on scroll, so most headers would sit blank until scrolled to, and the
+   * header is the first thing read (decision 0057).
+   *
+   * Keyed by symbol. A symbol with only one stored bar is absent rather than zero: "no previous
+   * close" and "unchanged" are different facts.
+   */
+  prevCloses: Record<string, number>;
+  /**
    * WHY THESE ARE SEPARATE FROM `error` AND NOT FOLDED INTO IT.
    *
    * `error` means the GRID could not be loaded and the page shows a panel instead of a table. The
@@ -258,6 +272,55 @@ async function tryGet<T>(
   }
 }
 
+/**
+ * Each symbol's SECOND-newest close, from a window of rows ordered symbol then date descending.
+ *
+ * The rows arrive newest-first within each symbol, so the first row per symbol is its latest bar
+ * and the second is the one a day change is measured against. Both are taken from that symbol's
+ * own history rather than from a shared date, which is what makes this correct for a name the
+ * ingest deferred - see the read's comment.
+ *
+ * A symbol with one stored bar contributes nothing. "No previous close" and "unchanged" are
+ * different facts, and an absent key lets the header say the first one rather than draw a
+ * confident 0.0%.
+ */
+/**
+ * Each symbol's SECOND-newest close, from a window of rows covering the last fortnight.
+ *
+ * Both rows come from that symbol's OWN history rather than from a shared date, which is what
+ * makes this correct for a name the ingest deferred — see the read's comment for the 2026-09-18
+ * case where eleven names were a day behind the rest of the grid.
+ */
+function previousCloses(
+  rows: Array<{ symbol?: string; d?: string; close?: number | null }>,
+): Record<string, number> {
+  // The two newest dated rows per symbol, chosen BY DATE rather than by arrival order.
+  //
+  // The query asks for `order=symbol.asc,d.desc`, so trusting position would work today. It would
+  // also fail silently and enormously if that clause were ever edited: taking the second row of an
+  // ascending window hands back a close from two weeks ago as "yesterday", and every change on the
+  // page would be wrong by weeks while still looking entirely plausible. Comparing dates costs one
+  // string comparison per row and removes the dependency.
+  const best = new Map<string, { d: string; close: number }[]>();
+  for (const r of rows) {
+    if (!r.symbol || !r.d) continue;
+    if (typeof r.close !== "number" || !Number.isFinite(r.close)) continue;
+    const list = best.get(r.symbol) ?? [];
+    list.push({ d: r.d, close: r.close });
+    // ISO dates sort correctly as strings, which is why `d` is a date and not a timestamp here.
+    list.sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+    best.set(r.symbol, list.slice(0, 2));
+  }
+  const out: Record<string, number> = {};
+  for (const [symbol, list] of best) {
+    // A symbol with one stored bar contributes nothing. "No previous close" and "unchanged" are
+    // different facts, and an absent key lets the header say the first rather than draw a
+    // confident 0.0%.
+    if (list.length === 2) out[symbol] = list[1].close;
+  }
+  return out;
+}
+
 export async function fetchGrid(): Promise<GridData> {
   const empty: GridData = {
     status: null,
@@ -270,6 +333,7 @@ export async function fetchGrid(): Promise<GridData> {
     rsAsOf: null,
     history: [],
     historyError: null,
+    prevCloses: {},
     marketError: null,
     rsError: null,
     signalsError: null,
@@ -297,7 +361,7 @@ export async function fetchGrid(): Promise<GridData> {
     // The three reads the grid cannot render without, and the two it can. Both groups go out
     // together - they are independent reads against the same host - but only the first group can
     // fail the page.
-    const [tickers, cells, norms, market, rsLatest, signals, history] = await Promise.all([
+    const [tickers, cells, norms, market, rsLatest, signals, history, closes] = await Promise.all([
       get<Ticker[]>(
         "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether,is_fund,rankable&order=theme.asc,symbol.asc",
         cfg,
@@ -319,6 +383,25 @@ export async function fetchGrid(): Promise<GridData> {
       // series on another clock - so they need no as-of of their own.
       tryGet<SignalCell[]>(
         `signal_cells?d=eq.${status.data_through}&select=symbol,param,label,value,tone,seed_ok`,
+        cfg,
+      ),
+      // A SHORT WINDOW OF CLOSES, REDUCED TO EACH SYMBOL'S OWN LAST TWO.
+      //
+      // PostgREST has no per-group limit, so "the previous close for every symbol" cannot be one
+      // filtered row per name - it is a date window, reduced below. 14 calendar days is chosen to
+      // survive a long weekend plus a market holiday plus a symbol the ingest deferred; at 53
+      // securities that is roughly 500 rows, which is smaller than the history read beside it.
+      //
+      // PER SYMBOL, NOT PER DATE, and that is the whole reason this is a window rather than two
+      // date-equality reads. On 2026-09-18 eleven names were a day behind the rest of the grid;
+      // asking for "the close on data_through minus one" would have given those eleven a change
+      // computed against a bar two sessions old, silently. Taking each symbol's own newest two
+      // rows is right whether or not it is behind.
+      tryGet<Array<{ symbol?: string; d?: string; close?: number | null }>>(
+        `daily_features?d=gte.${
+          new Date(new Date(status.data_through).getTime() - 14 * 86400000)
+            .toISOString().slice(0, 10)
+        }&select=symbol,d,close&order=symbol.asc,d.desc`,
         cfg,
       ),
       // SIX MONTHS, NEWEST FIRST, THEN REVERSED HERE.
@@ -356,6 +439,7 @@ export async function fetchGrid(): Promise<GridData> {
       // anything else reads it.
       history: (history.data ?? []).slice().reverse(),
       historyError: history.error,
+      prevCloses: previousCloses(closes.data ?? []),
       rsAsOf,
       marketError: market.error,
       // An empty RS read with no error is a real state - the view genuinely has no rows - and must

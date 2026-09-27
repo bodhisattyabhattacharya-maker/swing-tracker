@@ -172,7 +172,7 @@ kinds are reachable, since a kind whose every column is `planned` cannot appear 
 written; `check_regime_scale.sh` (0054) requires the five VIX bands to tile the number line with
 **exactly one** band claiming every edge — both `calm` and `normal` claimed 16 until it asked —
 and every band to have a colour token in all three theme blocks, a CSS class and an entry in the
-strip's colour map; `check_selection.sh` (0055) treats the Deep Dive URL as the untrusted input it is — shape-checked, bounded, and **no query string can produce an empty strip**, because a blank page is indistinguishable from a broken deploy. **Seven web checks.**
+strip's colour map; `check_stat_tracks.sh` (0057) requires every Price-statistics stat to have a track or a recorded reason for not having one, and requires a reading past the end of its span to be clamped AND flagged so an out-of-date span degrades loudly; `check_selection.sh` (0055) treats the Deep Dive URL as the untrusted input it is — shape-checked, bounded, and **no query string can produce an empty strip**, because a blank page is indistinguishable from a broken deploy. **Eight web checks.**
 
 ### Not built
 

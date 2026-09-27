@@ -907,6 +907,45 @@ const CSS = `
              padding: 11px 14px 9px; border-bottom: 1.5px solid var(--rule); }
   .dd-sym { font-family: var(--mono); font-size: 15px;
             font-weight: 600; display: flex; align-items: baseline; gap: 5px; }
+  /* Latest close and the day change. Mono for the number, neutral ink for the change - a day's
+     move is not a reading against a norm we set, so it does not take the verdict pair. */
+  .dd-px { display: flex; align-items: baseline; gap: 7px; margin-top: 2px; }
+  .dd-px-v { font-family: var(--mono); font-size: 16px; color: var(--ink); }
+  .dd-px-d { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); }
+  .dd-px-d.none { font-family: var(--sans-cond); font-size: 9.5px; letter-spacing: .07em;
+                  text-transform: uppercase; color: var(--ink-faint); }
+
+  /* ONE jump row for the whole strip - see the comment in StockStrip.tsx for why it is not one
+     per column. Sticky under the controls so it stays reachable down a long column. */
+  .dd-jump { display: flex; align-items: center; flex-wrap: wrap; gap: 5px 7px; margin-top: 12px; }
+  .dd-jump-k { font-family: var(--sans-cond); font-size: 9.5px; letter-spacing: .1em;
+               text-transform: uppercase; color: var(--ink-faint); margin-right: 3px; }
+  .dd-jump-b { font-family: var(--sans-cond); font-size: 10px; letter-spacing: .06em;
+               text-transform: uppercase; color: var(--ink-soft); background: none;
+               border: 1px solid var(--rule); padding: 3px 8px; cursor: pointer; }
+  .dd-jump-b:hover { color: var(--ink); border-color: var(--ink-faint); background: var(--paper); }
+
+  /* THE STAT TRACK. A rule with a marker: where this reading sits on the range this quantity
+     actually covers. The ends are display constants and mean nothing; the NOTCH is the norm and
+     is the only mark here carrying an opinion. See lib/statplot.ts. */
+  /* flex-basis 100%, not grid-column: .dd-row is a flex row, so the track takes a full line of
+     its own by basis rather than by a grid property that would silently do nothing here. */
+  .dd-track { position: relative; height: 3px; background: var(--rule-soft); margin: 3px 0 1px;
+              flex: 0 0 100%; }
+  .dd-track i { position: absolute; top: 50%; transform: translate(-50%, -50%); }
+  .dd-track-m { width: 5px; height: 7px; background: var(--ink); border-radius: 1px; }
+  .dd-track-n { width: 1px; height: 9px; background: var(--accent); }
+  /* By construction rather than chosen - 1.0 on a ratio against its own average. Dotted, so it
+     reads as a reference and not as a threshold someone set. */
+  .dd-track-d { width: 1px; height: 7px;
+                background: repeating-linear-gradient(var(--ink-faint) 0 2px, transparent 2px 4px); }
+  /* A value past the end of its own span: the marker is pinned, and the rule says so by fading
+     toward that edge rather than pretending the marker is in range. */
+  .dd-track.pinned { background:
+    linear-gradient(90deg, var(--warn-bg), var(--rule-soft) 22%, var(--rule-soft) 78%, var(--warn-bg)); }
+  td.st-below .dd-track-m, .dd-row.st-below .dd-track-m { background: var(--below); }
+  .dd-row.st-above .dd-track-m { background: var(--above); }
+
   .dd-name { font-size: 11.5px; color: var(--ink-faint); margin-top: 1px;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dd-theme { font-family: var(--sans-cond); font-size: 9.5px;
@@ -1004,11 +1043,20 @@ const CSS = `
   .pc-key.k0 { color: var(--ma1); }
   .pc-key.k1 { color: var(--ma2); }
   .pc-key.k2 { color: var(--ma3); }
-  /* An overlay this listing has too little history for. Struck rather than hidden, so the reader
-     sees that the line is absent and not that the legend forgot it. ALAB, ARM and SNDK have fewer
-     than 200 completed weeks, which is a fact about the listing and not a gap in the data. */
-  .pc-key.off { color: var(--ink-faint); text-decoration: line-through;
-                text-decoration-thickness: 1px; opacity: .75; }
+  /* THREE STATES, AND THE TWO ABSENCES MUST NOT LOOK ALIKE.
+     .off is the reader's own choice - hollow swatch, faint ink, no strike. .unavailable is a
+     fact about the listing: ALAB, ARM and SNDK have fewer than 200 completed weeks, so a 200-week
+     average has nothing to draw. Struck rather than hidden, so the reader sees the line is absent
+     and not that the legend forgot it. .off took the strike-through until 2026-09-27, when the
+     keys became toggles and the two reasons stopped being the same reason. */
+  .pc-key { display: inline-flex; align-items: center; gap: 4px; background: none; border: 0;
+            padding: 0; font: inherit; letter-spacing: inherit; cursor: pointer; color: inherit; }
+  .pc-sw { width: 8px; height: 2px; background: currentColor; flex: 0 0 auto; }
+  .pc-key.off { color: var(--ink-faint); }
+  .pc-key.off .pc-sw { background: none; box-shadow: inset 0 0 0 1px currentColor; height: 4px; }
+  .pc-key.unavailable { color: var(--ink-faint); text-decoration: line-through;
+                        text-decoration-thickness: 1px; opacity: .75; cursor: default; }
+  .pc-key.unavailable .pc-sw { display: none; }
   .pc-canvas { width: 100%; min-width: 0; margin-top: 5px; }
   .pc-hold { width: 100%; }
   /* TWO LINES, ALWAYS, whether the caption needs them or not.
@@ -1072,8 +1120,8 @@ const CSS = `
   /* ---- Label / value rows -------------------------------------------- */
   .dd-rows { margin: 9px 0 0; font-size: 12px; }
   .dd-rows .dd-row { display: flex; align-items: baseline; justify-content: space-between;
-                     gap: 12px; padding: 4px 0 4px 6px; border-bottom: 1px solid var(--rule-soft);
-                     position: relative; }
+                     flex-wrap: wrap; gap: 0 12px; padding: 4px 0 4px 6px;
+                     border-bottom: 1px solid var(--rule-soft); position: relative; }
   .dd-rows .dd-row:last-child { border-bottom: 0; }
   .dd-row dt { display: flex; align-items: baseline; gap: 5px; color: var(--ink-soft);
                min-width: 0; }

@@ -142,15 +142,10 @@ export const SECTIONS: SectionSpec[] = [
     // to, which is why it has no `why` any more: nothing is blocking it.
     params: [],
   },
-  {
-    key: "rsi",
-    title: "RSI 14",
-    sub: "Hourly, daily and weekly, each against its own norm band.",
-    kind: "gauges",
-    // Hourly first, matching the Technicals preset and the spec's screenshots: fastest at the top.
-    // It is `planned`, so this section is live on two of three gauges and must say which.
-    params: ["rsi_hourly", "rsi_daily", "rsi_weekly"],
-  },
+  // MA SIGNALS SITS DIRECTLY UNDER THE PRICE CHART, BEFORE RSI (the spec, 2026-09-27). The stack,
+  // the crosses and the slopes are statements about the same lines the chart above just drew, so
+  // reading them next to it costs no eye travel; RSI is a different instrument entirely and used
+  // to sit in between. Order here is the order on screen - Section renders RESOLVED in sequence.
   {
     key: "ma",
     title: "Moving averages",
@@ -166,6 +161,15 @@ export const SECTIONS: SectionSpec[] = [
       "close_vs_sma50d",
       "close_vs_sma200d",
     ],
+  },
+  {
+    key: "rsi",
+    title: "RSI 14",
+    sub: "Hourly, daily and weekly, each against its own norm band.",
+    kind: "gauges",
+    // Hourly first, matching the Technicals preset and the spec's screenshots: fastest at the top.
+    // It is `planned`, so this section is live on two of three gauges and must say which.
+    params: ["rsi_hourly", "rsi_daily", "rsi_weekly"],
   },
   {
     key: "stats",
