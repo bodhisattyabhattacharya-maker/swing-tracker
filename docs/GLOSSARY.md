@@ -4,12 +4,12 @@ Shared vocabulary. Cheap file; it stops two people building two meanings for one
 
 | Term | Means here |
 |---|---|
-| **Parameter** | One tracked number, computed on a schedule. Not a signal. The catalogue in `web/lib/columns.ts` holds 51; 22 read live data and the rest are `planned`. |
+| **Parameter** | One tracked number, computed on a schedule. Not a signal. The catalogue in `web/lib/columns.ts` holds 51; 23 read live data and the rest are `planned`. |
 | **Norm** | A threshold we define on a parameter that decides whether a cell gets coloured. Our judgment, stated explicitly. |
 | **Rule** (Phase 2) | A named condition over one or more parameters that we want to be alerted on. |
 | **Signal** | One firing of a rule on one ticker on one date. |
 | **Episode** | A deduplicated run of consecutive signals. A rule firing 60 days straight is ~1 episode, not 60 — use episodes when judging sample size. |
-| **Clock** | A refresh schedule. v1 runs **one** — after the close on weekdays — plus a separate rebuild. Hourly, SEC-check and weekly clocks arrive with the parameters that need them. |
+| **Clock** | A refresh schedule. v1 runs **one evening sequence** on weekdays — hourly ingest in two shards (21:40, 22:00 UTC), daily ingest 22:30, rebuild 22:45, digest 23:00 — plus the 11:00 index catch-up every day. SEC-check and weekly clocks arrive with the parameters that need them. |
 | **Baseline** | Buying any watchlist name on any random day over the test window. The bar a backtest must beat. |
 | **Edge** | A rule's average forward return minus the baseline's, at the same horizon. |
 | **Owner / viewer** | ~~Two roles enforced by RLS.~~ **Not in v1** — the dashboard is open with no login and has no user-initiated actions, so there is nothing to authorise (PROPOSAL §4). Kept because Phase 2 may reintroduce it; if it does, that is the reason to add identity, not the other way round. |
@@ -89,3 +89,6 @@ Shared vocabulary. Cheap file; it stops two people building two meanings for one
 | **Pinned marker** | A reading past the end of its own span: the marker clamps to the edge and the rule fades toward it, so an out-of-date span degrades loudly. The spans come from one day's measurement and will eventually be outgrown; this is what makes that visible rather than silent. |
 | **Unavailable overlay** | An average this particular listing has too little history to compute — ALAB has 130 completed weeks against the 200 an SMA200W needs. Struck through in the legend and not clickable, kept visually distinct from an overlay the reader switched off. Two different reasons a line is absent. |
 | **Per-symbol comparison** | Taking each security's own last two stored bars rather than two shared dates. The difference matters whenever the ingest defers a name: on 2026-09-18 eleven were a day behind, and a shared-date day change would have measured them against a bar two sessions old while looking perfectly ordinary. |
+| **Session-aligned hour** | An hourly bar that starts at the 09:30 ET open rather than on the clock: seven a session, the last 15:30–16:00, extended hours excluded, 13:00 close on half days. What TradingView draws and what `rsi_hourly` is computed on. Built from one-minute bars (`session.ts`); the vendor's own hour aggregates are clock-aligned and are not used. Decision 0058. |
+| **Closing hour** | The session-aligned hour that ends a day's session (`closes_session`). A day's hourly value is RSI as of this bar; no closing hour, no value. |
+| **Shard** | `?shard=k/n` on the ingest: take every n-th symbol from the k-th, chosen before the plan is built. How the two scheduled hourly jobs split the equities. Distinct from `offset`, which skips planned work and is for hand-run deepening only. |

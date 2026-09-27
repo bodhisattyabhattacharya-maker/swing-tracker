@@ -7,9 +7,17 @@
  *          `indices` is the odd one: an index-ONLY pass, for the morning catch-up that exists
  *          because FRED publishes later than the evening run. It is not part of `all`, which
  *          already covers indices through `daily`. See provider.ts universeFor().
+ *          `hourly` is NOT part of `all` either, since 2026-09-27 (decision 0058). It has its own
+ *          schedule: one-minute bars are ~200x the payload of a daily top-up, and folding them
+ *          into the nightly `all` run would put the equities back behind a wall clock they only
+ *          just got out from under (the eleven names deferred on 2026-09-18).
  *          ?symbols=MU,NVDA                           restrict to these (default: every active row)
  *          ?full=1                                    force the full range, not incremental
  *          ?limit=10                                  max symbols fetched this run (default 10)
+ *          ?shard=0/2                                 every 2nd symbol from the 0th - how the two
+ *                                                     scheduled hourly jobs split the equities.
+ *                                                     Chosen before planning, unlike offset; see
+ *                                                     parseShard in provider.ts.
  *          ?by=<who>                                  ingest_runs.triggered_by (default "schedule")
  * Out:     JSON { ok, run_id, scope, tickers, daily, hourly, indices } and one row in
  *          ingest_runs. An `indices` run writes detail.indices, never detail.daily - grid_status
@@ -64,8 +72,11 @@
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, callerAllowed } from "../_shared/auth.ts";
 import {
+  autoFullCap,
   type BarProvider,
+  inShard,
   isScope,
+  parseShard,
   planLimit,
   type Range,
   RateLimitError,
@@ -265,7 +276,7 @@ async function activeSymbols(sb: SupabaseClient, only: string[] | null, universe
 }
 
 /** True if this symbol has at least one row in `table`. Drives the automatic full catch-up. */
-async function hasBars(sb: SupabaseClient, table: "daily_bars" | "hourly_bars", symbol: string) {
+async function hasBars(sb: SupabaseClient, table: "daily_bars" | "hourly_session_bars", symbol: string) {
   return await retryRead(`${table} count ${symbol}`, async () => {
     const { count, error } = await sb
       .from(table)
@@ -298,8 +309,11 @@ async function ingestBars(
   forceFull: boolean,
   limit: number,
   offset: number,
+  fullCap: number,
 ): Promise<SymbolResult> {
-  const table = kind === "daily" ? "daily_bars" : "hourly_bars";
+  // hourly_session_bars, not the older clock-aligned hourly_bars - see decision 0058. Nothing
+  // writes to hourly_bars any more; it is kept, unread, until a migration of its own drops it.
+  const table = kind === "daily" ? "daily_bars" : "hourly_session_bars";
   const key = kind === "daily" ? "symbol,d" : "symbol,ts";
   const result: SymbolResult = {
     counts: {},
@@ -312,6 +326,7 @@ async function ingestBars(
   /** Last request time per provider name, so pacing is per-provider rather than global. */
   const lastRequestAt = new Map<string, number>();
   let fetched = 0;
+  let fullFetched = 0;
 
   // ---------------------------------------------------------------------------
   // PLAN BEFORE FETCHING, and put the symbols that have NO bars first.
@@ -362,6 +377,13 @@ async function ingestBars(
       result.deferred.push(symbol);
       continue;
     }
+    // Automatic full fetches have their own, smaller cap - see autoFullCap in provider.ts. Checked
+    // per symbol rather than by truncating the plan, so top-ups later in the list still run.
+    if (range === "full" && fullFetched >= fullCap) {
+      result.deferred.push(symbol);
+      continue;
+    }
+    if (range === "full") fullFetched++;
 
     const since = Date.now() - (lastRequestAt.get(provider.name) ?? 0);
     if (since < provider.minIntervalMs) await sleep(provider.minIntervalMs - since);
@@ -387,6 +409,7 @@ async function ingestBars(
       // so hand the budget back.
       if (rows === null) {
         fetched--;
+        if (range === "full") fullFetched--;
         result.skipped.push(symbol);
         continue;
       }
@@ -436,9 +459,16 @@ Deno.serve(async (req) => {
   // The default follows the cost of the work: a full backfill is ~50x the payload of a top-up, so
   // defaulting both to the same number would either throttle routine runs or get a backfill killed
   // halfway. An explicit ?limit= still overrides.
-  const limit = planLimit(forceFull, url.searchParams.get("limit"));
+  // Hourly has its own defaults, because its per-symbol cost is a different order of magnitude.
+  const limit = planLimit(forceFull, url.searchParams.get("limit"), scope === "hourly" ? "hourly" : "daily");
   // Skip the first N of the planned work. Only useful for one-time deepening - see the header.
   const offset = Math.max(0, Number(url.searchParams.get("offset") ?? 0));
+  let shard: { k: number; n: number } | null;
+  try {
+    shard = parseShard(url.searchParams.get("shard"));
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : String(e) }, 400);
+  }
   const triggeredBy = url.searchParams.get("by") ?? "schedule";
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -466,8 +496,8 @@ Deno.serve(async (req) => {
     }
     if (scope === "daily" || scope === "all") {
       // Indices included: ^VIX, ^VIX3M and ^GSPC are the market block and relative-strength base.
-      const syms = await activeSymbols(sb, only, universeFor(scope)!);
-      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset);
+      const syms = inShard(await activeSymbols(sb, only, universeFor(scope)!), shard);
+      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset, autoFullCap("daily", forceFull));
       out.daily = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;
@@ -483,19 +513,23 @@ Deno.serve(async (req) => {
       // would reset the staleness clock for the whole grid every morning, so a dead equity pipeline
       // would look healthy - the exact "successful operation that changed nothing" shape this
       // project keeps producing.
-      const syms = await activeSymbols(sb, only, universeFor(scope)!);
-      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset);
+      const syms = inShard(await activeSymbols(sb, only, universeFor(scope)!), shard);
+      const r = await ingestBars(sb, "daily", syms, forceFull, limit, offset, autoFullCap("daily", forceFull));
       out.indices = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `indices:${s}`));
     }
-    if ((scope === "hourly" || scope === "all") && !rateLimited) {
-      // Hourly feeds RSI-hourly only, which is not computed for indices. No provider serves
-      // session-aligned hourly yet, so this currently reports every symbol as skipped - see
-      // the HOURLY note in polygon.ts for why that is deliberate rather than broken.
-      const syms = await activeSymbols(sb, only, universeFor(scope)!);
-      const r = await ingestBars(sb, "hourly", syms, forceFull, limit, offset);
+    if (scope === "hourly" && !rateLimited) {
+      // Hourly feeds RSI-hourly only, which is not computed for indices. Session-aligned since
+      // 2026-09-27: polygon.ts fetches one-minute bars and session.ts buckets them into the seven
+      // hours TradingView draws. ONLY on `scope=hourly` - see the header for why not `all`.
+      //
+      // Writes `detail.hourly`, never `detail.daily`. grid_status judges pipeline freshness on the
+      // daily key, and an hourly success must not reset that clock - the same reasoning as the
+      // `indices` run above.
+      const syms = inShard(await activeSymbols(sb, only, universeFor(scope)!), shard);
+      const r = await ingestBars(sb, "hourly", syms, forceFull, limit, offset, autoFullCap("hourly", forceFull));
       out.hourly = r;
       written += r.written;
       rateLimited ||= r.rate_limited === true;

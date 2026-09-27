@@ -330,12 +330,12 @@ degenerate as (
                      select min(f.week_start) from public.weekly_features f where f.symbol = c.symbol)),
            'there is no completed week before the first one, so those days must be blank rather than borrowing'
     union all
-    select 'as-of', 'timeframe is only daily or weekly',
+    select 'as-of', 'timeframe is only daily, weekly or hourly',
            case when (select count(*) from public.grid_cells
-                      where timeframe not in ('daily','weekly')) = 0
+                      where timeframe not in ('daily','weekly','hourly')) = 0
                 then 'PASS' else 'FAIL' end,
            '0',
-           (select count(*)::text from public.grid_cells where timeframe not in ('daily','weekly')),
+           (select count(*)::text from public.grid_cells where timeframe not in ('daily','weekly','hourly')),
            'a third value would silently fall through every filter written against this column'
     union all
     select 'as-of', 'the ten daily params survived the view rewrite',
@@ -522,10 +522,12 @@ degenerate as (
            (select count(*)::text from public.relative_strength where symbol like '^%'),
            'an index measured against the index is identically zero and pure noise in the grid'
     union all
-    select 'scheduling', 'all four jobs registered exactly once',
-           case when (select count(*) from cron.job where jobname like 'swing-%') = 4
+    -- Six since 20260927220000: the two hourly ingest shards joined daily, refresh, digest and the
+    -- index catch-up.
+    select 'scheduling', 'all six jobs registered exactly once',
+           case when (select count(*) from cron.job where jobname like 'swing-%') = 6
                 then 'PASS' else 'FAIL' end,
-           '4',
+           '6',
            (select count(*)::text from cron.job where jobname like 'swing-%'),
            'a re-applied migration must not leave duplicates firing alongside the new ones'
     union all
@@ -1104,6 +1106,141 @@ schedule_aware as (
            'the other half of the check above: declining everything would also pass it'
   ) t
 ),
+-- ---------------------------------------------------------------------------
+-- THE HOURLY LAYER (20260927220000, decision 0058).
+--
+-- The fixture's SYNTH hourly series IS its daily series, bar for bar (fixture.sql), so hourly RSI at
+-- position n must equal daily RSI at position n EXACTLY - not to 1e-9. Both come from
+-- recursive_indicators over the same doubles in the same order; any difference at all means the
+-- positional join in hourly_features paired an RSI with the wrong bar. The daily side is itself
+-- gated against the independent reference above, so this transfers that proof to hourly.
+--
+-- What CI cannot check, said plainly: that the SESSION ALIGNMENT matches TradingView. That lives in
+-- session.ts, is pinned by session_test.ts, and is confirmed against the chart by the three MU
+-- hourly goldens in DEFINITIONS.md section 6 - by hand, against production.
+-- ---------------------------------------------------------------------------
+hourly as (
+  select * from (
+    select 'hourly'::text as section,
+           'hourly RSI equals daily RSI on the same closes, exactly'::text as check_name,
+           case when (select count(*) from public.hourly_features where symbol = 'SYNTH') = 320
+                 and (select count(*) from (
+                        select h.rsi_hourly, f.rsi_daily
+                        from (select rsi_hourly, row_number() over (order by ts) as n
+                              from public.hourly_features where symbol = 'SYNTH') h
+                        join (select rsi_daily, row_number() over (order by d) as n
+                              from public.daily_features where symbol = 'SYNTH') f using (n)
+                        where h.rsi_hourly is distinct from f.rsi_daily) x) = 0
+                then 'PASS' else 'FAIL' end as status,
+           '320 rows, 0 differing'::text as expected_v,
+           (select count(*) from public.hourly_features where symbol = 'SYNTH')::text || ' rows, ' ||
+           (select count(*) from (
+              select h.rsi_hourly, f.rsi_daily
+              from (select rsi_hourly, row_number() over (order by ts) as n
+                    from public.hourly_features where symbol = 'SYNTH') h
+              join (select rsi_daily, row_number() over (order by d) as n
+                    from public.daily_features where symbol = 'SYNTH') f using (n)
+              where h.rsi_hourly is distinct from f.rsi_daily) x)::text || ' differing' as actual_v,
+           'same function, same inputs: any gap is the positional join pairing an RSI with the wrong bar'::text as note
+    union all
+    select 'hourly', 'and the comparison is not vacuous - most of those RSIs are numbers',
+           case when (select count(*) from public.hourly_features
+                      where symbol = 'SYNTH' and rsi_hourly is not null) >= 250
+                then 'PASS' else 'FAIL' end,
+           '>= 250',
+           (select count(*)::text from public.hourly_features where symbol = 'SYNTH' and rsi_hourly is not null),
+           'null = null is "not distinct" - a layer of nulls would pass the check above'
+    union all
+    select 'hourly', 'the seed floor is 125 hours, the same as daily',
+           case when (select count(*) from public.hourly_features
+                      where rsi_hourly_seed_ok is distinct from (bars_available >= 125)) = 0
+                 and (select count(*) from public.hourly_features where not rsi_hourly_seed_ok) > 0
+                 and (select count(*) from public.hourly_features where rsi_hourly_seed_ok) > 0
+                then 'PASS' else 'FAIL' end,
+           'both sides present, 0 wrong',
+           (select count(*)::text from public.hourly_features where not rsi_hourly_seed_ok) || ' warming, ' ||
+           (select count(*)::text from public.hourly_features where rsi_hourly_seed_ok) || ' seeded',
+           'a seed floor that is never false, or never true, is not being tested'
+    union all
+    select 'hourly', 'each hourly cell is the RSI of the bar that closes its session',
+           case when (select count(*) from public.grid_cells c
+                      where c.timeframe = 'hourly'
+                        and not exists (
+                          select 1 from public.hourly_features h
+                          where h.symbol = c.symbol and h.d = c.d and h.closes_session
+                            and h.rsi_hourly is not distinct from c.value)) = 0
+                 and (select count(*) from public.grid_cells where timeframe = 'hourly' and symbol = 'SYNTH') = 45
+                then 'PASS' else 'FAIL' end,
+           '45 SYNTH cells, 0 mismatched',
+           (select count(*)::text from public.grid_cells where timeframe = 'hourly' and symbol = 'SYNTH')
+             || ' SYNTH cells, ' ||
+           (select count(*)::text from public.grid_cells c
+             where c.timeframe = 'hourly'
+               and not exists (
+                 select 1 from public.hourly_features h
+                 where h.symbol = c.symbol and h.d = c.d and h.closes_session
+                   and h.rsi_hourly is not distinct from c.value)) || ' mismatched',
+           '45 complete sessions in the fixture; the 46th has no closing hour and must be absent'
+    union all
+    select 'hourly', 'a session with no closing hour has no cell, however many hours it has',
+           case when (select count(*) from public.grid_cells
+                      where timeframe = 'hourly' and symbol = 'FUND') = 0
+                 and (select count(*) from public.hourly_features where symbol = 'FUND') = 120
+                 and (select count(*) from public.grid_cells c
+                      where c.timeframe = 'hourly' and c.symbol = 'SYNTH'
+                        and c.d = (select max(d) from public.hourly_features where symbol = 'SYNTH')) = 0
+                then 'PASS' else 'FAIL' end,
+           'FUND 0 cells of 120 rows; SYNTH tail 0',
+           'FUND ' || (select count(*)::text from public.grid_cells where timeframe = 'hourly' and symbol = 'FUND')
+             || ' cells of ' || (select count(*)::text from public.hourly_features where symbol = 'FUND')
+             || ' rows; SYNTH tail ' ||
+           (select count(*)::text from public.grid_cells c
+             where c.timeframe = 'hourly' and c.symbol = 'SYNTH'
+               and c.d = (select max(d) from public.hourly_features where symbol = 'SYNTH')),
+           'the newest stored hour is not the day''s close - a mid-session run must show a dash, not 10:30''s RSI'
+    union all
+    select 'hourly', 'hourly cells are judged - all three verdict arms fire',
+           case when (select count(distinct verdict) from public.grid_cells
+                      where timeframe = 'hourly' and verdict is not null) = 3
+                then 'PASS' else 'FAIL' end,
+           '3 arms',
+           coalesce((select string_agg(distinct verdict, ', ') from public.grid_cells
+                     where timeframe = 'hourly'), 'none'),
+           'without the rsi_hourly norm every hourly verdict is null and the parity check passes vacuously'
+    union all
+    select 'hourly', 'hourly never reaches the digest',
+           case when (select count(*) from public.digest_changes where param = 'rsi_hourly')
+                    + (select count(*) from public.digest_standing where param = 'rsi_hourly') = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           ((select count(*) from public.digest_changes where param = 'rsi_hourly')
+          + (select count(*) from public.digest_standing where param = 'rsi_hourly'))::text,
+           'the email is daily by design; an hourly crossing is intraday noise at 23:00'
+    union all
+    select 'hourly', 'at most one closing bar per symbol and day, enforced at write time',
+           case when (select count(*) from pg_indexes
+                      where schemaname = 'public' and tablename = 'hourly_session_bars'
+                        and indexname = 'hourly_session_bars_one_close_per_day'
+                        and indexdef like '%UNIQUE%' and indexdef like '%WHERE closes_session%') = 1
+                then 'PASS' else 'FAIL' end,
+           'unique partial index present',
+           (select coalesce(string_agg(indexdef, '; '), 'absent') from pg_indexes
+             where schemaname = 'public' and indexname = 'hourly_session_bars_one_close_per_day'),
+           'two closing bars would make the day''s hourly value depend on which one the join met first'
+    union all
+    select 'hourly', 'both hourly jobs fire before the refresh that rebuilds hourly_features',
+           case when to_regclass('cron.job') is null then 'PASS'
+                when pg_temp.scheduled_cron('swing-ingest-hourly-a') = '40 21 * * 1-5'
+                 and pg_temp.scheduled_cron('swing-ingest-hourly-b') = '0 22 * * 1-5'
+                 and pg_temp.scheduled_cron('swing-refresh-features') = '45 22 * * 1-5'
+                then 'PASS' else 'FAIL' end,
+           '21:40, 22:00, then 22:45',
+           coalesce(pg_temp.scheduled_cron('swing-ingest-hourly-a'), '?') || ', ' ||
+           coalesce(pg_temp.scheduled_cron('swing-ingest-hourly-b'), '?') || ', ' ||
+           coalesce(pg_temp.scheduled_cron('swing-refresh-features'), '?'),
+           'an ingest after the refresh would leave the hourly column a day behind every night'
+  ) t
+),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
   union all
@@ -1114,6 +1251,8 @@ all_rows as (
   select section, check_name, status, expected_v, actual_v, note from shape
   union all
   select section, check_name, status, expected_v, actual_v, note from schedule_aware
+  union all
+  select section, check_name, status, expected_v, actual_v, note from hourly
 )
 select * from (
   select 0 as ord, * from all_rows

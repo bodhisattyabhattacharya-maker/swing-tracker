@@ -1359,3 +1359,36 @@ cannot. It verifies that a misfit is visible, which is a smaller and true claim.
 
 **Also:** a third backtick-in-the-CSS-literal, caught immediately by both guards built for it last
 week, each naming the line.
+
+## 2026-09-27 — Hourly RSI, on session-aligned bars
+
+**What:** `rsi_hourly` is live. The H column in Technicals and the H gauge in the Deep Dive read a
+real number: Wilder RSI(14) on hourly bars aligned the way TradingView draws them — seven a session
+from the 09:30 open, the last one thirty minutes, extended hours excluded, 13:00 close on NYSE half
+days. The value shown for a day is RSI at that session's close; a day whose closing hour is not
+stored shows a dash rather than an earlier hour's reading. The Deep Dive footnote that explained the
+missing gauge removed itself, as it was built to.
+
+**How:** decision 0058. `session.ts` (new, pure) buckets one-minute aggregates; `polygon.ts` fetches
+them with pagination; rows land in the new `hourly_session_bars` (the clock-aligned `hourly_bars` is
+untouched and still unread). `hourly_features` runs the shared `recursive_indicators` over them, so
+the formula still exists once. `grid_cells` gains an hourly branch on equality only. Two scheduled
+jobs, `swing-ingest-hourly-a/-b` at 21:40 and 22:00 UTC, split the equities by `?shard=`; the 22:45
+refresh now rebuilds five matviews. Hourly is not part of `scope=all`, and never reaches the digest.
+
+**Verified by:** `session_test.ts`, 17 tests (both 2026 DST Mondays, an early close with its
+after-hours dropped, 2 July 2027 pinned as a full session, bucket edges, volume summed before
+rounding, the settle window, a mid-session run storing only finished hours). Ingest suite 98 pass,
+including `hourly_capacity`, which parses the migration against `config/watchlist.yml`. Database
+gate: nine new `hourly` checks, the headline being hourly RSI equal to daily RSI at all 320
+positions of a series built to be identical — to zero, not to 1e-9 — negative-tested by reversing
+the positional ordering (306 differ) and by switching the grid to "newest hour" (two checks fail).
+Four production invariants added to `verify_parameters.sql` (every bar on the 09:30 grid, closing
+bars at 15:30 or 12:30, at most seven a session, RSI in range), negative-tested with a 09:00 bar.
+Eight web checks pass — `check_strip_sections` first failed on two CSS rules for the planned gauge
+that could no longer be reached, and they were deleted. Build clean; H column and H gauge checked in
+a browser against a preview fixture.
+
+**Not verified, and cannot be from here:** the vendor call itself, the per-run limits (guesses until
+the first `ingest_runs` durations exist), and agreement with TradingView (three MU goldens,
+DEFINITIONS.md §6, awaiting a hand reading).

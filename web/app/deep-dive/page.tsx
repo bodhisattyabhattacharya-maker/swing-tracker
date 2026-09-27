@@ -130,10 +130,10 @@ export default async function DeepDive() {
   /**
    * Params that are inside a section which renders data, and are still not built.
    *
-   * DERIVED, so the footnote sentence about them cannot go stale. The hourly RSI gauge is the only
-   * one today. When session-aligned hourly bars land in Phase 5, `rsi_hourly` flips to `live` in
-   * `lib/columns.ts` and this list empties, which removes the sentence — rather than leaving a
-   * paragraph on the page explaining a limitation that no longer exists. Hand-written prose about
+   * DERIVED, so the footnote sentence about them cannot go stale. It is EMPTY since 2026-09-27: the
+   * hourly RSI gauge was the only entry, and session-aligned hourly bars (decision 0058) flipped
+   * `rsi_hourly` to `live`, which removed the sentence on its own — rather than leaving a paragraph
+   * on the page explaining a limitation that no longer exists. Hand-written prose about
    * the state of the data is the thing that rots; this project has now been bitten by a
    * hand-maintained list three times.
    */
@@ -236,8 +236,7 @@ export default async function DeepDive() {
           ? (
             <>
               {" "}Inside the sections that <em>are</em> built, {unbuilt.join(" and ")} has its norm
-              set and no number: hourly bars are not session-aligned yet, and RSI read against 30/70
-              moves with the alignment. Its gauge keeps the band and loses the marker.
+              set and no number yet: its panel keeps the norm and shows a dash where the value goes.
             </>
           )
           : null}

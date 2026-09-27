@@ -647,7 +647,7 @@ function Gauges(
                 ? (
                   <span
                     className="dash"
-                    title="The norm is set and the number is not computed: hourly bars are not session-aligned yet, and RSI read against 30/70 moves with the alignment."
+                    title="The norm is set and the number is not computed yet."
                   >
                     —
                   </span>

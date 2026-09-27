@@ -32,15 +32,28 @@ export interface DailyBar {
   source: string;
 }
 
-/** One hourly bar. Matches `hourly_bars`. `ts` is the bar OPEN time, UTC, ISO 8601. */
+/**
+ * One SESSION-ALIGNED hourly bar. Matches `hourly_session_bars` (decision 0058), not the older
+ * clock-aligned `hourly_bars`, which nothing writes or reads any more.
+ *
+ * `ts` is the bucket START in UTC, ISO 8601 - 13:30Z for the 09:30 EDT bar - and is the upsert key.
+ * `d` is the ET trading date, stored so the grid can join an hour to its session without doing
+ * timezone arithmetic in SQL. `minutes` is how many one-minute bars fed the bucket: 60, or 30 for
+ * the last one of the day, and anything less means the vendor's minutes had a gap. `closes_session`
+ * marks the bucket ending at that day's close (16:00, or 13:00 on a half day); the grid reads a day's
+ * hourly value from that row only.
+ */
 export interface HourlyBar {
   symbol: string;
   ts: string;
+  d: string;
   open: number | null;
   high: number | null;
   low: number | null;
   close: number;
   volume: number | null;
+  minutes: number;
+  closes_session: boolean;
   source: string;
 }
 
@@ -147,12 +160,86 @@ const DEFAULT_LIMIT_FULL = 15;
  * the two defaults into one, which either throttles every routine refresh or gets a backfill
  * killed halfway.
  */
-export function planLimit(forceFull: boolean, explicit: string | null): number {
+export function planLimit(
+  forceFull: boolean,
+  explicit: string | null,
+  kind: "daily" | "hourly" = "daily",
+): number {
   if (explicit !== null && explicit !== "") {
     const n = Number(explicit);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
   }
+  if (kind === "hourly") return forceFull ? HOURLY_LIMIT_FULL : HOURLY_LIMIT_INCREMENTAL;
   return forceFull ? DEFAULT_LIMIT_FULL : DEFAULT_LIMIT_INCREMENTAL;
+}
+
+/**
+ * HOURLY LIMITS, AND THEY ARE GUESSES - said plainly, because the daily ones above are not.
+ *
+ * The daily numbers came from two measured runs. These could not: the sandbox this was written in
+ * cannot reach the vendor, and the first hourly run in production is the first measurement there
+ * will ever be. What is known: a daily top-up is ~25 rows at 0.8 s a symbol; an hourly top-up is
+ * one-minute bars for seven days, up to ~4,800 rows; an hourly full fetch is two pages of ~57,600.
+ * Bucketing is measured and negligible (105 ms a symbol on the worst case, session.ts).
+ *
+ * So these are pessimistic on purpose. At an assumed 4 s a top-up, 30 is 120 s - inside 150 with
+ * little to spare, which is why the schedule splits the equities into TWO SHARDS (`?shard=0/2`,
+ * `?shard=1/2`) of about 27 each rather than asking one job for all 53. At an assumed 10 s a full
+ * fetch, 6 is 60 s.
+ *
+ * WHAT TO DO AFTER THE FIRST RUN: read `finished_at - started_at` for the `hourly` rows in
+ * `ingest_runs`. If one shard finishes with room to spare, these can rise and the second job can go.
+ * `hourly_capacity` in ingest_test.ts pins shards x limit against the watchlist either way.
+ */
+export const HOURLY_LIMIT_INCREMENTAL = 30;
+export const HOURLY_LIMIT_FULL = 6;
+
+/**
+ * How many AUTOMATIC full fetches one run may make - symbols planned "full" only because they have
+ * no bars yet, on a run that did not ask for `full=1`.
+ *
+ * WHY HOURLY NEEDS THIS AND DAILY HAS LIVED WITHOUT IT. The night this ships, every equity has zero
+ * hourly bars, so every one of them plans "full" - and the incremental limit of 30 would then admit
+ * 30 full fetches, five times what HOURLY_LIMIT_FULL judges safe. The run would die at the 150 s
+ * wall clock and, dying, lose its whole error record (the first live attempt's bare "504"). The same
+ * hole exists on the daily path and is written up at DEFAULT_LIMIT_INCREMENTAL; it is not closed
+ * here because nothing daily changed in this PR and its limits are measured, not guessed.
+ *
+ * With the cap, the first scheduled night backfills six symbols per shard and defers the rest,
+ * visibly, and the manual backfill in the runbook does the job properly. A forced `full=1` run is
+ * unaffected: every symbol is full there and `limit` already governs.
+ */
+export function autoFullCap(kind: "daily" | "hourly", forceFull: boolean): number {
+  if (forceFull || kind === "daily") return Number.POSITIVE_INFINITY;
+  return HOURLY_LIMIT_FULL;
+}
+
+/**
+ * `?shard=k/n` - this run takes every n-th symbol starting at k, from the list as `activeSymbols`
+ * returns it (ordered by symbol). Returns null for an absent parameter and throws on a malformed one,
+ * because a typo that silently meant "all symbols" would double the work of a split schedule.
+ *
+ * WHY NOT `offset`, which already exists. `offset` is applied AFTER the plan is sorted with
+ * never-fetched symbols first, which is right for walking a one-time deepening and wrong for two
+ * jobs on a timer: job A backfills some names, they move from the front of the list to the back,
+ * and job B's offset now points at a different list - the first night hourly shipped, it would have
+ * skipped every symbol job A had not reached. A shard is chosen BEFORE planning, from a list both
+ * jobs read identically, so each symbol belongs to exactly one job whatever state it is in.
+ */
+export function parseShard(v: string | null): { k: number; n: number } | null {
+  if (v === null || v === "") return null;
+  const m = /^(\d+)\/(\d+)$/.exec(v);
+  if (!m) throw new Error(`bad shard "${v}" - expected k/n, e.g. 0/2`);
+  const k = Number(m[1]);
+  const n = Number(m[2]);
+  if (n < 1 || k >= n) throw new Error(`bad shard "${v}" - need 0 <= k < n`);
+  return { k, n };
+}
+
+/** Pure: the symbols a shard owns. Every symbol is in exactly one shard of any given n. */
+export function inShard<T>(items: T[], shard: { k: number; n: number } | null): T[] {
+  if (shard === null) return items;
+  return items.filter((_, i) => i % shard.n === shard.k);
 }
 
 // ---------------------------------------------------------------------------

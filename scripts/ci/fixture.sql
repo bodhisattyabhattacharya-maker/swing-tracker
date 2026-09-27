@@ -467,3 +467,54 @@ insert into ci_expected_weekly (week_start, param, expected) values
   ('2021-06-28','rsi_weekly',64.35837589731862),
   ('2021-06-28','ema21_weekly',126.75761325395001),
   ('2021-06-28','sma30w',null);
+
+-- ---------------------------------------------------------------------------
+-- Session-aligned hourly bars (decision 0058). HAND-WRITTEN, like the market block, and derived
+-- from SYNTH so there is nothing new to generate.
+--
+-- SYNTH's 320 daily closes, IN ORDER, become 320 hourly closes: seven to a "session", the seventh
+-- marked closes_session, each session dated by its LAST daily bar's date so it lands on a day the
+-- grid has. The hourly series is therefore the daily series, bar for bar, and hourly RSI must equal
+-- daily RSI at every position - to ZERO tolerance, because both are the same function
+-- (recursive_indicators) over the same doubles. That is the check that the positional join in
+-- hourly_features lines each RSI up with its own bar.
+--
+-- 320 = 45 x 7 + 5: the last five bars are a session with no closing hour, so the grid must show NO
+-- hourly cell on that date even though hourly rows exist for it. That is the "manual run
+-- mid-session" case, which the view must render as a dash rather than as the newest hour's RSI.
+--
+-- FUND gets 20 sessions of six hours and NO closing hour at all: 120 rows, under the 125-bar seed
+-- floor everywhere, and never a closing bar - so FUND must have hourly_features rows and zero
+-- hourly grid cells. Without it, "no closing bar, no cell" would be tested only by the tail above.
+-- ---------------------------------------------------------------------------
+insert into public.hourly_session_bars
+  (symbol, ts, d, open, high, low, close, volume, minutes, closes_session, source)
+select
+  'SYNTH',
+  -- Stamped in ET, as the ingest stamps them, so the production invariants in verify_parameters.sql
+  -- (every bar on the 09:30 grid) hold on the fixture in winter and summer alike.
+  ((s.session_d + time '09:30') + (s.k * interval '1 hour')) at time zone 'America/New_York',
+  s.session_d, s.open, s.high, s.low, s.close, s.volume,
+  case when s.k = 6 then 30 else 60 end,
+  s.k = 6 and s.full_session,
+  'fixture'
+from (
+  select n.*,
+         (n.i % 7)::int                                    as k,
+         max(n.d)  over (partition by n.i / 7)             as session_d,
+         count(*)  over (partition by n.i / 7) = 7         as full_session
+  from (
+    select b.*, (row_number() over (order by b.d) - 1)::int as i
+    from public.daily_bars b
+    where b.symbol = 'SYNTH'
+  ) n
+) s;
+
+insert into public.hourly_session_bars
+  (symbol, ts, d, open, high, low, close, volume, minutes, closes_session, source)
+select
+  'FUND',
+  ((date '2022-01-03' + (g / 6) + time '09:30') + ((g % 6) * interval '1 hour')) at time zone 'America/New_York',
+  date '2022-01-03' + (g / 6),
+  null, null, null, 100 + (g % 11) - (g % 5), null, 60, false, 'fixture'
+from generate_series(0, 119) g;
