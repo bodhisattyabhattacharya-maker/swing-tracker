@@ -116,8 +116,8 @@ SQL
 #                         did not load, which invalidates everything else in that file.
 #   verify_parameters.sql — only FAIL fails the build. MISSING is EXPECTED here: the MU golden
 #                         values are real vendor data, deliberately not committed to a public repo
-#                         for licence reasons, so those seven checks - four daily, two weekly, and
-#                         the peak high - legitimately have nothing to read. They remain a manual
+#                         for licence reasons, so those ten checks - four daily, two weekly, three
+#                         hourly, and the peak high - legitimately have nothing to read. They remain a manual
 #                         check against production (DEFINITIONS.md §6).
 
 # Counts CHECK rows only. The SUMMARY row is excluded deliberately: it is a derived line that

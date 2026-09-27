@@ -333,31 +333,38 @@ Two things this establishes beyond "the numbers still work":
    and still converged to the same value. Past the 125-bar RMA floor the seed is gone, exactly as
    the table predicts. Same for EMA(21) past its 97-bar floor.
 
-### Hourly goldens — awaiting a reading
+### Hourly goldens — read 2026-09-27
 
-CI proves hourly RSI uses the same arithmetic as daily, exactly. It cannot prove the **bars** are
-the ones TradingView draws; only the chart can. Three readings, chosen to test three different
-things, all inside the first backfill's window and past the seed floor:
+CI proves hourly RSI uses the same arithmetic as daily, exactly. It cannot prove the **bars** are the
+ones TradingView draws; only the chart can. Three readings, chosen to test three different things,
+read by hand by Bodhi (MU, 1H, extended hours off, New York time, bar **start** times, the RSI line):
 
-| # | Bar (MU, 1H, ET, bar **start**) | What it tests | TradingView RSI(14) | Ours |
+| Bar (ET, start) | What it tests | TradingView | Ours (production) | Difference |
 |---|---|---|---|---|
-| 1 | **2026-09-25 15:30** | the 30-minute closing bar — this is the grid's value for 09-25 | *to read* | *after backfill* |
-| 2 | **2026-09-25 09:30** | the open boundary: a clock-aligned series has a 09:00 bar with pre-market in it | *to read* | *after backfill* |
-| 3 | **2026-09-24 12:30** | an ordinary mid-session bar, a day earlier | *to read* | *after backfill* |
+| 2026-09-24 12:30 | an ordinary mid-session bar | 61.62 | 61.5493 | −0.07 |
+| 2026-09-25 09:30 | the open boundary — a clock-aligned series has a 09:00 bar with pre-market in it | 61.72 | 61.7732 | +0.05 |
+| 2026-09-25 15:30 | the 30-minute closing bar — the grid's value for 09-25 | 61.87 | 61.6836 | −0.19 |
 
-**How to read them.** Chart `NASDAQ:MU`, interval **1 hour**, **extended hours OFF** (regular
-session only), chart time zone **exchange (New York)** so the labels are ET. Add the built-in RSI,
-length 14, source close. Hover each bar and read the **RSI line** — not its smoothing MA, which the
-default indicator also draws. Record to six decimals if shown, otherwise what is shown.
+**The alignment is right; the residual is the feed.** The same 15:30 bar, read off both: TradingView
+O 1,084.28 · H 1,086.00 · L 1,079.96 · C 1,081.88; ours O 1,084.31 · H 1,086.00 · L 1,079.94 ·
+C 1,081.69. Same bar, same high, prices apart by a few cents — two data feeds, not two alignments. A
+misaligned series builds different bars from different trades and misses by points, not tenths.
 
-**What agreement means.** Tolerance 1e-2, looser than daily's 1e-3: our series starts 90 days back
-and TradingView's years back, so the seeds differ; past 125 bars that difference should be far below
-this. A miss of several points means the **bars** differ — alignment, extended hours, or a missing
-minute — not the formula, which CI has already fixed.
+**Tolerance 0.3 RSI points**, in `scripts/verify_parameters.sql` (`golden (hourly)`), against 1e-3 for
+the daily goldens. The daily goldens compare two computations over one vendor's closes; these
+compare our bars with a different vendor's. 0.3 admits the feed and not the alignment. All three
+pass against production.
 
-**Not covered by these three, and worth one more reading when they happen:** a winter bar (EST;
-first chance 2026-11-02) and a half day (2026-11-27, the Friday after Thanksgiving). Both are unit
-tested against hand-computed offsets; neither has been compared with the chart.
+**No closing-auction adjustment.** The official MU close on 09-25 was 1,082.28; TradingView's closing
+1H bar closes at 1,081.88, so its hourly bars do not carry the auction print either. Substituting the
+official close would move us away from the chart, not towards it. Across 1,449 closing bars the gap
+between our last-minute close and the official close is small (median 0.015%, p95 0.09%) and
+unbiased; the handful near 1% look like earnings-day auction imbalances (not verified against an
+earnings calendar).
+
+**Not covered, and worth one more reading when they happen:** a winter bar (EST; first chance
+2026-11-02) and a half day (2026-11-27). Both are unit tested against hand-computed offsets; neither
+has been compared with the chart.
 
 ### Standing checks
 

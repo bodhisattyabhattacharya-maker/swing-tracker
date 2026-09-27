@@ -153,6 +153,62 @@ golden_w_rows as (
     end as note
   from golden_w_actual
 ),
+-- ---------------------------------------------------------------------------
+-- 1c. HOURLY GOLDENS (decision 0058). MU 1H RSI(14), read by hand off TradingView on 2026-09-27:
+--     extended hours off, New York time, bar START times, the RSI line (not its MA).
+--
+--     TOLERANCE 0.3 RSI POINTS - three hundred times the daily one, and deliberately. The daily
+--     goldens compare two computations over the same vendor's closes. These compare our bars with
+--     TradingView's, which are built from a different feed: the same 15:30 bar closed at 1,081.69
+--     for us and 1,081.88 for them (open 1,084.31 vs 1,084.28, low 1,079.94 vs 1,079.96, high equal).
+--     Measured gaps on the three readings: 0.07, 0.05, 0.19. A MISALIGNED series - clock hours, or
+--     extended hours folded in - does not miss by tenths; it builds different bars from different
+--     trades. 0.3 admits the feed and not the alignment. If one of these ever fails by a few points,
+--     look at session.ts before the tolerance.
+--
+--     Keyed on ts (the bar START, UTC) rather than on a day: 13:30Z is 09:30 EDT. hourly_features
+--     rows before bar 125 are seed_ok = false; all three bars here are past 430.
+--
+--     Also measured that day, and the reason there is NO closing-auction adjustment: TradingView's
+--     15:30 bar closes at 1,081.88, not the official 1,082.28, so its hourly bars do not carry the
+--     auction print either. Substituting the official close would move us away from the chart.
+-- ---------------------------------------------------------------------------
+golden_h(check_name, symbol, at_ts, expected_value, tolerance) as (
+  values
+    ('golden MU RSI(14) hourly 2026-09-24 12:30 ET', 'MU', timestamptz '2026-09-24 16:30:00+00',
+       61.62::double precision, 0.3::double precision),
+    ('golden MU RSI(14) hourly 2026-09-25 09:30 ET (the open)', 'MU', timestamptz '2026-09-25 13:30:00+00',
+       61.72::double precision, 0.3::double precision),
+    ('golden MU RSI(14) hourly 2026-09-25 15:30 ET (closing bar)', 'MU', timestamptz '2026-09-25 19:30:00+00',
+       61.87::double precision, 0.3::double precision)
+),
+golden_h_rows as (
+  select
+    'golden (hourly)'::text as section,
+    g.check_name,
+    case
+      when f.symbol is null then 'MISSING'
+      when f.rsi_hourly is null or not f.rsi_hourly_seed_ok then 'FAIL'
+      when abs(f.rsi_hourly - g.expected_value) <= g.tolerance then 'PASS'
+      else 'FAIL'
+    end as status,
+    to_char(g.expected_value, 'FM999999990.000000') as expected,
+    coalesce(to_char(f.rsi_hourly, 'FM999999990.000000'), '(null)') as actual,
+    case
+      when f.symbol is null
+        then 'no hourly_features row for ' || g.symbol || ' at ' || g.at_ts ||
+             ' - backfill hourly (scope=hourly&full=1) and refresh hourly_features'
+      when f.rsi_hourly is null or not f.rsi_hourly_seed_ok
+        then 'row exists but RSI is null or still seeding - bars_available = ' ||
+             coalesce(f.bars_available::text, '?')
+      else 'diff ' || trim(to_char(abs(f.rsi_hourly - g.expected_value), '0.000EEEE')) ||
+           ' against tolerance ' || trim(to_char(g.tolerance, '0.000EEEE')) ||
+           ' - TradingView''s feed, not ours; see the note above golden_h'
+    end as note
+  from golden_h g
+  left join public.hourly_features f
+    on f.symbol = g.symbol and f.ts = g.at_ts
+),
 golden_rows as (
   select
     'golden'::text as section,
@@ -531,6 +587,8 @@ all_rows as (
   select * from golden_rows
   union all
   select * from golden_w_rows
+  union all
+  select * from golden_h_rows
   union all
   select * from invariant_rows
 )
