@@ -109,13 +109,14 @@ FEATURES wins — this one is a summary and summaries rot.*
 | Norms | **15**, in `config/norms.yml`, synced to the database and compared there |
 | Bars held | **63,579** daily equity bars over 5 years (2021-10-11 →), **8,063** index rows over 11 years — FRED goes back further than the equity plan |
 | Matviews | **5**: `daily_features`, `weekly_features`, `daily_signals`, `market_history`, `hourly_features` |
-| Scheduled jobs | **6** pg_cron, UTC |
+| Scheduled jobs | **8** pg_cron, UTC |
 | Pages | `/` (Dashboard), `/deep-dive`, `/status` |
 | On-demand routes | **2**: `/api/cell-history`, `/api/stock-history` |
 
-**Running on its own**, six pg_cron jobs, UTC: hourly ingest in two shards 21:40 and 22:00 →
+**Running on its own**, eight pg_cron jobs, UTC: hourly ingest in two shards 21:40 and 22:00 →
 daily ingest 22:30 → refresh 22:45 → digest 23:00 on weekdays (decisions 0022, 0028, 0058), plus an
-index-only catch-up at 11:00 **every day** because FRED publishes later than the evening run (0033).
+index-only catch-up at 11:00 **every day** because FRED publishes later than the evening run (0033),
+and the SEC fundamentals check in two shards at 11:20 and 11:40 **every day** (0059).
 The refresh rebuilds **all five** matviews; any new
 matview must be added to that job in the migration that creates it — this project has shipped that
 omission three times. There is no user-led refresh by design, so the schedule is the only path.
@@ -181,12 +182,14 @@ strip's colour map; `check_stat_tracks.sh` (0057) requires every Price-statistic
 
 - **Fundamentals** — **22 columns** are fundamentals-sourced: **20 of the 26** in the Value preset,
   plus the **two sector ranks** (valuation, margin), which sit in the Relative group and not in
-  that preset. Counted, 2026-09-19; "27 Value columns" appeared in several PR bodies and was
-  wrong. All 22 are blocked on the **Massive Financials & Ratios add-on ($29/month)** and its four
-  acceptance probes; nothing starts until Bodhi subscribes.
-- **Forward Look** — the other **6** of the Value preset's 26. No vendor tier sells analyst
-  consensus, so these arrive as **searched** values carrying their own source and as-of date.
-  Permanent, not queued.
+  that preset. **The source layer is built** (decision 0059): SEC EDGAR into `sec_facts`, with
+  `sec_quarters` and `sec_coverage` on top. **The 22 parameters are Stage F2.** Massive's Financials
+  add-on was rejected on its own documentation (not point-in-time, missing reported as 0.0).
+- **Forward Look** — the other **6** of the Value preset's 26, plus TSM's and ASML's quarterly
+  fundamentals, which SEC cannot supply. FMP and EODHD both sell estimates, price targets and earnings
+  dates at an individual price (research 2026-09-27); the vendor is chosen after free-tier probes.
+- **Login.** Every data licence here is personal-use only; the Vercel project has standard
+  protection only. Deferred by Bodhi 2026-09-27 as a future feature.
 - **Hourly: the 7-day top-up is unmeasured** until the first scheduled `cron-hourly` runs; the
   real ceiling is the edge runtime's 2 s CPU budget, not the wall clock (CONSTRAINTS.md 2026-09-27). The
   old `hourly_bars` table — 13,936 clock-aligned rows from a 2024 experiment — is superseded and

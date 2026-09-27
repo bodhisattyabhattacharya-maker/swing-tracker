@@ -522,12 +522,12 @@ degenerate as (
            (select count(*)::text from public.relative_strength where symbol like '^%'),
            'an index measured against the index is identically zero and pure noise in the grid'
     union all
-    -- Six since 20260927220000: the two hourly ingest shards joined daily, refresh, digest and the
-    -- index catch-up.
-    select 'scheduling', 'all six jobs registered exactly once',
-           case when (select count(*) from cron.job where jobname like 'swing-%') = 6
+    -- Eight since 20260928100000: daily, refresh, digest, the index catch-up, two hourly ingest
+    -- shards (20260927220000) and two SEC fundamentals shards.
+    select 'scheduling', 'all eight jobs registered exactly once',
+           case when (select count(*) from cron.job where jobname like 'swing-%') = 8
                 then 'PASS' else 'FAIL' end,
-           '6',
+           '8',
            (select count(*)::text from cron.job where jobname like 'swing-%'),
            'a re-applied migration must not leave duplicates firing alongside the new ones'
     union all
@@ -1241,6 +1241,123 @@ hourly as (
            'an ingest after the refresh would leave the hourly column a day behind every night'
   ) t
 ),
+-- ---------------------------------------------------------------------------
+-- SEC FUNDAMENTALS (20260928100000, decision 0059). The fixture rows in fixture.sql are built so
+-- that each check below has exactly one right answer, and each names the case it pins.
+-- ---------------------------------------------------------------------------
+sec_rows as (
+  select * from (
+    select 'sec'::text as section,
+           'a restatement: the current view takes the newest filing, and the original is still stored'::text as check_name,
+           case when (select val from public.sec_item_latest where symbol = 'SYNTH' and item = 'revenue'
+                        and period_start = '2025-01-01' and period_end = '2025-03-31') = 101
+                 and (select count(*) from public.sec_facts where symbol = 'SYNTH'
+                        and period_end = '2025-03-31' and concept like 'Revenue%') = 2
+                then 'PASS' else 'FAIL' end as status,
+           'latest 101, 2 rows stored'::text as expected_v,
+           coalesce((select val::text from public.sec_item_latest where symbol = 'SYNTH' and item = 'revenue'
+                        and period_start = '2025-01-01' and period_end = '2025-03-31'), 'null') || ', ' ||
+             (select count(*) from public.sec_facts where symbol = 'SYNTH'
+                and period_end = '2025-03-31' and concept like 'Revenue%')::text || ' rows' as actual_v,
+           'point-in-time needs the original; the grid needs the correction - both, never one'::text as note
+    union all
+    select 'sec', 'a reported quarter beats the same quarter derived from year-to-date',
+           case when (select count(*) from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue'
+                        and period_end = '2025-06-30') = 1
+                 and (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue'
+                        and period_end = '2025-06-30' and not derived) = 129
+                then 'PASS' else 'FAIL' end,
+           '1 row, reported 129',
+           (select count(*)::text || ' row(s): ' || coalesce(string_agg(val::text || case when derived then ' derived' else ' reported' end, ', '), '')
+              from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2025-06-30'),
+           'two rows for one quarter would double it in every trailing-twelve-month sum'
+    union all
+    select 'sec', 'Q3 from nine months minus six, Q4 from the year minus nine months',
+           case when (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2025-09-30') = 130
+                 and (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2025-12-31') = 140
+                 and (select bool_and(derived) from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue'
+                        and period_end in ('2025-09-30', '2025-12-31'))
+                then 'PASS' else 'FAIL' end,
+           'Q3 130, Q4 140, both derived',
+           coalesce((select string_agg(period_end || '=' || val, ', ' order by period_end) from public.sec_quarters
+                     where symbol = 'SYNTH' and item = 'revenue' and period_end in ('2025-09-30', '2025-12-31')), 'none'),
+           'Q4 is never filed as a quarter; without this every company is missing a quarter a year'
+    union all
+    select 'sec', 'cash-flow quarters come out of year-to-date filings',
+           case when (select string_agg(val::text, ',' order by period_end) from public.sec_quarters
+                      where symbol = 'SYNTH' and item = 'cfo' and period_end >= '2025-01-01') = '40,50,60,70'
+                then 'PASS' else 'FAIL' end,
+           '40,50,60,70',
+           coalesce((select string_agg(val::text, ',' order by period_end) from public.sec_quarters
+                     where symbol = 'SYNTH' and item = 'cfo' and period_end >= '2025-01-01'), 'none'),
+           'a 10-Q cash-flow statement is year to date; read raw, Q3 would be nine months of cash'
+    union all
+    select 'sec', 'a missing filing produces no quarter, not a half-year called a quarter',
+           case when (select count(*) from public.sec_quarters where symbol = 'SYNTH' and item = 'cfo'
+                      and period_end between '2024-07-01' and '2024-12-31') = 0
+                then 'PASS' else 'FAIL' end,
+           '0',
+           (select count(*)::text from public.sec_quarters where symbol = 'SYNTH' and item = 'cfo'
+              and period_end between '2024-07-01' and '2024-12-31'),
+           'FY 2024 minus H1 2024 spans six months; publishing it as Q4 would double that quarter'
+    union all
+    select 'sec', 'every quarter spans 75-105 days, reported or derived',
+           case when (select count(*) from public.sec_quarters where (period_end - period_start) not between 74 and 105) = 0
+                 and (select count(*) from public.sec_quarters) > 0
+                then 'PASS' else 'FAIL' end,
+           '0 outside, and some rows',
+           (select count(*) filter (where (period_end - period_start) not between 74 and 105)::text || ' outside of ' || count(*)::text
+              from public.sec_quarters),
+           'derived starts are prev_end + 1, so a 75-day band on the filed spans is 74 on the derived one'
+    union all
+    select 'sec', 'within one filing the priority-1 tag wins; across periods the tag may change',
+           case when (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2024-06-30') = 95
+                 and (select concept from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2024-03-31') = 'Revenues'
+                then 'PASS' else 'FAIL' end,
+           'Q2 2024 = 95 (priority 1); Q1 2024 via Revenues',
+           coalesce((select string_agg(period_end || '=' || val || ' ' || concept, '; ' order by period_end) from public.sec_quarters
+                     where symbol = 'SYNTH' and item = 'revenue' and period_end < '2025-01-01'), 'none'),
+           'AMZN changed its capex tag in 2017; a per-company tag choice would lose one side of that'
+    union all
+    select 'sec', 'a per-share value obtained by differencing is flagged approximate',
+           case when (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'eps_diluted' and period_end = '2025-12-31') = 0.60
+                 and (select approximate from public.sec_quarters where symbol = 'SYNTH' and item = 'eps_diluted' and period_end = '2025-12-31')
+                 and (select count(*) from public.sec_quarters where approximate and kind <> 'per_share') = 0
+                then 'PASS' else 'FAIL' end,
+           '0.60, approximate; only per-share rows ever approximate',
+           coalesce((select val::text || ' approximate=' || approximate from public.sec_quarters
+                     where symbol = 'SYNTH' and item = 'eps_diluted' and period_end = '2025-12-31'), 'none'),
+           'FY EPS minus 9M EPS is not Q4 EPS - the share counts differ; F2 must be able to see that'
+    union all
+    select 'sec', 'instants resolve to items with their own units',
+           case when (select val from public.sec_item_latest where symbol = 'SYNTH' and item = 'cash' and period_end = '2025-06-30') = 70
+                 and (select unit from public.sec_item_latest where symbol = 'SYNTH' and item = 'shares_outstanding') = 'shares'
+                then 'PASS' else 'FAIL' end,
+           'cash 70; shares in shares',
+           coalesce((select string_agg(item || '=' || val || ' ' || unit, '; ') from public.sec_item_latest
+                     where symbol = 'SYNTH' and is_instant), 'none'),
+           'a share count in a money column would pass every value check and be nonsense'
+    union all
+    select 'sec', 'coverage lists every item for every filer, so a gap is a row, not an absence',
+           case when (select count(*) from public.sec_coverage) =
+                     (select count(*) from public.sec_filers) * (select count(distinct item) from public.sec_concept_map)
+                then 'PASS' else 'FAIL' end,
+           'filers x items',
+           (select count(*)::text from public.sec_coverage),
+           'the whole point of the view is to show which fundamentals a company cannot supply'
+    union all
+    select 'sec', 'the SEC jobs are sharded and never use offset or limit',
+           case when to_regclass('cron.job') is null then 'PASS'
+                when (select count(*) from cron.job where jobname like 'swing-ingest-sec-%'
+                        and command like '%scope=fundamentals%' and command like '%shard=%'
+                        and command not like '%offset=%' and command not like '%limit=%') = 2
+                then 'PASS' else 'FAIL' end,
+           '2 sharded jobs',
+           (select count(*)::text from cron.job where jobname like 'swing-ingest-sec-%'
+              and command like '%shard=%' and command not like '%offset=%'),
+           'offset on a timer skips work once the plan re-sorts - CONSTRAINTS 2026-09-27'
+  ) t
+),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
   union all
@@ -1253,6 +1370,8 @@ all_rows as (
   select section, check_name, status, expected_v, actual_v, note from schedule_aware
   union all
   select section, check_name, status, expected_v, actual_v, note from hourly
+  union all
+  select section, check_name, status, expected_v, actual_v, note from sec_rows
 )
 select * from (
   select 0 as ord, * from all_rows

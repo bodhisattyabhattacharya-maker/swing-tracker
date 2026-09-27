@@ -518,3 +518,45 @@ select
   date '2022-01-03' + (g / 6),
   null, null, null, 100 + (g % 11) - (g % 5), null, 60, false, 'fixture'
 from generate_series(0, 119) g;
+
+-- ---------------------------------------------------------------------------
+-- SEC facts (decision 0059). HAND-WRITTEN, invented numbers, shaped like companyfacts: each row is
+-- one filed value with its own accession and filed date. Every case below is one thing the views
+-- could get wrong, and check_formulas.sql's `sec` section asserts each by name.
+--
+--   FY2025 revenue: Q1 filed (100), then RESTATED to 101 in the Q2 filing; Q2 reported directly
+--     (129) AND implied by H1 - Q1 (230 - 101 = 129); Q3 only as 9M YTD (360); FY in the 10-K (500).
+--     -> latest filing wins (101), original kept (100); reported beats derived; Q3 = 130; Q4 = 140.
+--   FY2025 cash from operations: YTD only, as 10-Qs file it: 40, 90, 150, 220 -> 40, 50, 60, 70.
+--   FY2024 cash from operations: H1 (80) and FY (170) but NO 9M -> no Q3 and no Q4 may appear: the
+--     difference spans six months and must not be published as a quarter.
+--   FY2024 revenue: Q1 under the priority-2 tag only (90); Q2 filed under BOTH tags (95 and 96) in one
+--     filing -> the priority-1 tag wins (95).
+--   FY2025 diluted EPS: Q1 0.50, 9M 1.60, FY 2.20 -> derived Q4 0.60, flagged approximate.
+--   Instants: cash 70 at 2025-06-30; cover-page shares 1,000 at 2025-07-20.
+-- ---------------------------------------------------------------------------
+insert into public.sec_filers (symbol, cik, last_accn, last_form, last_filed) values
+  ('SYNTH', 1, 'A4', '10-K', '2026-02-15');
+
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed) values
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-01-01','2025-03-31',false,100,'A1','10-Q',2025,'Q1','2025-04-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-01-01','2025-03-31',false,101,'A2','10-Q',2025,'Q2','2025-07-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-04-01','2025-06-30',false,129,'A2','10-Q',2025,'Q2','2025-07-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-01-01','2025-06-30',false,230,'A2','10-Q',2025,'Q2','2025-07-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-01-01','2025-09-30',false,360,'A3','10-Q',2025,'Q3','2025-10-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2025-01-01','2025-12-31',false,500,'A4','10-K',2025,'FY','2026-02-15'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2025-01-01','2025-03-31',false,40,'A1','10-Q',2025,'Q1','2025-04-30'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2025-01-01','2025-06-30',false,90,'A2','10-Q',2025,'Q2','2025-07-30'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2025-01-01','2025-09-30',false,150,'A3','10-Q',2025,'Q3','2025-10-30'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2025-01-01','2025-12-31',false,220,'A4','10-K',2025,'FY','2026-02-15'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2024-01-01','2024-06-30',false,80,'B2','10-Q',2024,'Q2','2024-07-30'),
+  ('SYNTH',1,'us-gaap','NetCashProvidedByUsedInOperatingActivities','USD','2024-01-01','2024-12-31',false,170,'B4','10-K',2024,'FY','2025-02-15'),
+  ('SYNTH',1,'us-gaap','Revenues','USD','2024-01-01','2024-03-31',false,90,'B1','10-Q',2024,'Q1','2024-04-30'),
+  ('SYNTH',1,'us-gaap','Revenues','USD','2024-04-01','2024-06-30',false,96,'B2','10-Q',2024,'Q2','2024-07-30'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2024-04-01','2024-06-30',false,95,'B2','10-Q',2024,'Q2','2024-07-30'),
+  ('SYNTH',1,'us-gaap','EarningsPerShareDiluted','USD/shares','2025-01-01','2025-03-31',false,0.50,'A1','10-Q',2025,'Q1','2025-04-30'),
+  ('SYNTH',1,'us-gaap','EarningsPerShareDiluted','USD/shares','2025-01-01','2025-09-30',false,1.60,'A3','10-Q',2025,'Q3','2025-10-30'),
+  ('SYNTH',1,'us-gaap','EarningsPerShareDiluted','USD/shares','2025-01-01','2025-12-31',false,2.20,'A4','10-K',2025,'FY','2026-02-15'),
+  ('SYNTH',1,'us-gaap','CashAndCashEquivalentsAtCarryingValue','USD','2025-06-30','2025-06-30',true,70,'A2','10-Q',2025,'Q2','2025-07-30'),
+  ('SYNTH',1,'dei','EntityCommonStockSharesOutstanding','shares','2025-07-20','2025-07-20',true,1000,'A2','10-Q',2025,'Q2','2025-07-30');
