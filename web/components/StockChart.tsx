@@ -78,6 +78,21 @@ export default function StockChart({ symbol }: { symbol: string }) {
   const [load, setLoad] = useState<Load>({ s: "idle" });
   const [theme, setTheme] = useState<ChartTheme | null>(null);
   const [mark, setMark] = useState<Mark>("candles");
+  /**
+   * Overlays the reader has switched off.
+   *
+   * A SET OF HIDDEN KEYS, NOT A SET OF VISIBLE ONES, so an overlay added to OVERLAYS later is on
+   * by default rather than silently absent until someone notices. Keyed across timeframes because
+   * the daily and weekly overlay sets are different lists; hiding "21 EMA" on the daily chart
+   * should not hide the weekly one, which is a different line about a different thing.
+   */
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const hide = (k: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
   const host = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -168,17 +183,41 @@ export default function StockChart({ symbol }: { symbol: string }) {
           same. Dropping the key would be worse than leaving it: three names would have a
           two-entry legend and no reason given. Struck through, with the reason on hover, says the
           line is missing AND why. */}
+      {/* TOGGLES, AND THREE STATES RATHER THAN TWO.
+          A line can be absent for two completely different reasons and they must not look alike:
+
+            on            drawn, solid swatch, full ink
+            off           the reader switched it off — hollow swatch, faint ink
+            unavailable   THIS NAME has too little history for it, struck through, no swatch,
+                          and not clickable
+
+          The third was already here and is the one at risk: found on 2026-09-19 by checking the
+          deployed route against the database, ALAB has 130 completed weeks and a 200-week average
+          needs 200, so `sma200w` comes back empty and nothing is drawn. ARM and SNDK are the same.
+          Collapsing "you hid it" into "we have not got it" would hand those three names a legend
+          that blames the reader for a data limit. */}
       <span className="pc-legend">
         {OVERLAYS[tf].map((o, i) => {
-          const drawn = !series || (series.overlays[o.key]?.length ?? 0) > 0;
+          const available = !series || (series.overlays[o.key]?.length ?? 0) > 0;
+          const off = hidden.has(o.key);
+          const cls = !available ? `pc-key k${i} unavailable` : off ? `pc-key k${i} off` : `pc-key k${i}`;
           return (
-            <span
+            <button
               key={o.key}
-              className={drawn ? `pc-key k${i}` : `pc-key k${i} off`}
-              title={drawn ? undefined : `${symbol} has too little history for ${o.label}, so it is not drawn`}
+              type="button"
+              className={cls}
+              disabled={!available}
+              aria-pressed={available ? !off : undefined}
+              onClick={() => hide(o.key)}
+              title={!available
+                ? `${symbol} has too little history for ${o.label}, so there is no line to show`
+                : off
+                ? `Show ${o.label}`
+                : `Hide ${o.label}`}
             >
+              <i className="pc-sw" aria-hidden="true" />
               {o.label}
-            </span>
+            </button>
           );
         })}
       </span>
@@ -214,7 +253,7 @@ export default function StockChart({ symbol }: { symbol: string }) {
         : theme
         ? (
           <>
-            <Plot series={load.series} theme={theme} range={range} onMark={setMark} />
+            <Plot series={load.series} theme={theme} range={range} onMark={setMark} hidden={hidden} />
             <p className="note pc-note">
               {rangeLabel(load.series.tf, range, load.series.bars)} ·{" "}
               {mark === "candles"
@@ -233,11 +272,13 @@ export default function StockChart({ symbol }: { symbol: string }) {
  * The chart itself. Built once per (series, theme); panning only changes which series is visible.
  */
 function Plot(
-  { series, theme, range, onMark }: {
+  { series, theme, range, onMark, hidden }: {
     series: Series;
     theme: ChartTheme;
     range: RangeSpec;
     onMark: (m: Mark) => void;
+    /** Overlay keys the reader has switched off. A prop, because the legend lives one level up. */
+    hidden: Set<string>;
   },
 ) {
   const box = useRef<HTMLDivElement>(null);
@@ -298,6 +339,11 @@ function Plot(
     // is what the legend beside this canvas is coloured from.
     const colours = [theme.ma1, theme.ma2, theme.ma3];
     OVERLAYS[series.tf].forEach((spec, i) => {
+      // TWO REASONS TO DRAW NOTHING, and the legend distinguishes them: the reader switched this
+      // overlay off, or this name has too little history for it. Both end here; only the second
+      // is something the page has to explain, which is why the legend and not this line carries
+      // the message.
+      if (hidden.has(spec.key)) return;
       const pts = series.overlays[spec.key] ?? [];
       if (pts.length === 0) return;
       const s = c.addSeries(LineSeries, {
@@ -320,7 +366,7 @@ function Plot(
     candles.current?.applyOptions({ visible: m === "candles" });
     line.current?.applyOptions({ visible: m === "line" });
     onMark(m);
-  }, [series, theme, range, onMark]);
+  }, [series, theme, range, onMark, hidden]);
 
   useEffect(() => {
     build();

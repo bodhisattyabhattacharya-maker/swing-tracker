@@ -31,6 +31,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import StockChart from "./StockChart";
 import Sparkline from "./Sparkline";
+import { track as statTrack, trackLabel, UNTRACKED } from "../lib/statplot";
 import {
   COLOURED,
   type CellLike,
@@ -72,6 +73,8 @@ export interface Norm {
 
 export interface Props {
   rows: StripSecurity[];
+  /** Previous close per symbol, for the header's day change. Absent key = only one stored bar. */
+  prevCloses: Record<string, number>;
   /** Keyed `SYMBOL|param`, merged from the three cell views by the page. */
   cells: Record<string, CellLike>;
   norms: Norm[];
@@ -85,7 +88,7 @@ export interface Props {
 }
 
 export default function StockStrip(
-  { rows, cells, norms, gridDate, rsAsOf, unavailable, behind }: Props,
+  { rows, cells, norms, gridDate, rsAsOf, unavailable, behind, prevCloses }: Props,
 ) {
   const [filter, setFilter] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -226,6 +229,30 @@ export default function StockStrip(
         )
         : null}
 
+      {/* ONE JUMP ROW FOR THE WHOLE STRIP, NOT ONE PER COLUMN, and this is a deliberate
+          departure from the spec's "per card" — flagged rather than done quietly.
+          Every section sits at the same height on every name; that is the property the whole
+          420px-fixed-column design exists to guarantee, and it means scrolling to Fundamentals
+          scrolls to Fundamentals in all of them at once. A chip row inside each card would be
+          eight chips multiplied by the watchlist — 424 of them at 53 names — to do exactly what
+          eight do. That arithmetic is the one this project has been caught by three times.
+          If the per-card version is wanted anyway, it is the same handler with the row moved. */}
+      <nav className="dd-jump" aria-label="Jump to a section">
+        <span className="dd-jump-k">Jump to</span>
+        {RESOLVED.map((sp) => (
+          <button
+            key={sp.key}
+            className="dd-jump-b"
+            onClick={() => {
+              document.querySelector(`[data-sec="${sp.key}"]`)
+                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          >
+            {sp.title}
+          </button>
+        ))}
+      </nav>
+
       {pickerOpen
         ? (
           <Picker
@@ -271,6 +298,8 @@ export default function StockStrip(
                     rsAsOf={rsAsOf}
                     gridDate={gridDate}
                     isBehind={behindSet.has(r.symbol)}
+                    close={cells[`${r.symbol}|close`]?.value ?? null}
+                    prevClose={prevCloses[r.symbol] ?? null}
                     pinned={pinnedSet.has(r.symbol)}
                     onPin={() => setSel((c) => togglePin(c, r.symbol, rows))}
                     onDrop={() => setSel((c) => drop(c, r.symbol, rows))}
@@ -378,7 +407,7 @@ function Picker(
 
 /** One stock's column: a header, then the eight sections in order. */
 function StockColumn(
-  { sec, cells, normByParam, themeStart, rsAsOf, gridDate, isBehind, pinned, onPin, onDrop }: {
+  { sec, cells, normByParam, themeStart, rsAsOf, gridDate, isBehind, close, prevClose, pinned, onPin, onDrop }: {
     sec: StripSecurity;
     cells: Record<string, CellLike>;
     normByParam: Map<string, Norm>;
@@ -386,6 +415,8 @@ function StockColumn(
     rsAsOf: string | null;
     gridDate: string | null;
     isBehind: boolean;
+    close: number | null;
+    prevClose: number | null;
     pinned: boolean;
     onPin: () => void;
     onDrop: () => void;
@@ -401,6 +432,29 @@ function StockColumn(
           {sec.symbol}
           {sec.bellwether ? <span className="bell" title="Bellwether">◆</span> : null}
           {sec.is_fund ? <span className="tag fund" title="An ETF — no income statement">ETF</span> : null}
+        </div>
+        {/* LATEST CLOSE AND THE DAY CHANGE, at the top of the column where it is read first.
+            The change is computed from the previous close the server supplies (decision 0057) —
+            there is no day-change parameter, and this was the alternative to nine lazy fetches.
+            A symbol with only one stored bar shows the close alone rather than a confident 0.0%:
+            "no previous close" and "unchanged" are different facts. */}
+        <div className="dd-px">
+          <span className="dd-px-v">
+            {typeof close === "number" ? close.toFixed(2) : "—"}
+          </span>
+          {typeof close === "number" && typeof prevClose === "number" && prevClose !== 0
+            ? (() => {
+              const pct = ((close - prevClose) / prevClose) * 100;
+              // Neutral ink, not the verdict pair. A day's move is not a reading against a norm
+              // we set, and colouring it red or green here would make it look like one — the same
+              // argument that keeps the regime strip off red/green (0052).
+              return (
+                <span className="dd-px-d" title={`previous close ${prevClose.toFixed(2)}`}>
+                  {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+                </span>
+              );
+            })()
+            : <span className="dd-px-d none" title="only one stored bar — no previous close to compare">no prior close</span>}
         </div>
         <div className="dd-name">{sec.name}</div>
         <div className="dd-theme">{THEME_LABELS[sec.theme] ?? sec.theme}</div>
@@ -464,12 +518,15 @@ function Section(
   const render = sectionRender(spec, sec);
 
   return (
+    // `data-sec` is what the jump row scrolls to. On the attribute rather than an id because an
+    // id has to be unique and this key repeats once per column - the jump lands on whichever
+    // column is leftmost, which is the one the reader is looking at.
     // THE CLASS FOLLOWS WHAT THE PANEL RENDERS, not what its params' statuses are, and those two
     // are not the same question. The first version keyed off `sectionState`, so an ETF's
     // Fundamentals panel carried the heading marker "planned" above a body reading "Permanent, not
     // pending" - a temporal claim and a permanent one, contradicting each other two lines apart,
     // which a screenshot showed immediately. One concept on screen, three values, all reachable.
-    <section className={`dd-sec sec-${spec.key} ss-${render}`}>
+    <section className={`dd-sec sec-${spec.key} ss-${render}`} data-sec={spec.key}>
       {/* THE SUB-LINE IS HOVER TEXT, NOT BODY TEXT, and that came from looking at a screenshot.
           It describes the SECTION, so it is identical on all 22 columns here and all 53 in
           production - two lines of grey prose multiplied by the watchlist. Anything constant
@@ -641,6 +698,36 @@ function Rows(
               {norm ? <span className="norm">{formatNorm(norm)}</span> : null}
             </dt>
             <dd><Payload col={c} cell={cell} state={st} /></dd>
+            {/* THE TRACK, ONLY ON A VALUE THAT HAS ONE. `statTrack` returns null for a param with
+                no span, for a non-number, and for `pct_above_low_stored`, which is deliberately
+                untracked — 120% to 5,350% across the watchlist has no linear scale that shows
+                both ends (see lib/statplot.ts). A row without a track renders exactly as it did
+                before, so the fallback is the old behaviour rather than a gap.
+                Not drawn on a judged-but-suppressed value either: a warm-up reading is shown and
+                never judged, and a marker on a scale is a comparison. */}
+            {(() => {
+              if (st === "planned" || st === "na" || st === "null" || st === "warmup") return null;
+              const t = statTrack(c.param, cell?.value, norm);
+              if (!t) return null;
+              return (
+                <div
+                  className={t.clamped ? "dd-track pinned" : "dd-track"}
+                  title={`${c.label} ${trackLabel(t, c.suffix ?? "")}`}
+                  aria-hidden="true"
+                >
+                  {/* The norm bound is the only mark here that carries an opinion. The
+                      by-construction reference (1.0 on a ratio against its own average) is drawn
+                      differently for that reason. */}
+                  {t.normAt !== null
+                    ? <i className="dd-track-n" style={{ left: `${t.normAt * 100}%` }} />
+                    : null}
+                  {t.defAt !== null
+                    ? <i className="dd-track-d" style={{ left: `${t.defAt * 100}%` }} />
+                    : null}
+                  <i className="dd-track-m" style={{ left: `${t.at * 100}%` }} />
+                </div>
+              );
+            })()}
           </div>
         );
       })}

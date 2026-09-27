@@ -58,6 +58,7 @@ const TIMEFRAME_WORDS: Record<keyof typeof TIMEFRAME_LABELS, string> = {
 export default async function DeepDive() {
   const {
     status, tickers, cells, norms, rs, signals, rsAsOf, rsError, signalsError, error,
+    prevCloses,
   } = await fetchGrid();
 
   if (error) {
@@ -201,6 +202,7 @@ export default async function DeepDive() {
 
       <StockStrip
         rows={rows}
+        prevCloses={prevCloses}
         cells={byCell}
         norms={norms}
         gridDate={status?.data_through ?? null}
