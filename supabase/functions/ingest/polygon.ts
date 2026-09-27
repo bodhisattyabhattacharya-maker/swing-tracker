@@ -41,14 +41,22 @@
  * the only parameter that reads it is a ratio against a 50-bar average, and a fraction of one
  * share cannot move it. Verified live 2026-09-13 - INCIDENTS.md.
  *
- * HOURLY: not implemented here yet, and deliberately. Polygon's hour aggregates align to clock
- * hours and include extended-hours trading; TradingView's 1H bars align to the 09:30 session
- * open and exclude it. Rolling minute aggregates into session-aligned hours is the correct fix
- * and lands in its own PR, because hourly RSI has a 30/70 threshold and bar alignment moves it.
+ * HOURLY (implemented 2026-09-27, decision 0058). Polygon's hour aggregates align to clock hours
+ * and include extended-hours trading; TradingView's 1H bars align to the 09:30 session open and
+ * exclude it. So `hourly()` fetches ONE-MINUTE aggregates and hands them to session.ts, which
+ * buckets them into the seven session hours itself. The alignment is therefore a property of our
+ * code rather than an assumption about the vendor's, and session.ts is where it is tested.
+ *
+ * PAGINATION is new here. A daily window is a few hundred rows; a 90-day minute window with
+ * extended hours is up to ~57,600, past the 50,000-row page. Polygon signals more with `next_url`.
+ * The daily path never needed to follow it and does not; the hourly path must, or the OLDEST
+ * 50,000 minutes would arrive and the newest week silently would not - with `sort=asc`, the
+ * truncation lands on exactly the bars that matter.
  */
 
 import { type BarProvider, type DailyBar, type HourlyBar, type Range, RateLimitError } from "./provider.ts";
 import { fetchWithRetry } from "./http.ts";
+import { type MinuteAgg, sessionHours } from "./session.ts";
 
 export const POLYGON_SOURCE = "polygon-aggs";
 
@@ -79,6 +87,28 @@ const FULL_DAYS = 1800;
 const INCREMENTAL_DAYS = 35;
 
 /**
+ * HOURLY WINDOWS, in calendar days of MINUTES.
+ *
+ * Full: 90 days is ~60 sessions, ~420 session hours. RSI(14)'s seed floor is 125 bars
+ * (DEFINITIONS.md §4), so the newest ~295 hours carry a settled RSI - comfortably more than the
+ * three months TradingView users mean by "hourly RSI". At ~960 minutes a day with extended hours,
+ * that is ~57,600 rows: two pages. See PAGINATION in the header.
+ *
+ * Incremental: 7 days covers a long weekend plus one missed night, in one page. Deliberately
+ * shorter than the daily 35 - a daily top-up is ~25 rows, an hourly one is ~4,800, and payload is
+ * what this job pays in wall clock.
+ */
+const HOURLY_FULL_DAYS = 90;
+const HOURLY_INCREMENTAL_DAYS = 7;
+
+/**
+ * A page cap, so a vendor that kept handing back `next_url` could not hold the function until the
+ * wall clock killed it and took the run's bookkeeping with it. Six pages is 300,000 minutes, five
+ * times the largest window this file asks for; reaching it means something is wrong, and it throws.
+ */
+const MAX_PAGES = 6;
+
+/**
  * The per-request timeout, the retry policy and the wall clock one symbol may spend all live in
  * http.ts now, so a transient 502 costs a pause rather than the night's bar. This file kept its own
  * 20 s constant until 2026-09-16; the reasoning moved with it and has not changed.
@@ -107,6 +137,8 @@ export interface AggsResponse {
   /** Present when the request was rejected or the plan does not cover it. */
   error?: string;
   message?: string;
+  /** Present when there are more results than fit one page. Absolute URL, same auth. */
+  next_url?: string;
 }
 
 function ymd(d: Date): string {
@@ -127,6 +159,53 @@ export function aggsUrl(symbol: string, range: Range, now: Date = new Date()): s
   const to = ymd(new Date(now.getTime() + 86_400_000));
   return `${HOST}/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/day/${from}/${to}` +
     `?adjusted=true&sort=asc&limit=50000`;
+}
+
+/**
+ * Pure: the one-minute aggregates URL for the hourly path. Exported and pinned for the same reason
+ * `aggsUrl` is: a wrong window or a wrong timespan returns plausible data, not an error.
+ */
+export function minuteAggsUrl(symbol: string, range: Range, now: Date = new Date()): string {
+  const days = range === "full" ? HOURLY_FULL_DAYS : HOURLY_INCREMENTAL_DAYS;
+  const from = ymd(new Date(now.getTime() - days * 86_400_000));
+  const to = ymd(new Date(now.getTime() + 86_400_000));
+  return `${HOST}/v2/aggs/ticker/${encodeURIComponent(symbol)}/range/1/minute/${from}/${to}` +
+    `?adjusted=true&sort=asc&limit=50000`;
+}
+
+/**
+ * Pure: response -> one-minute aggregates. Same validation as `mapAggs`, and it throws for the
+ * same reasons: a response that cannot be trusted must cost the symbol, not write nothing and
+ * report success.
+ */
+export function mapMinutes(json: AggsResponse, symbol: string): MinuteAgg[] {
+  if (json.error || json.message) throw new Error(`${symbol}: ${json.error ?? json.message}`);
+  if (json.status && !["OK", "DELAYED"].includes(json.status)) {
+    throw new Error(`${symbol}: minute aggregates status ${json.status}`);
+  }
+  if (json.results == null) return [];
+  if (!Array.isArray(json.results)) throw new Error(`${symbol}: results is not an array`);
+  return json.results.filter((a) => typeof a.t === "number" && a.c != null);
+}
+
+/**
+ * Pure: session hours -> rows for `hourly_session_bars`. Split from the fetch so the row shape is
+ * testable - in particular that `ts` is the bucket START in UTC, which is the upsert key.
+ */
+export function toHourlyRows(symbol: string, minutes: MinuteAgg[], nowMs: number): HourlyBar[] {
+  return sessionHours(minutes, nowMs).map((h) => ({
+    symbol,
+    ts: new Date(h.startMs).toISOString(),
+    d: h.d,
+    open: h.open,
+    high: h.high,
+    low: h.low,
+    close: h.close,
+    volume: h.volume,
+    minutes: h.minutes,
+    closes_session: h.closesSession,
+    source: POLYGON_SOURCE,
+  }));
 }
 
 /**
@@ -217,8 +296,31 @@ export const polygon: BarProvider = {
     return [...byDate.values()];
   },
 
-  // Session-aligned hourly is a separate piece of work - see the HOURLY note in the header.
-  hourly(): Promise<HourlyBar[] | null> {
-    return Promise.resolve(null);
+  // Minutes in, session hours out - see HOURLY and PAGINATION in the header.
+  async hourly(symbol: string, range: Range): Promise<HourlyBar[]> {
+    const key = Deno.env.get("POLYGON_API_KEY");
+    if (!key) throw new Error("POLYGON_API_KEY is not set on the function");
+    const headers = { Authorization: `Bearer ${key}`, Accept: "application/json" };
+
+    const minutes: MinuteAgg[] = [];
+    let url: string | undefined = minuteAggsUrl(symbol, range);
+    for (let page = 0; url; page++) {
+      if (page >= MAX_PAGES) {
+        throw new Error(`${symbol}: more than ${MAX_PAGES} pages of minutes - refusing to guess where they end`);
+      }
+      const r = await fetchWithRetry(url, { headers }, { label: `${POLYGON_SOURCE}/${symbol}/minute` });
+      if (r.status === 429) throw new RateLimitError(POLYGON_SOURCE, symbol);
+      if (r.status === 401 || r.status === 403) {
+        throw new Error(`${symbol}: HTTP ${r.status} - key rejected or plan does not cover minute aggregates`);
+      }
+      if (!r.ok) throw new Error(`${symbol}: HTTP ${r.status} from minute aggregates`);
+      const json = await r.json() as AggsResponse;
+      minutes.push(...mapMinutes(json, symbol));
+      // Only follow a next_url on the vendor's own host. The key goes in a header on this request,
+      // and a response that pointed elsewhere would carry it there.
+      url = json.next_url && json.next_url.startsWith(HOST) ? json.next_url : undefined;
+      if (url) await new Promise((res) => setTimeout(res, MIN_INTERVAL_MS));
+    }
+    return toHourlyRows(symbol, minutes, Date.now());
   },
 };

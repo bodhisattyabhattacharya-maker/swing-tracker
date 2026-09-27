@@ -153,8 +153,8 @@ export const COLUMNS: Column[] = [
   // appears on both sides and means different things. It had a [D] or [W] marker beside it and a
   // full-height rule somewhere in the middle of eleven columns; now the band heading says it.
   { param: "rsi_hourly", label: "RSI 14", group: "techdaily", timeframe: "hourly", source: "cells",
-    status: "planned", render: "number", digits: 1, signed: false,
-    hint: "Blocked on session-aligned hourly bars: the vendor's hours start on the clock, TradingView's on the 09:30 open, and the 30/70 threshold moves with the alignment." },
+    status: "live", render: "number", digits: 1, signed: false,
+    hint: "Wilder's RSI on session-aligned hours — 09:30 to 16:00 in seven bars, extended hours excluded, as TradingView draws them. The day's value is RSI at the session close." },
   { param: "rsi_daily", label: "RSI 14", group: "techdaily", timeframe: "daily", source: "cells",
     status: "live", render: "number", digits: 1, signed: false,
     hint: "Wilder's smoothing, not a simple average of gains and losses." },

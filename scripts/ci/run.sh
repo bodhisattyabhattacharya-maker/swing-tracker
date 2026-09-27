@@ -81,7 +81,10 @@ insert into public.norms (param, low, high) values
   -- run. The fixture's VIX sweeps 9 .. 87 so all three arms fire, and its VIX3M dips below VIX on
   -- one date in seven, so term_structure is negative as well as positive.
   ('vix', 16, 30),
-  ('term_structure', 0, null)
+  ('term_structure', 0, null),
+  -- The hourly RSI norm config/norms.yml sets, so hourly cells are JUDGED in CI rather than all
+  -- falling through the `no norm` arm (decision 0058).
+  ('rsi_hourly', 30, 70)
 on conflict (param) do update set low = excluded.low, high = excluded.high;
 insert into public.flags (key, value) values ('pipeline_stale_after_hours', '30'::jsonb)
 on conflict (key) do update set value = excluded.value;
@@ -102,6 +105,8 @@ refresh materialized view public.daily_signals;
 -- same guard caught it: added 2026-09-18, and the gate failed with "0 empty | market_history" until
 -- this line existed. Third time that generic check has found a matview nobody refreshed.
 refresh materialized view public.market_history;
+-- hourly_features reads only hourly_session_bars. Added 2026-09-27 with the hourly layer.
+refresh materialized view public.hourly_features;
 SQL
 
 # Both scripts return one row per check, with the status in a column. CI's only job is to insist

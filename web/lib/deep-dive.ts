@@ -325,9 +325,10 @@ for (const s of RESOLVED) {
 /**
  * Which params in a live section are nonetheless not built, so the section can say so.
  *
- * The RSI section is the case this exists for: two of its three gauges read real numbers and the
- * hourly one cannot, because hourly bars are not session-aligned yet. A section that rendered two
- * gauges and silently dropped the third would be answering a question it was not asked.
+ * The RSI section is the case this was written for: until 2026-09-27 two of its three gauges read
+ * real numbers and the hourly one could not, because hourly bars were not session-aligned (decision
+ * 0058). Nothing is in that position today, so this returns [] for every section - and stays, so the
+ * next column that goes live ahead of its neighbours is said out loud rather than silently dropped.
  */
 export function plannedWithin(s: ResolvedSection): Column[] {
   return s.columns.filter((c) => c.status === "planned");

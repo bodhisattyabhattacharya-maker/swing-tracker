@@ -70,7 +70,7 @@ Applied identically on hourly, daily and weekly bars. The only difference betwee
 
 | Parameter | Definition | Notes |
 |---|---|---|
-| **RSI hourly** | `rsi(close, 14)` on hourly bars | Reported as the standard 3-month hourly RSI. Computed on the full stored 2-year hourly series, so no warm-up problem. |
+| **RSI hourly** | `rsi(close, 14)` on **session-aligned** hourly bars — see *Hourly bar construction* below | The value on day *d* is RSI as of the bar that **closes** *d*'s session. Built from one-minute bars, 90 days on first fetch and topped up nightly; the 125-bar seed floor (§4) is about eighteen sessions. The line this replaces claimed a stored two-year hourly series and no warm-up problem — true of the Yahoo prototype, and of nothing since. |
 | **RSI daily** | `rsi(close, 14)` on daily bars | |
 | **RSI weekly** | `rsi(close, 14)` on weekly bars | |
 | **Daily SMA 50 / 200** | `sma(close, 50)`, `sma(close, 200)` on daily bars | Position reported as `100 × (close / sma − 1)`. |
@@ -109,6 +109,39 @@ is where a backtest gets silently corrupted:
   weekly cell that changes mid-week is a bug, not a move.
 
 Decision 0032; asserted in `scripts/ci/check_formulas.sql` under the `as-of` section.
+
+### Hourly bar construction, and how an hourly value attaches to a day
+
+The vendor's hour aggregates are **not** these bars: they start on the clock (09:00, 10:00) and
+include extended-hours trading. TradingView's do neither, and hourly RSI is read against 30/70, so
+which trades land in which bar is the parameter. The bars are therefore built, not fetched:
+
+- **Seven bars a regular session, anchored to the 09:30 ET open:** 09:30–10:30, 10:30–11:30,
+  11:30–12:30, 12:30–13:30, 13:30–14:30, 14:30–15:30, and **15:30–16:00 — thirty minutes**.
+- **Extended hours are excluded.** A minute before 09:30 or at/after the close belongs to no bar.
+- **Early closes end the session at 13:00**, and the after-hours trading that continues after a
+  half-day close is excluded with everything else. The dates are a list in `session.ts`, taken
+  **verbatim** from the NYSE Group release of 8 November 2024: 2025-07-03, 2025-11-28, 2025-12-24,
+  2026-11-27, 2026-12-24, 2027-11-26. A summary of that calendar read first listed three more
+  (3 July 2026, 2 July 2027, 24 December 2027); the first and last are full closures and 2 July
+  2027 is an ordinary full session. A full-day holiday needs no entry: no minutes, no bars.
+- `open` = first minute's open, `high` = max, `low` = min, `close` = last minute's close — **by time,
+  not by arrival order**. `volume` = sum of the minutes, **then** rounded.
+- `minutes` records how many one-minute bars fed each bar: 60, or 30 for the last. Fewer means the
+  vendor's minutes had a gap (a halt, an outage); the bar is kept and the count says so.
+- **A bar is stored only once it ended at least 15 minutes ago**, because the feed is 15-minute
+  delayed and a younger bar may still be missing its last prints.
+- `ts` is the bar's **start** in UTC; `d` is its ET trading date.
+
+> **The hourly value shown on day *d* is RSI as of the bar that closes *d*'s session** — 15:30–16:00,
+> or 12:30–13:00 on a half day. If that bar is not stored, *d* has no hourly value.
+
+Deliberately not "the newest hourly bar stored for *d*". Those agree every night the schedule runs,
+and disagree exactly when something went wrong — a manual run at noon, a vendor gap at 15:30 —
+where "newest" would publish a mid-session reading as the day's, plausibly.
+
+Decision 0058. Pinned by `supabase/functions/ingest/session_test.ts`; the stored result is asserted
+in `scripts/ci/check_formulas.sql` (`hourly`) and, against production, `scripts/verify_parameters.sql`.
 
 ### Moving-average signals
 
@@ -299,6 +332,32 @@ Two things this establishes beyond "the numbers still work":
    history; this one from 490 bars, so the Wilder seed started at a completely different point
    and still converged to the same value. Past the 125-bar RMA floor the seed is gone, exactly as
    the table predicts. Same for EMA(21) past its 97-bar floor.
+
+### Hourly goldens — awaiting a reading
+
+CI proves hourly RSI uses the same arithmetic as daily, exactly. It cannot prove the **bars** are
+the ones TradingView draws; only the chart can. Three readings, chosen to test three different
+things, all inside the first backfill's window and past the seed floor:
+
+| # | Bar (MU, 1H, ET, bar **start**) | What it tests | TradingView RSI(14) | Ours |
+|---|---|---|---|---|
+| 1 | **2026-09-25 15:30** | the 30-minute closing bar — this is the grid's value for 09-25 | *to read* | *after backfill* |
+| 2 | **2026-09-25 09:30** | the open boundary: a clock-aligned series has a 09:00 bar with pre-market in it | *to read* | *after backfill* |
+| 3 | **2026-09-24 12:30** | an ordinary mid-session bar, a day earlier | *to read* | *after backfill* |
+
+**How to read them.** Chart `NASDAQ:MU`, interval **1 hour**, **extended hours OFF** (regular
+session only), chart time zone **exchange (New York)** so the labels are ET. Add the built-in RSI,
+length 14, source close. Hover each bar and read the **RSI line** — not its smoothing MA, which the
+default indicator also draws. Record to six decimals if shown, otherwise what is shown.
+
+**What agreement means.** Tolerance 1e-2, looser than daily's 1e-3: our series starts 90 days back
+and TradingView's years back, so the seeds differ; past 125 bars that difference should be far below
+this. A miss of several points means the **bars** differ — alignment, extended hours, or a missing
+minute — not the formula, which CI has already fixed.
+
+**Not covered by these three, and worth one more reading when they happen:** a winter bar (EST;
+first chance 2026-11-02) and a half day (2026-11-27, the Friday after Thanksgiving). Both are unit
+tested against hand-computed offsets; neither has been compared with the chart.
 
 ### Standing checks
 

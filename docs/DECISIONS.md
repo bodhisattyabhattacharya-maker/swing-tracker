@@ -1953,3 +1953,74 @@ comment is true. And `check_stat_tracks.sh` opened by claiming a track "must be 
 values it will be asked to plot"; it runs without a database and cannot verify fit at all. What it
 verifies is that a misfit is **visible** — clamped, flagged, and styled as pinned — rather than
 drawn as an ordinary marker sitting at an end.
+
+## 0058 — 2026-09-27 — Hourly bars are built from minutes, on their own schedule, in their own table
+
+**Context:** `rsi_hourly` was the one column in a built section with a norm and no number. The
+vendor's hour aggregates start on the clock (09:00, 10:00) and include extended hours; TradingView's
+1H bars start at the 09:30 open, exclude extended hours, and end the day with a 30-minute bar. RSI
+is read against 30/70, and which trades land in which bar moves it. Three questions went to Bodhi
+before any code, and his answers are the decision.
+
+**Minutes, rolled up in the edge function.** `polygon.ts` fetches one-minute aggregates (following
+`next_url` across pages, host-checked, capped at six) and `session.ts` buckets them: 09:30–10:30 …
+14:30–15:30, then 15:30–16:00. Rejected: pairing 30-minute aggregates — same request count, and it
+would have depended on where the vendor puts its 30-minute boundaries, which nobody had measured.
+Bucketing our own minutes makes the alignment a property of a file under test rather than an
+assumption about someone else's.
+
+**Early closes are a list, verified verbatim.** On a half day the session ends at 13:00 but
+after-hours trading continues and the vendor's minutes include it; a `09:30 ≤ t < 16:00` filter
+would fold three hours of after-hours prints into the 12:30 bar. `EARLY_CLOSES` holds the six NYSE
+1 p.m. closes for 2025–2027. **The first summary of the NYSE calendar read for this was wrong in
+three places** — it listed 3 July 2026 and 24 December 2027 (both full closures) and 2 July 2027 (an
+ordinary full session) as early closes. The list comes from the NYSE Group release of 8 November
+2024, read verbatim, and a test pins 2 July 2027 as a full session. Another fails the build once the
+current year passes `EARLY_CLOSES_THROUGH`; NYSE publishes three years ahead, so that failure always
+has an answer. Full-day holidays need no entry — no minutes, no buckets.
+
+**A new table, `hourly_session_bars`; `hourly_bars` untouched.** The 13,936 clock-aligned rows are
+a different instrument, not a wrong one. Sharing a primary key would put two alignments in one
+series with nothing to tell them apart. Each row carries `d` (the ET trading date, so SQL never does
+timezone arithmetic), `minutes` (60, 30 for the last bar, anything less is evidence of a vendor gap)
+and `closes_session`. A partial unique index allows one closing bar per (symbol, day) at write time.
+
+**No new copy of Wilder's smoothing.** The plan said "copy `daily_recursive` and add a CI check that
+the copies agree". Reading 0030's migration first showed the formula already exists once, in
+`recursive_indicators`, with daily and weekly as wrappers. Hourly is a third caller. It takes dates
+and echoes them; hours have timestamps; so `hourly_features` joins the result back by position
+(`bars_available` = the bar's `row_number()` in the same `ts` order). CI builds an hourly series
+that is SYNTH's daily series bar for bar and requires hourly RSI to equal daily RSI **exactly** at
+all 320 positions; reversing the ordering on one side fails 306 of them.
+
+**The grid shows RSI as of the bar that closes the session, not the newest bar stored.** The two
+agree every night the schedule runs and disagree exactly when something went wrong: a manual run at
+noon stores 09:30 and 10:30, and "newest" would publish the 10:30 RSI as the day's. With
+`closes_session` that day is a dash. Same seed floor as daily, 125 bars — a property of the RMA, not
+the timeframe; about eighteen sessions, cleared three times by the 90-day backfill.
+
+**Its own schedule, not `scope=all`.** An hourly top-up is roughly 200 times a daily one's payload,
+and the daily job's budget was measured without it. Two jobs, 21:40 and 22:00 UTC, before the daily
+ingest so the existing 22:45 refresh rebuilds `hourly_features` with everything else. 21:40 is the
+earliest slot that clears the close in both seasons: 16:00 EST is 21:00 UTC, and a bucket is not
+stored until 15 minutes after it ends (the feed is 15-minute delayed).
+
+**Two jobs split by SHARD, not by `offset` — changed while building, and worth recording.** The
+first version gave the second job `offset=30`. The ingest sorts never-fetched symbols to the front of
+its plan on every run, so once job A had backfilled some names, job B's offset pointed into a
+different list; on the first night it would have skipped every symbol A had not reached. `?shard=k/n`
+picks from the symbol list before planning, so each symbol belongs to exactly one job whatever state
+it is in. `offset` keeps its one job — walking a forced deepening.
+
+**The limits are guesses, and say so.** The sandbox cannot reach the vendor, so the first production
+run is the first measurement. 30 top-ups per run (an assumed 4 s each), 6 full fetches (10 s each).
+**Automatic** full fetches — a symbol planned full because it has no bars — get their own cap of 6
+per hourly run, because on the first night every equity has zero hourly bars and the incremental
+limit would otherwise admit 30 two-page fetches into a 150 s wall clock. Daily is unchanged; its
+equivalent hole stays documented at `DEFAULT_LIMIT_INCREMENTAL`. `hourly_capacity` in the ingest
+tests parses the migration and fails if any shard outgrows its limit or any equity is in no shard,
+or two.
+
+**What CI cannot prove:** that the alignment matches TradingView. `session_test.ts` pins every edge
+(DST Mondays, early close, extended hours, bucket edges, settling) against hand-computed offsets, but
+the reference is the chart. Three MU hourly goldens, read by hand, close that — DEFINITIONS.md §6.

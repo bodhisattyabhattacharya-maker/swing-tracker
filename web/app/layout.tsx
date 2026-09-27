@@ -1089,9 +1089,6 @@ const CSS = `
   .g-mark.st-above { background: var(--above); }
   .g-val { text-align: right; }
   .g-norm { font-size: 9.5px; color: var(--ink-faint); text-align: right; }
-  /* A gauge whose param is not built keeps its band and loses its marker: the rule is set, the
-     number is not computed. The track is dimmed so it does not read as a value of zero. */
-  .dd-gauge.st-planned .g-track { opacity: .45; }
 
   /* ---- Relative-strength bars ----------------------------------------
      THE FILL IS NEUTRAL IN BOTH DIRECTIONS, and that is a hard constraint
@@ -1151,7 +1148,7 @@ const CSS = `
      because a strip row is a div and none of the grid's selectors reach it. */
   .dd-sec .st-warmup { color: var(--ink); background-image: repeating-linear-gradient(
     -45deg, transparent 0 3px, var(--rule-soft) 3px 5px); }
-  .dd-sec .st-null, .dd-sec .st-planned, .dd-sec .st-no-norm { color: var(--ink-faint); }
+  .dd-sec .st-null, .dd-sec .st-no-norm { color: var(--ink-faint); }
   /* THERE IS NO .dd-sec .st-na RULE, deliberately, and that absence is checked. A section whose
      every param is inapplicable collapses to one sentence (see sectionRender), so no strip element
      can carry .st-na - a rule for it would be dead CSS, which is the 2026-09-18 defect inverted.

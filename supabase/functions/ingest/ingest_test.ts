@@ -24,8 +24,28 @@ const assertEquals = (a: unknown, b: unknown, msg?: string) => assert.deepEqual(
 const assertThrows = (fn: () => unknown, includes: string) =>
   assert.throws(fn, (err: unknown) => err instanceof Error && err.message.includes(includes));
 
-import { isScope, planLimit, RateLimitError, SCOPES, universeFor } from "./provider.ts";
-import { aggsUrl, aggTradingDate, mapAggs, polygon, POLYGON_SOURCE } from "./polygon.ts";
+import {
+  autoFullCap,
+  HOURLY_LIMIT_FULL,
+  HOURLY_LIMIT_INCREMENTAL,
+  inShard,
+  isScope,
+  parseShard,
+  planLimit,
+  RateLimitError,
+  SCOPES,
+  universeFor,
+} from "./provider.ts";
+import {
+  aggsUrl,
+  aggTradingDate,
+  mapAggs,
+  mapMinutes,
+  minuteAggsUrl,
+  polygon,
+  POLYGON_SOURCE,
+  toHourlyRows,
+} from "./polygon.ts";
 import { fred, FRED_SOURCE, mapObservations, observationsUrl, SERIES } from "./fred.ts";
 import {
   DEFAULT_ATTEMPTS,
@@ -224,9 +244,58 @@ Deno.test("an index with no FRED series is claimed by nobody, so sync fails loud
   assertEquals(polygon.supports("^SOX"), false);
 });
 
-Deno.test("neither provider serves hourly yet, and says so with null not []", async () => {
-  assertEquals(await polygon.hourly("MU", "full"), null);
+Deno.test("FRED serves no hourly, and says so with null not []", async () => {
+  // Polygon serves hourly since decision 0058, through the network, so it is exercised below through
+  // its pure parts rather than here. FRED still publishes a daily close only.
   assertEquals(await fred.hourly("^VIX", "full"), null);
+});
+
+// ---------------------------------------------------------------------------
+// Polygon hourly: one-minute aggregates in, session-aligned rows out. The bucketing itself is
+// pinned in session_test.ts; these pin the request and the row shape around it.
+// ---------------------------------------------------------------------------
+
+Deno.test("the minute URL asks for 1-minute bars, adjusted, ascending, at the page maximum", () => {
+  const u = new URL(minuteAggsUrl("MU", "incremental", FIXED_NOW));
+  assert(u.pathname.includes("/range/1/minute/"), u.pathname);
+  assertEquals(u.searchParams.get("adjusted"), "true");
+  assertEquals(u.searchParams.get("sort"), "asc");
+  // Below 50,000 a full fetch needs more pages than it has to, and MAX_PAGES would bite sooner.
+  assertEquals(u.searchParams.get("limit"), "50000");
+});
+
+Deno.test("an hourly full fetch reaches further back than an incremental one", () => {
+  const from = (r: "full" | "incremental") => minuteAggsUrl("MU", r, FIXED_NOW).split("/minute/")[1].split("/")[0];
+  assert(from("full") < from("incremental"), `${from("full")} vs ${from("incremental")}`);
+  // 90 calendar days is ~62 sessions, ~434 hours: RSI's 125-bar seed floor clears three times.
+  assertEquals(from("full"), "2026-06-15");
+});
+
+Deno.test("mapMinutes: an error body costs the symbol, an empty one is zero minutes", () => {
+  assertThrows(() => mapMinutes({ status: "ERROR", error: "bad key" }, "MU"), "bad key");
+  assertThrows(() => mapMinutes({ status: "NOT_AUTHORIZED" }, "MU"), "NOT_AUTHORIZED");
+  assertEquals(mapMinutes({ status: "OK", resultsCount: 0 }, "MU"), []);
+});
+
+Deno.test("toHourlyRows: ts is the bucket START in UTC, and the row carries the session facts", () => {
+  // 2026-09-25 is EDT (UTC-4): the 09:30 open is 13:30Z. Two minutes, one in each of the first two
+  // buckets, plus one in the 15:30 bucket so a closing row exists.
+  const at = (hh: number, mm: number) => Date.parse("2026-09-25T00:00:00Z") + ((hh + 4) * 60 + mm) * 60_000;
+  const rows = toHourlyRows("MU", [
+    { t: at(9, 30), o: 1, h: 2, l: 0.5, c: 1.5, v: 10.4 },
+    { t: at(10, 45), o: 2, h: 3, l: 1.5, c: 2.5, v: 10.4 },
+    { t: at(15, 59), o: 3, h: 4, l: 2.5, c: 3.5, v: 10.4 },
+  ], Date.parse("2030-01-01T00:00:00Z"));
+  assertEquals(rows.map((r) => r.ts), [
+    "2026-09-25T13:30:00.000Z",
+    "2026-09-25T14:30:00.000Z",
+    "2026-09-25T19:30:00.000Z",
+  ]);
+  assert(rows.every((r) => r.d === "2026-09-25" && r.symbol === "MU" && r.source === POLYGON_SOURCE));
+  assertEquals(rows.map((r) => r.minutes), [1, 1, 1]);
+  assertEquals(rows.map((r) => r.closes_session), [false, false, true]);
+  // Volume is an INTEGER column; the float must not reach it.
+  assert(rows.every((r) => Number.isInteger(r.volume)), JSON.stringify(rows.map((r) => r.volume)));
 });
 
 Deno.test("pacing comes from the provider, and no provider paces at zero", () => {
@@ -666,6 +735,79 @@ Deno.test("planLimit: the routine cap covers the whole watchlist, indices includ
       `A cap below the universe does not sample it - activeSymbols orders by symbol, so it ` +
       `starves a fixed alphabetical tail every run, the same names each night.`,
   );
+});
+
+Deno.test("hourly_capacity: the scheduled shards cover every equity, each inside its limit", async () => {
+  // The hourly twin of the check above, and it reads the MIGRATION rather than a number typed
+  // here: the schedule lives in SQL, and a test that restated it would agree with itself forever.
+  // Every `scope=hourly` cron URL is found, its shard parsed, and the watchlist's equities dealt
+  // out exactly as index.ts deals them - inShard over the list in symbol order.
+  const dir = new URL("../../migrations/", import.meta.url);
+  const files: string[] = [];
+  for await (const e of Deno.readDir(dir)) if (e.name.endsWith(".sql")) files.push(e.name);
+  files.sort();
+  // The LAST migration that schedules hourly jobs is the one in force.
+  let sql = "";
+  for (const f of files) {
+    const text = await Deno.readTextFile(new URL(f, dir));
+    if (text.includes("scope=hourly")) sql = text;
+  }
+  assert(sql !== "", "no migration schedules scope=hourly - the hourly column would never update");
+  const shards = [...sql.matchAll(/scope=hourly[^'\s]*/g)].map((m) => {
+    const q = new URLSearchParams(m[0]);
+    assertEquals(q.get("limit"), null, `a scheduled hourly URL sets limit=; the default is what this test assumes: ${m[0]}`);
+    assertEquals(q.get("offset"), null, `a scheduled hourly URL uses offset=, which is unsafe on a timer - see parseShard: ${m[0]}`);
+    return parseShard(q.get("shard"));
+  });
+  assert(shards.length > 0);
+
+  const yml = await Deno.readTextFile(new URL("../../../config/watchlist.yml", import.meta.url));
+  // Equities only - hourly's universe excludes the index series (universeFor). Sorted, because
+  // activeSymbols orders by symbol and inShard deals by position.
+  const equities = parseWatchlist(yml).filter((r) => !r.symbol.startsWith("^")).map((r) => r.symbol).sort();
+  const seen = new Map<string, number>();
+  for (const sh of shards) {
+    const mine = inShard(equities, sh);
+    assert(
+      mine.length <= HOURLY_LIMIT_INCREMENTAL,
+      `shard ${sh ? `${sh.k}/${sh.n}` : "(none)"} holds ${mine.length} equities but one run fetches at most ` +
+        `${HOURLY_LIMIT_INCREMENTAL}. Add a shard to the schedule, or raise HOURLY_LIMIT_INCREMENTAL once ` +
+        `ingest_runs durations say it is safe. Over the limit does not sample - it drops the same tail nightly.`,
+    );
+    for (const s of mine) seen.set(s, (seen.get(s) ?? 0) + 1);
+  }
+  const missed = equities.filter((s) => !seen.has(s));
+  const twice = [...seen].filter(([, n]) => n > 1).map(([s]) => s);
+  assertEquals(missed, [], "equities no scheduled hourly job fetches");
+  assertEquals(twice, [], "equities fetched by more than one scheduled hourly job");
+});
+
+Deno.test("parseShard: k/n or nothing, and a typo is an error rather than 'everything'", () => {
+  assertEquals(parseShard(null), null);
+  assertEquals(parseShard(""), null);
+  assertEquals(parseShard("1/2"), { k: 1, n: 2 });
+  assertThrows(() => parseShard("2/2"), "0 <= k < n");
+  assertThrows(() => parseShard("0/0"), "0 <= k < n");
+  assertThrows(() => parseShard("half"), "expected k/n");
+});
+
+Deno.test("inShard: every item lands in exactly one shard, whatever n is", () => {
+  const items = Array.from({ length: 53 }, (_, i) => `S${String(i).padStart(2, "0")}`);
+  for (const n of [1, 2, 3, 7]) {
+    const all = Array.from({ length: n }, (_, k) => inShard(items, { k, n })).flat().sort();
+    assertEquals(all, items, `n=${n}`);
+  }
+  assertEquals(inShard(items, null), items);
+});
+
+Deno.test("autoFullCap: only an unforced hourly run is capped, and at the full limit", () => {
+  // The first scheduled night has every equity at zero hourly bars. Uncapped, 30 two-page fetches
+  // would be planned into a 150 s wall clock.
+  assertEquals(autoFullCap("hourly", false), HOURLY_LIMIT_FULL);
+  assertEquals(autoFullCap("hourly", true), Number.POSITIVE_INFINITY); // `limit` governs there
+  assertEquals(autoFullCap("daily", false), Number.POSITIVE_INFINITY); // unchanged by this PR
+  assert(HOURLY_LIMIT_FULL < HOURLY_LIMIT_INCREMENTAL);
+  assertEquals(planLimit(true, null, "hourly"), HOURLY_LIMIT_FULL);
 });
 
 Deno.test("planLimit: an explicit limit always wins, and junk falls back", () => {

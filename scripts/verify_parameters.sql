@@ -205,6 +205,21 @@ counts as (
       where low is not null and close < low)                                              as bad_close_low,
     (select count(*) from public.daily_bars where close <= 0)                             as bad_close,
     (select count(*) from public.daily_bars where d > current_date)                        as future_bars,
+    -- Session-aligned hourly bars (decision 0058). The bucketing lives in session.ts and is unit
+    -- tested there; these check what actually got STORED, which is the thing a vendor quirk or a
+    -- timezone slip would corrupt without failing any test.
+    (select count(*) from public.hourly_session_bars
+      where (ts at time zone 'America/New_York')::time not in
+              (time '09:30', time '10:30', time '11:30', time '12:30',
+               time '13:30', time '14:30', time '15:30')
+         or (ts at time zone 'America/New_York')::date <> d)                              as hourly_off_grid,
+    (select count(*) from public.hourly_session_bars
+      where closes_session
+        and (ts at time zone 'America/New_York')::time not in (time '15:30', time '12:30')) as hourly_bad_close,
+    (select count(*) from (
+       select 1 from public.hourly_session_bars group by symbol, d having count(*) > 7) x) as hourly_overfull,
+    (select count(*) from public.hourly_features
+      where rsi_hourly is not null and (rsi_hourly < 0 or rsi_hourly > 100))              as hourly_rsi_out_of_range,
     -- Range and sign checks on the derived columns.
     (select count(*) from public.daily_features
       where rsi_daily is not null and (rsi_daily < 0 or rsi_daily > 100))                 as rsi_out_of_range,
@@ -480,6 +495,30 @@ invariant_rows as (
     select 'info', 'norms with no parameter built yet',
            'PASS', '(informational)', norms_without_parameter::text,
            'counts all three cell views; 6 on 2026-09-17, should FALL as layers land, and a RISE means a typo or rename' from counts
+    union all
+    select 'hourly', 'every hourly bar starts on the 09:30 session grid, on its own ET date',
+           case when hourly_off_grid = 0 then 'PASS' else 'FAIL' end,
+           '0', hourly_off_grid::text,
+           'non-zero: a bar at 09:00 or 16:00 means clock-aligned or extended-hours data got in - session.ts or a timezone slip'
+      from counts
+    union all
+    select 'hourly', 'every closing bar starts at 15:30, or 12:30 on a half day',
+           case when hourly_bad_close = 0 then 'PASS' else 'FAIL' end,
+           '0', hourly_bad_close::text,
+           'the grid reads the day''s hourly RSI from this bar; anywhere else is the wrong hour of the day'
+      from counts
+    union all
+    select 'hourly', 'no session has more than seven hourly bars',
+           case when hourly_overfull = 0 then 'PASS' else 'FAIL' end,
+           '0', hourly_overfull::text,
+           'eight or more means two alignments are mixed in one day'
+      from counts
+    union all
+    select 'hourly', 'hourly RSI stays within 0..100',
+           case when hourly_rsi_out_of_range = 0 then 'PASS' else 'FAIL' end,
+           '0', hourly_rsi_out_of_range::text,
+           'same function as daily; out of range here means the inputs, not the formula'
+      from counts
     union all
     select 'coverage', 'no symbol went from current yesterday to missing today',
            case when symbols_regressed = 0 then 'PASS' else 'FAIL' end,

@@ -105,17 +105,18 @@ FEATURES wins — this one is a summary and summaries rot.*
 | | |
 |---|---|
 | Securities | **53** — 43 companies and 10 ETFs, in **9** themes; plus 3 index series that are never rows |
-| Column catalogue | **51** — **22 live**, 29 planned, in **10 category bands** (0053). 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
+| Column catalogue | **51** — **23 live**, 28 planned, in **10 category bands** (0053). 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
 | Norms | **15**, in `config/norms.yml`, synced to the database and compared there |
 | Bars held | **63,579** daily equity bars over 5 years (2021-10-11 →), **8,063** index rows over 11 years — FRED goes back further than the equity plan |
-| Matviews | **4**: `daily_features`, `weekly_features`, `daily_signals`, `market_history` |
-| Scheduled jobs | **4** pg_cron, UTC |
+| Matviews | **5**: `daily_features`, `weekly_features`, `daily_signals`, `market_history`, `hourly_features` |
+| Scheduled jobs | **6** pg_cron, UTC |
 | Pages | `/` (Dashboard), `/deep-dive`, `/status` |
 | On-demand routes | **2**: `/api/cell-history`, `/api/stock-history` |
 
-**Running on its own**, four pg_cron jobs, UTC: ingest 22:30 → refresh 22:45 → digest 23:00 on
-weekdays (decisions 0022, 0028), plus an index-only catch-up at 11:00 **every day** because FRED
-publishes later than the evening run (0033). The refresh rebuilds **all four** matviews; any new
+**Running on its own**, six pg_cron jobs, UTC: hourly ingest in two shards 21:40 and 22:00 →
+daily ingest 22:30 → refresh 22:45 → digest 23:00 on weekdays (decisions 0022, 0028, 0058), plus an
+index-only catch-up at 11:00 **every day** because FRED publishes later than the evening run (0033).
+The refresh rebuilds **all five** matviews; any new
 matview must be added to that job in the migration that creates it — this project has shipped that
 omission three times. There is no user-led refresh by design, so the schedule is the only path.
 
@@ -126,7 +127,9 @@ omission three times. There is no user-led refresh by design, so the schedule is
 `public.recursive_indicators` (0030); norms, flags and `grid_cells` across both timeframes with
 weekly joined by date arithmetic that cannot see the future (0032); `rs_cells` (relative strength
 at 63/126/252 **bars**), `signal_cells` (MA stack, both crosses with bars since, both slopes),
-`market_context` and its matview `market_history`; pipeline-based staleness (0026), measured against the SCHEDULE rather than a stopwatch since 0056 - the flat 30-hour count was true for a quarter of every week because the ingest does not run at weekends - and
+`market_context` and its matview `market_history`; **session-aligned hourly bars** built from
+one-minute aggregates by `session.ts` into `hourly_session_bars`, with hourly RSI in
+`hourly_features` through the same `recursive_indicators` (0058); pipeline-based staleness (0026), measured against the SCHEDULE rather than a stopwatch since 0056 - the flat 30-hour count was true for a quarter of every week because the ingest does not run at weekends - and
 per-symbol coverage (`symbols_priced` / `symbols_behind`, 0045).
 
 **Interface.** The **Dashboard** at `/` — 53 names banded by theme, a two-tier sticky header, four
@@ -184,9 +187,10 @@ strip's colour map; `check_stat_tracks.sh` (0057) requires every Price-statistic
 - **Forward Look** — the other **6** of the Value preset's 26. No vendor tier sells analyst
   consensus, so these arrive as **searched** values carrying their own source and as-of date.
   Permanent, not queued.
-- **Session-aligned hourly bars**, and the hourly RSI gauge that waits on them. 13,936 exploratory
-  hourly rows exist for 4 symbols from a 2024 experiment; nothing reads them and they are not
-  session-aligned. Do not mistake them for the feature.
+- **Hourly: three MU goldens against TradingView** (DEFINITIONS.md §6), and the per-run limits,
+  which are guesses until the first `ingest_runs` durations exist (CONSTRAINTS.md 2026-09-27). The
+  old `hourly_bars` table — 13,936 clock-aligned rows from a 2024 experiment — is superseded and
+  unread; do not mistake it for the feature, which is `hourly_session_bars`.
 - **Scale-out to ~200 tickers.** Rebuild the ingest around grouped-daily flat files *before*
   adding names: at 200 the per-symbol loop is what breaks, on any vendor.
 - **Phase 2** (rule engine, alerts, backtesting) is specified, not started.
