@@ -111,8 +111,11 @@ export class RateLimitError extends Error {
 // leaks it. Two: this file already owns `minIntervalMs`, so "how fast may we go" and "how much may
 // one run do" end up in the same place instead of two.
 //
-// The numbers come from the edge function's 150 s wall clock, NOT from a rate limit - Stocks
-// Starter publishes unlimited calls (2026-09-13). See the header of index.ts.
+// The daily numbers come from the edge function's 150 s wall clock, NOT from a rate limit - Stocks
+// Starter publishes unlimited calls (2026-09-13). See the header of index.ts. The edge runtime ALSO
+// caps each request at 2 s of CPU, and for hourly that is the tighter of the two (measured
+// 2026-09-27, see HOURLY LIMITS below). Daily has not hit it, including the 17-symbol full backfill of
+// 2026-09-17 - its payloads are ~1,250 day bars, not ~60,000 minutes, and there is no bucketing.
 // ---------------------------------------------------------------------------
 
 /**
@@ -174,21 +177,27 @@ export function planLimit(
 }
 
 /**
- * HOURLY LIMITS, AND THEY ARE GUESSES - said plainly, because the daily ones above are not.
+ * HOURLY LIMITS. The binding constraint is CPU TIME, not the wall clock - measured, and it is not
+ * what this comment said when it shipped.
  *
- * The daily numbers came from two measured runs. These could not: the sandbox this was written in
- * cannot reach the vendor, and the first hourly run in production is the first measurement there
- * will ever be. What is known: a daily top-up is ~25 rows at 0.8 s a symbol; an hourly top-up is
- * one-minute bars for seven days, up to ~4,800 rows; an hourly full fetch is two pages of ~57,600.
- * Bucketing is measured and negligible (105 ms a symbol on the worst case, session.ts).
+ * The first version reasoned from the 150 s wall clock and guessed 4 s a top-up, 10 s a full fetch.
+ * The backfill of 2026-09-27 measured something else (ingest_runs 51-57, function logs):
+ *   - a 90-day full fetch costs ~0.6 s of WALL time a symbol (six in 4.0 s, ten in 4.9 s, five in 4.5 s);
+ *   - and ~0.12 s of CPU, against the edge runtime's 2 s CPU budget per request. `limit=47` was
+ *     killed with "CPU Time exceeded" (HTTP 546, WORKER_RESOURCE_LIMIT) after 17 symbols, ten
+ *     seconds in - nowhere near 150.
+ *   - Three requests sent together (one SQL paste, so pg_net fires them at once) died after 7 and 8
+ *     symbols while the third, of 10, finished. They appear to have SHARED one budget. Inferred from
+ *     the timing, not documented - treat concurrent calls as one.
+ * Where the CPU goes is not profiled; JSON-parsing ~60,000 minutes and bucketing them is the likely
+ * bulk (bucketing alone measured 105 ms a symbol here, session.ts).
  *
- * So these are pessimistic on purpose. At an assumed 4 s a top-up, 30 is 120 s - inside 150 with
- * little to spare, which is why the schedule splits the equities into TWO SHARDS (`?shard=0/2`,
- * `?shard=1/2`) of about 27 each rather than asking one job for all 53. At an assumed 10 s a full
- * fetch, 6 is 60 s.
+ * So: HOURLY_LIMIT_FULL = 6 is ~0.7 s of CPU - right, for the CPU reason. The incremental fetch is 7
+ * days, about a ninth of a full one, so 30 top-ups is an estimated ~0.4 s. That is still an ESTIMATE:
+ * the first scheduled run (Monday 2026-09-28, triggered_by = 'cron-hourly') is the measurement. The
+ * two shards stay: one job of 53 top-ups would be ~0.7 s and would probably fit, but nothing has
+ * measured a top-up yet.
  *
- * WHAT TO DO AFTER THE FIRST RUN: read `finished_at - started_at` for the `hourly` rows in
- * `ingest_runs`. If one shard finishes with room to spare, these can rise and the second job can go.
  * `hourly_capacity` in ingest_test.ts pins shards x limit against the watchlist either way.
  */
 export const HOURLY_LIMIT_INCREMENTAL = 30;
@@ -200,8 +209,9 @@ export const HOURLY_LIMIT_FULL = 6;
  *
  * WHY HOURLY NEEDS THIS AND DAILY HAS LIVED WITHOUT IT. The night this ships, every equity has zero
  * hourly bars, so every one of them plans "full" - and the incremental limit of 30 would then admit
- * 30 full fetches, five times what HOURLY_LIMIT_FULL judges safe. The run would die at the 150 s
- * wall clock and, dying, lose its whole error record (the first live attempt's bare "504"). The same
+ * 30 full fetches, five times what HOURLY_LIMIT_FULL judges safe. It was written to protect the
+ * wall clock; the backfill showed it protects the 2 s CPU budget, which 30 full fetches (~3.6 s)
+ * would blow by half again. A run killed either way loses its whole error record. The same
  * hole exists on the daily path and is written up at DEFAULT_LIMIT_INCREMENTAL; it is not closed
  * here because nothing daily changed in this PR and its limits are measured, not guessed.
  *

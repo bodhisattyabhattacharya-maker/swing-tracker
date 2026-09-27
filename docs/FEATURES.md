@@ -1392,3 +1392,23 @@ a browser against a preview fixture.
 **Not verified, and cannot be from here:** the vendor call itself, the per-run limits (guesses until
 the first `ingest_runs` durations exist), and agreement with TradingView (three MU goldens,
 DEFINITIONS.md §6, awaiting a hand reading).
+
+## 2026-09-27 — Hourly goldens confirmed; the real hourly limit is CPU
+
+**What:** the three MU hourly RSI goldens were read off TradingView and all agree with production
+within 0.2 RSI points (61.62 / 61.72 / 61.87 against 61.55 / 61.77 / 61.68). Same bars — the 15:30
+bar's high is identical and the other prices differ by cents — so the session alignment is
+confirmed; the residual is a different data feed. They are now `golden (hourly)` checks in
+`scripts/verify_parameters.sql` at a tolerance of 0.3, documented in DEFINITIONS.md §6. No
+closing-auction adjustment: TradingView's closing bar does not carry the auction print either.
+
+**Backfill done:** 53 equities × 441 hourly bars (2026-06-29 → 2026-09-25), `hourly_features` built,
+every production invariant passes.
+
+**Corrected:** the hourly per-run limits were reasoned from the 150 s wall clock. The backfill showed
+the ceiling is the edge runtime's **2 s CPU budget** — a 47-symbol call died at 17. Comments in
+`provider.ts` and the CONSTRAINTS row now say so, with the numbers. The limits themselves were
+already inside it and are unchanged.
+
+**Verified by:** `scripts/ci/run.sh` green (10 goldens MISSING in CI by design, was 7); `deno test`
+98 pass; the golden query run against production: 3 PASS.

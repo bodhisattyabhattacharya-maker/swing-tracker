@@ -187,8 +187,8 @@ strip's colour map; `check_stat_tracks.sh` (0057) requires every Price-statistic
 - **Forward Look** — the other **6** of the Value preset's 26. No vendor tier sells analyst
   consensus, so these arrive as **searched** values carrying their own source and as-of date.
   Permanent, not queued.
-- **Hourly: three MU goldens against TradingView** (DEFINITIONS.md §6), and the per-run limits,
-  which are guesses until the first `ingest_runs` durations exist (CONSTRAINTS.md 2026-09-27). The
+- **Hourly: the 7-day top-up is unmeasured** until the first scheduled `cron-hourly` runs; the
+  real ceiling is the edge runtime's 2 s CPU budget, not the wall clock (CONSTRAINTS.md 2026-09-27). The
   old `hourly_bars` table — 13,936 clock-aligned rows from a 2024 experiment — is superseded and
   unread; do not mistake it for the feature, which is `hourly_session_bars`.
 - **Scale-out to ~200 tickers.** Rebuild the ingest around grouped-daily flat files *before*
