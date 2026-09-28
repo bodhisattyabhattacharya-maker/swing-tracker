@@ -305,3 +305,28 @@ export async function secJson(url: string, ua: string, label: string): Promise<u
   if (!r.ok) throw new Error(`${label}: HTTP ${r.status} from SEC`);
   return await r.json();
 }
+
+// ---------------------------------------------------------------------------
+// submissions -> the SEC industry code (Stage F2, decision 0060)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure: the Standard Industrial Classification code SEC files the company under, from the same
+ * submissions document the ingest already reads. SEC sends it as a string ("6021"); an empty or
+ * non-numeric one is null, never 0 - 0 is not an industry.
+ */
+export function parseSic(json: unknown): number | null {
+  const raw = (json as { sic?: unknown })?.sic;
+  const s = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
+  return /^\d{3,4}$/.test(s) ? Number(s) : null;
+}
+
+/**
+ * Banks, for the fundamentals that do not apply to one (DEFINITIONS §7, decision 2 of 2026-09-28):
+ * SIC 6000-6199 is depository institutions and credit agencies - national and state commercial
+ * banks (6021, 6022), savings institutions, credit unions, federal credit agencies. Broker-dealers
+ * (6211) and insurers (63xx) are outside it on purpose: they have debt that means what it says.
+ */
+export function isBankSic(sic: number | null): boolean {
+  return sic !== null && sic >= 6000 && sic <= 6199;
+}

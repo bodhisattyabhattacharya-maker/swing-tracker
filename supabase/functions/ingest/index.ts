@@ -88,15 +88,25 @@ import {
   universeFor,
   type Universe,
 } from "./provider.ts";
-import { polygon } from "./polygon.ts";
+import {
+  mapOverview,
+  mapSplits,
+  polygon,
+  POLYGON_MIN_INTERVAL_MS,
+  referenceJson,
+  splitsUrl,
+  tickerOverviewUrl,
+} from "./polygon.ts";
 import { fred } from "./fred.ts";
 import { fetchWatchlist } from "./watchlist.ts";
 import { fetchNorms } from "./norms.ts";
 import {
   companyFactsUrl,
   extractFacts,
+  isBankSic,
   latestPeriodic,
   mapCompanyTickers,
+  parseSic,
   SEC_FACTS_WAIT_DAYS,
   SEC_MIN_INTERVAL_MS,
   SEC_SOURCE,
@@ -471,6 +481,15 @@ interface FundamentalsResult {
   dropped: number;
   conflicts: number;
   rate_limited?: true;
+  /** Stage F2: rows from a company's second CIK (XOM's pre-2026 history), per symbol. */
+  extra_cik_rows: Record<string, number>;
+  /** Stage F2: SEC industry codes that changed this run, and the bank flag they set. */
+  sic_changed: Record<string, { sic: number | null; is_bank: boolean }>;
+  /** Stage F2: Massive reference data - share counts and splits. Its failures are its own. */
+  share_counts_written: number;
+  splits_written: number;
+  massive_errors: Record<string, string>;
+  massive_rate_limited?: true;
 }
 
 /**
@@ -499,6 +518,11 @@ async function ingestFundamentals(
     written: 0,
     dropped: 0,
     conflicts: 0,
+    extra_cik_rows: {},
+    sic_changed: {},
+    share_counts_written: 0,
+    splits_written: 0,
+    massive_errors: {},
   };
 
   // The contact line SEC requires. From a secret - this repo is public - and checked before any
@@ -526,10 +550,55 @@ async function ingestFundamentals(
 
   // CIKs we already know, and what each company's newest stored filing is.
   const filers = await retryRead("sec_filers read", async () => {
-    const { data, error } = await sb.from("sec_filers").select("symbol, cik, last_accn").in("symbol", symbols);
+    const { data, error } = await sb.from("sec_filers").select("symbol, cik, last_accn, sic").in("symbol", symbols);
     if (error) throw new Error(`sec_filers read: ${error.message}`);
-    return new Map((data ?? []).map((r) => [r.symbol as string, { cik: r.cik as number, lastAccn: r.last_accn as string | null }]));
+    return new Map((data ?? []).map((r) => [
+      r.symbol as string,
+      { cik: r.cik as number, lastAccn: r.last_accn as string | null, sic: (r.sic ?? null) as number | null | undefined },
+    ]));
   });
+
+  // Second CIKs (sec_extra_ciks): fetched once, and again on full=1. Not re-checked daily - an old
+  // CIK stops filing, which is exactly why it is extra.
+  const extras = await retryRead("sec_extra_ciks read", async () => {
+    const { data, error } = await sb.from("sec_extra_ciks").select("symbol, cik, fetched_at").in("symbol", symbols);
+    if (error) throw new Error(`sec_extra_ciks read: ${error.message}`);
+    return (data ?? []) as { symbol: string; cik: number; fetched_at: string | null }[];
+  });
+
+  // Massive reference data, paced on its own clock. Today's UTC date is the share count's as-of: the
+  // SEC jobs run at 11:20 and 11:40 UTC, before the US open, so it is the same trading day in New York.
+  const asOf = new Date().toISOString().slice(0, 10);
+  let lastMassiveAt = 0;
+  const paceMassive = async () => {
+    const since = Date.now() - lastMassiveAt;
+    if (since < POLYGON_MIN_INTERVAL_MS) await sleep(POLYGON_MIN_INTERVAL_MS - since);
+    lastMassiveAt = Date.now();
+  };
+  // Its own try, its own error map: a plan that does not cover reference data must not cost the
+  // SEC half of the run, and must still make the run not-ok so it is seen.
+  const massiveFor = async (symbol: string) => {
+    if (result.massive_rate_limited) return;
+    try {
+      await paceMassive();
+      const ov = mapOverview(await referenceJson(tickerOverviewUrl(symbol), `${symbol}/overview`), symbol, asOf);
+      if (ov) {
+        await upsertChunked(sb, "share_counts", [ov], "symbol,as_of");
+        result.share_counts_written++;
+      }
+      await paceMassive();
+      const sp = mapSplits(await referenceJson(splitsUrl(symbol), `${symbol}/splits`), symbol);
+      if (sp.rows.length) {
+        await upsertChunked(sb, "splits", sp.rows, "symbol,execution_date");
+        result.splits_written += sp.rows.length;
+      }
+      if (sp.dropped) console.log(`  ${symbol}: ${sp.dropped} split record(s) dropped as unusable`);
+    } catch (e) {
+      result.massive_errors[symbol] = e instanceof Error ? e.message : String(e);
+      console.error(`  ${symbol} massive FAILED: ${result.massive_errors[symbol]}`);
+      if (e instanceof RateLimitError) result.massive_rate_limited = true;
+    }
+  };
 
   // Unknown CIKs: one request for SEC's ticker file, only when needed.
   const unknown = symbols.filter((s) => !filers.has(s));
@@ -538,7 +607,8 @@ async function ingestFundamentals(
     const found = mapCompanyTickers(await secJson(TICKERS_URL, ua, "company_tickers"), unknown);
     const rows = Object.entries(found).map(([symbol, cik]) => ({ symbol, cik }));
     if (rows.length) await upsertChunked(sb, "sec_filers", rows, "symbol");
-    for (const { symbol, cik } of rows) filers.set(symbol, { cik, lastAccn: null });
+    // sic undefined, not null: a new filer's code is unknown, so the first submissions read writes it.
+    for (const { symbol, cik } of rows) filers.set(symbol, { cik, lastAccn: null, sic: undefined });
     for (const s of unknown) if (!(s in found)) result.errors[s] = "no SEC CIK for this ticker in company_tickers.json";
   }
 
@@ -565,9 +635,47 @@ async function ingestFundamentals(
       }
     }
 
+    await massiveFor(symbol);
+
     try {
       await pace();
-      const latest = latestPeriodic(await secJson(submissionsUrl(f.cik), ua, `${symbol}/submissions`));
+      const sub = await secJson(submissionsUrl(f.cik), ua, `${symbol}/submissions`);
+
+      // The industry code rides on the document we already fetched. Written only when it changes, so
+      // a daily run costs nothing here; is_bank follows it, set by SEC's classification, not ours.
+      const sic = parseSic(sub);
+      if (sic !== f.sic) {
+        const { error: e1 } = await sb.from("sec_filers").update({ sic }).eq("symbol", symbol);
+        if (e1) throw new Error(`sec_filers sic update: ${e1.message}`);
+        const { error: e2 } = await sb.from("tickers").update({ is_bank: isBankSic(sic) }).eq("symbol", symbol);
+        if (e2) throw new Error(`tickers is_bank update: ${e2.message}`);
+        result.sic_changed[symbol] = { sic, is_bank: isBankSic(sic) };
+        f.sic = sic;
+      }
+
+      // A second CIK, once. Counted against the same fetch limit: it is the same 2 s of CPU.
+      for (const x of extras.filter((x) => x.symbol === symbol && (forceFull || !x.fetched_at))) {
+        if (fetched >= limit) {
+          result.deferred.push(`${symbol}@${x.cik}`);
+          continue;
+        }
+        fetched++;
+        await pace();
+        const xdoc = await secJson(companyFactsUrl(x.cik), ua, `${symbol}/companyfacts@${x.cik}`);
+        const xe = extractFacts(xdoc, symbol, x.cik, whitelist);
+        await upsertChunked(sb, "sec_facts", xe.rows, "symbol,taxonomy,concept,unit,period_start,period_end,accn");
+        const { error: e3 } = await sb.from("sec_extra_ciks")
+          .update({ fetched_at: new Date().toISOString(), fact_rows: xe.rows.length })
+          .eq("symbol", symbol).eq("cik", x.cik);
+        if (e3) throw new Error(`sec_extra_ciks update: ${e3.message}`);
+        result.extra_cik_rows[symbol] = (result.extra_cik_rows[symbol] ?? 0) + xe.rows.length;
+        result.written += xe.rows.length;
+        result.dropped += xe.dropped;
+        result.conflicts += xe.conflicts;
+        console.log(`  ${symbol}: ${xe.rows.length} facts from second CIK ${x.cik}`);
+      }
+
+      const latest = latestPeriodic(sub);
       if (!latest) {
         result.errors[symbol] = "no periodic filing (10-K/10-Q/20-F/40-F) in SEC's recent window";
         continue;
@@ -751,6 +859,7 @@ Deno.serve(async (req) => {
       written += r.written;
       rateLimited ||= r.rate_limited === true;
       problems.push(...Object.keys(r.errors).map((s) => `fundamentals:${s}`));
+      problems.push(...Object.keys(r.massive_errors).map((s) => `massive:${s}`));
     }
   } catch (e) {
     // Watchlist or table-level failure: the run is not ok, and the message is the detail.

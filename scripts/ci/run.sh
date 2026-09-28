@@ -84,7 +84,13 @@ insert into public.norms (param, low, high) values
   ('term_structure', 0, null),
   -- The hourly RSI norm config/norms.yml sets, so hourly cells are JUDGED in CI rather than all
   -- falling through the `no norm` arm (decision 0058).
-  ('rsi_hourly', 30, 70)
+  ('rsi_hourly', 30, 70),
+  -- The fundamentals norms config/norms.yml sets (decision 0060), so fundamental_cells is JUDGED.
+  -- FLAT's FCF yield (14.5-16%) is above 2-8 and its net debt/EBITDA (~0.5) inside 4: two arms.
+  ('net_debt_ebitda', null, 4),
+  ('fcf_yield', 2, 8),
+  ('rev_growth_yoy', 0, null),
+  ('gross_margin_trend', 0, null)
 on conflict (param) do update set low = excluded.low, high = excluded.high;
 insert into public.flags (key, value) values ('pipeline_stale_after_hours', '30'::jsonb)
 on conflict (key) do update set value = excluded.value;
@@ -107,6 +113,10 @@ refresh materialized view public.daily_signals;
 refresh materialized view public.market_history;
 -- hourly_features reads only hourly_session_bars. Added 2026-09-27 with the hourly layer.
 refresh materialized view public.hourly_features;
+-- fundamental_quarters reads the SEC views; fundamental_daily reads it AND daily_features, so it is
+-- last. Added 2026-09-29 with Stage F2 (decision 0060).
+refresh materialized view public.fundamental_quarters;
+refresh materialized view public.fundamental_daily;
 SQL
 
 # Both scripts return one row per check, with the status in a column. CI's only job is to insist

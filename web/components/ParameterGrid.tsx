@@ -449,7 +449,13 @@ function Cell(
   // still names the state in words when the cell is opened.
   if (state === "planned") body = <span className="dash" title="Not built yet — see the column heading">—</span>;
   else if (state === "na") body = <span className="tag na" title="Does not apply to this security">n·a</span>;
-  else if (state === "null") body = <span className="dash">—</span>;
+  // A blank with a KNOWN cause says it on hover - "operating income not filed" is a fact about the
+  // company, and a bare dash would read as our data being late (decision 1 of 2026-09-28).
+  else if (state === "null") {
+    body = cell?.reason
+      ? <span className="dash" title={cell.reason} aria-label={`No value: ${cell.reason}`}>—</span>
+      : <span className="dash">—</span>;
+  }
   else if (col.render === "chip") {
     body = (
       <>

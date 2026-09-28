@@ -1301,14 +1301,23 @@ sec_rows as (
               and period_end between '2024-07-01' and '2024-12-31'),
            'FY 2024 minus H1 2024 spans six months; publishing it as Q4 would double that quarter'
     union all
-    select 'sec', 'every quarter spans 75-105 days, reported or derived',
-           case when (select count(*) from public.sec_quarters where (period_end - period_start) not between 74 and 105) = 0
+    select 'sec', 'every quarter spans 75-120 days, reported or derived',
+           case when (select count(*) from public.sec_quarters where (period_end - period_start) not between 74 and 120) = 0
                  and (select count(*) from public.sec_quarters) > 0
                 then 'PASS' else 'FAIL' end,
            '0 outside, and some rows',
-           (select count(*) filter (where (period_end - period_start) not between 74 and 105)::text || ' outside of ' || count(*)::text
+           (select count(*) filter (where (period_end - period_start) not between 74 and 120)::text || ' outside of ' || count(*)::text
               from public.sec_quarters),
-           'derived starts are prev_end + 1, so a 75-day band on the filed spans is 74 on the derived one'
+           'derived starts are prev_end + 1, so a 75-day band on the filed spans is 74 on the derived one; 120 since F2 (Costco 16 weeks)'
+    union all
+    select 'sec', 'a 16-week fourth quarter after a 36-week nine months is a quarter (Costco)',
+           case when (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue'
+                        and period_end = '2023-12-31' and derived) = 130
+                then 'PASS' else 'FAIL' end,
+           '130, derived',
+           coalesce((select val::text || case when derived then ' derived' else ' reported' end from public.sec_quarters
+                     where symbol = 'SYNTH' and item = 'revenue' and period_end = '2023-12-31'), 'none'),
+           'the F1 bands (75-105, 255-290) dropped one Costco quarter a year - backfill 2026-09-28'
     union all
     select 'sec', 'within one filing the priority-1 tag wins; across periods the tag may change',
            case when (select val from public.sec_quarters where symbol = 'SYNTH' and item = 'revenue' and period_end = '2024-06-30') = 95
@@ -1358,6 +1367,213 @@ sec_rows as (
            'offset on a timer skips work once the plan re-sorts - CONSTRAINTS 2026-09-27'
   ) t
 ),
+-- ---------------------------------------------------------------------------
+-- FUNDAMENTALS (Stage F2, decision 0060). Every expected value below is worked by hand from the
+-- fixture's stated inputs (fixture.sql, "STAGE F2 FUNDAMENTALS") and written as the arithmetic, not
+-- as a decimal, so a reader can check the working. FLAT on 2024-10-26 shows its 2024Q2 (k = 29):
+--   TTM revenue k26..k29 = 4000 + 10 x (26+27+28+29) = 5100   | TTM EPS = 4 + 0.02 x 110 = 6.2
+--   TTM operating income 0.2 x 5100 = 1020; D&A 4 x 40 = 160 -> EBITDA 1180
+--   TTM FCF 4 x (300 - 100) = 800 | market cap 50 x 110 (Massive, from 2024-09-03) = 5500
+--   EV = 5500 + debt 1000 + leases 100 - cash 500 - short-term investments 0 (never filed) = 6100
+--   invested capital 1000 + 100 + 2000 - 500 = 2600; NOPAT 1020 x (1 - 0.25) = 765
+--   a year earlier (k25): TTM revenue 4940, TTM EPS 5.88, gross 4940 - 1600 = 3340
+--   three years (k17): TTM revenue 4620, EPS 5.24; five years (k9): 4300, 4.60
+-- ---------------------------------------------------------------------------
+fund_expected(symbol, d, param, expected) as (values
+  ('FLAT', date '2024-10-26', 'pe_trailing',        50 / 6.2),
+  ('FLAT', date '2024-10-26', 'ps_ttm',             5500 / 5100.0),
+  ('FLAT', date '2024-10-26', 'ev_sales',           6100 / 5100.0),
+  ('FLAT', date '2024-10-26', 'ev_ebitda',          6100 / 1180.0),
+  ('FLAT', date '2024-10-26', 'fcf_yield',          100 * 800 / 5500.0),
+  ('FLAT', date '2024-10-26', 'pb',                 5500 / 2000.0),
+  ('FLAT', date '2024-10-26', 'roic',               100 * 765 / 2600.0),
+  ('FLAT', date '2024-10-26', 'net_debt_ebitda',    600 / 1180.0),
+  ('FLAT', date '2024-10-26', 'fcf_margin',         100 * 800 / 5100.0),
+  ('FLAT', date '2024-10-26', 'share_count_yoy',    100 * (105 / 100.0 - 1)),
+  ('FLAT', date '2024-10-26', 'rev_growth_yoy',     100 * (1290 / 1250.0 - 1)),
+  ('FLAT', date '2024-10-26', 'rev_qoq_last',       100 * (1290 / 1280.0 - 1)),
+  ('FLAT', date '2024-10-26', 'rev_cagr_3y',        100 * (power(5100 / 4620.0, 1 / 3.0) - 1)),
+  ('FLAT', date '2024-10-26', 'rev_cagr_5y',        100 * (power(5100 / 4300.0, 1 / 5.0) - 1)),
+  ('FLAT', date '2024-10-26', 'eps_growth_yoy',     100 * (6.2 / 5.88 - 1)),
+  ('FLAT', date '2024-10-26', 'eps_cagr_3y',        100 * (power(6.2 / 5.24, 1 / 3.0) - 1)),
+  ('FLAT', date '2024-10-26', 'eps_cagr_5y',        100 * (power(6.2 / 4.60, 1 / 5.0) - 1)),
+  ('FLAT', date '2024-10-26', 'gross_margin_trend', 100 * (3500 / 5100.0 - 3340 / 4940.0)),
+  -- 2024-01-05: FLAT shows 2023Q3 (k26), cover shares 100 -> cap 5000; EV 5000 + 600 = 5600.
+  ('FLAT', date '2024-01-05', 'ev_sales',           5600 / 4980.0),
+  ('FLAT', date '2024-01-05', 'fcf_yield',          100 * 800 / 5000.0),
+  ('FLAT', date '2024-01-05', 'share_count_yoy',    0.0),
+  -- BANK's revenue exists only as RevenuesNetOfInterestExpense: 4 x 400 = 1600; cap 30 x 10 = 300.
+  ('BANK', date '2024-01-05', 'ps_ttm',             300 / 1600.0),
+  -- SHORT after its 2-for-1: cap 20 x 100 = 2000 on TTM revenue 2000 and TTM FCF 400.
+  ('SHORT', date '2024-01-05', 'ps_ttm',            2000 / 2000.0),
+  ('SHORT', date '2024-01-05', 'fcf_yield',         100 * 400 / 2000.0),
+  ('SHORT', date '2024-01-05', 'share_count_yoy',   100 * (100 / 96.0 - 1))
+),
+fund_rows as (
+  select * from (
+    select 'fundamentals'::text as section,
+           e.symbol || ' ' || e.param || ' @ ' || e.d as check_name,
+           case when c.value is not null and abs(c.value - e.expected) <= 1e-9 * greatest(1, abs(e.expected))
+                then 'PASS' else 'FAIL' end as status,
+           to_char(e.expected, 'FM999999990.0000000000') as expected_v,
+           coalesce(to_char(c.value, 'FM999999990.0000000000'), '(null)') as actual_v,
+           'worked by hand from the fixture inputs - see the header of this section'::text as note
+    from fund_expected e
+    left join public.fundamental_cells c on c.symbol = e.symbol and c.d = e.d and c.param = e.param
+    union all
+    select 'fundamentals', 'a quarter reaches the grid the day AFTER it is first filed, and not before',
+           case when (select quarter_end from public.fundamental_daily where symbol = 'FLAT' and d = '2024-07-30') = '2024-03-31'
+                 and (select quarter_end from public.fundamental_daily where symbol = 'FLAT' and d = '2024-07-31') = '2024-06-30'
+                 and (select count(*) from public.fundamental_daily where symbol = 'FLAT' and quarter_end = '2024-09-30') = 0
+                then 'PASS' else 'FAIL' end,
+           '07-30 -> Q1, 07-31 -> Q2, Q3 never',
+           coalesce((select string_agg(d || '->' || coalesce(quarter_end::text, 'none'), ', ' order by d)
+                     from public.fundamental_daily where symbol = 'FLAT' and d in ('2024-07-30', '2024-07-31', '2024-10-26')), 'none'),
+           'Q2 is filed 2024-07-30, after that close; Q3 on 2024-10-30, after the last bar - hard constraint 5'
+    union all
+    select 'fundamentals', 'Massive''s all-class share count wins over the cover page from its first day',
+           case when (select shares from public.fundamental_daily where symbol = 'FLAT' and d = '2024-09-02') = 105
+                 and (select shares from public.fundamental_daily where symbol = 'FLAT' and d = '2024-09-03') = 110
+                 and (select shares_from_massive from public.fundamental_daily where symbol = 'FLAT' and d = '2024-09-03')
+                then 'PASS' else 'FAIL' end,
+           '105 on 09-02, 110 (Massive) on 09-03',
+           coalesce((select string_agg(d || '=' || shares, ', ' order by d) from public.fundamental_daily
+                     where symbol = 'FLAT' and d in ('2024-09-02', '2024-09-03')), 'none'),
+           'decision 3: dual-class companies have no single cover-page count'
+    union all
+    select 'fundamentals', 'D&A filed as two lines is summed; gross profit falls back to revenue - cost',
+           case when (select da from public.fundamental_quarters where symbol = 'FLAT' and period_end = '2024-06-30') = 40
+                 and (select gross from public.fundamental_quarters where symbol = 'FLAT' and period_end = '2024-06-30') = 1290 - 400
+                then 'PASS' else 'FAIL' end,
+           'D&A 40, gross 890',
+           coalesce((select 'D&A ' || da || ', gross ' || gross from public.fundamental_quarters
+                     where symbol = 'FLAT' and period_end = '2024-06-30'), 'none'),
+           'label probe 2026-09-28: 12 companies file Depreciation + AmortizationOfIntangibleAssets, not one tag'
+    union all
+    select 'fundamentals', 'TTM needs four CONSECUTIVE quarters - a gap is null, not a sum over five',
+           case when (select rev_ttm from public.fundamental_quarters where symbol = 'SYNTH' and period_end = '2025-03-31') is null
+                 and (select rev_ttm from public.fundamental_quarters where symbol = 'SYNTH' and period_end = '2025-12-31') = 101 + 129 + 130 + 140
+                then 'PASS' else 'FAIL' end,
+           '2025Q1 null; 2025Q4 500',
+           coalesce((select string_agg(period_end || '=' || coalesce(rev_ttm::text, 'null'), ', ' order by period_end)
+                     from public.fundamental_quarters where symbol = 'SYNTH' and period_end in ('2025-03-31', '2025-12-31')), 'none'),
+           'SYNTH has no 2024Q3/Q4 revenue; four rows back from 2025Q1 reach 2023Q4'
+    union all
+    select 'fundamentals', 'short-term investments: never filed is 0, filed and gone stale is null',
+           case when (select value from public.fundamental_cells where symbol = 'FLAT' and d = '2024-01-05' and param = 'ev_sales') is not null
+                 and (select value from public.fundamental_cells where symbol = 'SHORT' and d = '2024-01-05' and param = 'ev_sales') is null
+                 and (select value from public.fundamental_cells where symbol = 'SHORT' and d = '2024-01-05' and param = 'ps_ttm') is not null
+                then 'PASS' else 'FAIL' end,
+           'FLAT EV/Sales set; SHORT EV/Sales null, P/S set',
+           coalesce((select string_agg(symbol || ' ' || param || '=' || coalesce(value::text, 'null'), '; ' order by symbol, param)
+                     from public.fundamental_cells where d = '2024-01-05' and symbol in ('FLAT', 'SHORT') and param in ('ev_sales', 'ps_ttm')), 'none'),
+           'decision 4: an invented 0 for a lapsed item would overstate net debt for exactly the cash-rich names. Since 2026-09-29 a value older than the quarter''s own balance sheet (45 days) is null too'
+    union all
+    select 'fundamentals', 'a split converts EPS by filed date and share counts by as-of date',
+           case when (select eps_ttm from public.fundamental_quarters where symbol = 'SHORT' and period_end = '2023-09-30') = -0.25
+                 and (select string_agg(val::float8::text, ',' order by period_end) from public.sec_quarters
+                        where symbol = 'SHORT' and item = 'eps_diluted') = '-0.05,-0.05,-0.05,-0.1'
+                 and (select shares from public.fundamental_daily where symbol = 'SHORT' and d = '2024-01-05') = 100
+                then 'PASS' else 'FAIL' end,
+           'TTM EPS -0.25; quarters -0.05 x3, -0.10; shares 100',
+           coalesce((select eps_ttm::text from public.fundamental_quarters where symbol = 'SHORT' and period_end = '2023-09-30'), 'null')
+             || '; ' || coalesce((select string_agg(val::float8::text, ',' order by period_end) from public.sec_quarters
+                                   where symbol = 'SHORT' and item = 'eps_diluted'), 'none')
+             || '; ' || coalesce((select shares::text from public.fundamental_daily where symbol = 'SHORT' and d = '2024-01-05'), 'null'),
+           'prices are split-adjusted; unconverted EPS made ServiceNow''s TTM EPS -1.62 on 2026-09-29'
+    union all
+    select 'fundamentals', 'a balance line absent two years is 0 (holds none); absent less is null',
+           case when (select st_inv from public.fundamental_quarters where symbol = 'FLAT' and period_end = '2020-03-31') is null
+                 and (select st_inv from public.fundamental_quarters where symbol = 'FLAT' and period_end = '2019-12-31') = 50
+                 and (select st_inv from public.fundamental_quarters where symbol = 'FLAT' and period_end = '2024-06-30') = 0
+                then 'PASS' else 'FAIL' end,
+           '2019Q4 50; 2020Q1 null; 2024Q2 0',
+           coalesce((select string_agg(period_end || '=' || coalesce(st_inv::text, 'null'), ', ' order by period_end)
+                     from public.fundamental_quarters where symbol = 'FLAT' and period_end in ('2019-12-31', '2020-03-31', '2024-06-30')), 'none'),
+           'decision 4 as refined 2026-09-29: CAT, STX, LRCX stopped filing the line years ago because they hold none'
+    union all
+    select 'fundamentals', 'a line filed only in the 10-K carries from the fiscal-year end; one that stops at a quarter end does not',
+           case when (select debt from public.fundamental_quarters where symbol = 'SHORT' and period_end = '2023-09-30') = 200
+                 and (select debt from public.fundamental_quarters where symbol = 'BANK' and period_end = '2023-06-30') is null
+                 and (select debt from public.fundamental_quarters where symbol = 'BANK' and period_end = '2023-09-30') is null
+                 and (select debt from public.fundamental_quarters where symbol = 'BANK' and period_end = '2023-03-31') = 50
+                then 'PASS' else 'FAIL' end,
+           'SHORT 2023Q3 200; BANK 2023Q1 50, Q2 and Q3 null',
+           coalesce((select string_agg(symbol || ' ' || period_end || '=' || coalesce(debt::text, 'null'), ', ' order by symbol, period_end)
+                     from public.fundamental_quarters where (symbol = 'SHORT' and period_end = '2023-09-30')
+                        or (symbol = 'BANK' and period_end in ('2023-03-31', '2023-06-30', '2023-09-30'))), 'none'),
+           'CAT files no standard debt tag in its 10-Qs (probe 2026-09-29); NVDA and MU stopped mid-year'
+    union all
+    select 'fundamentals', 'sector ranks: 1 = highest FCF yield / gross margin, over rankable non-bank peers',
+           case when (select string_agg(symbol || ':' || coalesce(valuation_rank::text, '-') || '/' || coalesce(valuation_peers::text, '-')
+                                        || ',' || coalesce(margin_rank::text, '-') || '/' || coalesce(margin_peers::text, '-'), ' ' order by symbol)
+                      from public.fundamental_daily where d = '2024-01-05' and symbol in ('BANK', 'FLAT', 'SHORT'))
+                     = 'BANK:-/-,-/- FLAT:2/2,1/2 SHORT:1/2,2/2'
+                then 'PASS' else 'FAIL' end,
+           'BANK:-/-,-/- FLAT:2/2,1/2 SHORT:1/2,2/2',
+           coalesce((select string_agg(symbol || ':' || coalesce(valuation_rank::text, '-') || '/' || coalesce(valuation_peers::text, '-')
+                                        || ',' || coalesce(margin_rank::text, '-') || '/' || coalesce(margin_peers::text, '-'), ' ' order by symbol)
+                      from public.fundamental_daily where d = '2024-01-05' and symbol in ('BANK', 'FLAT', 'SHORT')), 'none'),
+           'SHORT yields 20% vs FLAT 16%; FLAT margin 67.9% vs 40%; BANK''s 253% must not push anyone down'
+    union all
+    select 'fundamentals', 'a null with a known cause says why',
+           case when (select reason from public.fundamental_cells where symbol = 'BANK' and d = '2024-01-05' and param = 'ev_ebitda') = 'operating income not filed'
+                 and (select reason from public.fundamental_cells where symbol = 'SHORT' and d = '2024-01-05' and param = 'pe_trailing') = 'TTM EPS at or below zero'
+                 and (select reason from public.fundamental_cells where symbol = 'SHORT' and d = '2024-01-05' and param = 'ev_sales') = 'not filed for this quarter: short-term investments'
+                 and (select count(*) from public.fundamental_cells where value is not null and reason is not null) = 0
+                then 'PASS' else 'FAIL' end,
+           'BANK EV/EBITDA, SHORT P/E and EV/Sales reasoned; no reason on a value',
+           coalesce((select string_agg(symbol || ' ' || param || ': ' || reason, '; ' order by symbol, param) from public.fundamental_cells
+                     where d = '2024-01-05' and reason is not null and symbol in ('BANK', 'SHORT') and param in ('ev_ebitda', 'pe_trailing', 'ev_sales')), 'none'),
+           'decision 1: blank with a reason, never a zero and never an unexplained blank'
+    union all
+    select 'fundamentals', 'the revenue sparkline is the last eight quarters, oldest first',
+           case when (select series from public.fundamental_cells where symbol = 'FLAT' and d = '2024-10-26' and param = 'rev_spark_8q')
+                     = array[1220, 1230, 1240, 1250, 1260, 1270, 1280, 1290]::double precision[]
+                then 'PASS' else 'FAIL' end,
+           '{1220,...,1290}',
+           coalesce((select series::text from public.fundamental_cells where symbol = 'FLAT' and d = '2024-10-26' and param = 'rev_spark_8q'), 'none'),
+           'ParameterGrid draws series left to right; newest-first would draw every trend backwards'
+    union all
+    select 'fundamentals', 'funds and indices have no fundamentals rows; every company-day has all 22 params once',
+           case when (select count(*) from public.fundamental_daily f join public.tickers t using (symbol) where t.is_fund or t.is_index) = 0
+                 and (select count(*) from public.fundamental_cells) = 22 * (select count(*) from public.fundamental_daily)
+                 and (select count(*) from (select 1 from public.fundamental_cells group by symbol, d, param having count(*) > 1) x) = 0
+                then 'PASS' else 'FAIL' end,
+           '0 fund rows; 22 per day; no duplicates',
+           (select count(*)::text || ' cells / ' || (select count(*) from public.fundamental_daily)::text || ' days' from public.fundamental_cells),
+           'the page keys cells by symbol|param; a duplicate would render whichever arrived last'
+    union all
+    select 'fundamentals', 'fundamental_cells verdicts match the SAME re-derivation - fourth copy, same rule',
+           case when (select count(*) from public.fundamental_cells c
+                      where c.verdict is distinct from (
+                        case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                             when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                             when c.norm_high is not null and c.value > c.norm_high then 'above'
+                             else 'normal' end)) = 0
+                 and (select count(distinct verdict) from public.fundamental_cells where verdict is not null) >= 2
+                then 'PASS' else 'FAIL' end,
+           '0 mismatches; at least two arms fire',
+           (select count(*)::text from public.fundamental_cells c
+             where c.verdict is distinct from (
+               case when c.value is null or c.suppressed_warmup or not c.has_norm then null
+                    when c.norm_low  is not null and c.value < c.norm_low  then 'below'
+                    when c.norm_high is not null and c.value > c.norm_high then 'above'
+                    else 'normal' end)) || ' mismatches; arms: ' ||
+             coalesce((select string_agg(distinct verdict, ',') from public.fundamental_cells), 'none'),
+           'without the fundamentals norms in run.sh every verdict is null and parity passes vacuously'
+    union all
+    select 'fundamentals', 'one day of fundamental_cells needs no band join',
+           case when pg_temp.plan_of('select * from public.fundamental_cells where d = ''2024-01-05''') not like '%Join Filter%'
+                 and pg_temp.plan_of('select count(*) from public.fundamental_daily') not like '%Join Filter%'
+                then 'PASS' else 'FAIL' end,
+           'no Join Filter',
+           case when pg_temp.plan_of('select * from public.fundamental_cells where d = ''2024-01-05''') not like '%Join Filter%'
+                 and pg_temp.plan_of('select count(*) from public.fundamental_daily') not like '%Join Filter%'
+                then 'no Join Filter' else 'Join Filter present' end,
+           'quarters and share counts are carried forward by count-groups, never by a date-range join'
+  ) t
+),
 all_rows as (
   select section, check_name, status, expected_v, actual_v, note from formula_rows
   union all
@@ -1372,6 +1588,8 @@ all_rows as (
   select section, check_name, status, expected_v, actual_v, note from hourly
   union all
   select section, check_name, status, expected_v, actual_v, note from sec_rows
+  union all
+  select section, check_name, status, expected_v, actual_v, note from fund_rows
 )
 select * from (
   select 0 as ord, * from all_rows

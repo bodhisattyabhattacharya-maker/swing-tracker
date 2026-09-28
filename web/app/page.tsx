@@ -156,9 +156,9 @@ function MarketBlock(
 
 export default async function Dashboard() {
   const {
-    status, tickers, cells, norms, market, rs, signals, rsAsOf,
+    status, tickers, cells, norms, market, rs, signals, fundamentals, rsAsOf,
     history, historyError,
-    marketError, rsError, signalsError, error,
+    marketError, rsError, signalsError, fundamentalsError, error,
   } = await fetchGrid();
 
   if (error) {
@@ -177,13 +177,14 @@ export default async function Dashboard() {
     );
   }
 
-  // ONE LOOKUP, THREE SOURCES. The views are separate because they are keyed on different dates
+  // ONE LOOKUP, FOUR SOURCES (fundamentals since Stage F2). The views are separate because they are keyed on different dates
   // and computed differently; the reader does not care, so they are merged here rather than in the
   // component. Param names are globally unique, so the merge cannot collide - and if one ever did,
   // the CI check that no norm key reaches signal_cells would be the thing that caught it.
   const byCell: Record<string, CellLike> = {};
   for (const c of cells) byCell[`${c.symbol}|${c.param}`] = c;
   for (const c of rs) byCell[`${c.symbol}|${c.param}`] = c;
+  for (const c of fundamentals) byCell[`${c.symbol}|${c.param}`] = c;
   for (const s of signals) {
     if (s.symbol && s.param) {
       byCell[`${s.symbol}|${s.param}`] = {
@@ -202,6 +203,7 @@ export default async function Dashboard() {
     bellwether: t.bellwether,
     is_fund: t.is_fund,
     rankable: t.rankable,
+    is_bank: t.is_bank,
   }));
 
   const partial = partialDay(status);
@@ -212,6 +214,7 @@ export default async function Dashboard() {
   const unavailable = [
     rsError ? "Relative strength" : null,
     signalsError ? "MA signals" : null,
+    fundamentalsError ? "Fundamentals" : null,
   ].filter((x): x is string => x !== null);
 
   return (

@@ -107,12 +107,26 @@ export interface Security {
   symbol: string;
   is_fund: boolean;
   rankable: boolean;
+  /**
+   * SEC files it as a depository institution (SIC 6000-6199), set by the fundamentals ingest.
+   * Optional so a row read before Stage F2's column existed still type-checks; absent is false.
+   */
+  is_bank?: boolean;
 }
 
 /** A fund has no income statement, so every fundamental is a question it cannot be asked. */
 const notFunds = (s: Security) => !s.is_fund;
-/** A theme marked `rankable: false` has no peer group, so a percentile within it means nothing. */
-const rankableOnly = (s: Security) => s.rankable && !s.is_fund;
+/**
+ * A bank's debt is its raw material, not its leverage, and "operating cash flow" includes its
+ * lending - so EV, EBITDA and free cash flow describe nothing real for one (decision 2 of
+ * 2026-09-28). Not applicable, which renders differently from missing.
+ */
+const notFundsOrBanks = (s: Security) => !s.is_fund && !s.is_bank;
+/**
+ * A theme marked `rankable: false` has no peer group, so a percentile within it means nothing. A
+ * bank is not ranked either: its FCF yield is not comparable with a chipmaker's.
+ */
+const rankableOnly = (s: Security) => s.rankable && !s.is_fund && !s.is_bank;
 
 // ---------------------------------------------------------------------------
 // The catalogue. One entry per metric in the specification, live or not.
@@ -204,86 +218,86 @@ export const COLUMNS: Column[] = [
   { param: "rs_vs_spx_252b", label: "vs SPX 252b", group: "relative", timeframe: "daily",
     source: "rs", status: "live", render: "number", digits: 1, signed: true, suffix: "pp" },
   { param: "valuation_rank", label: "Valuation rank", group: "relative", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "rank", digits: 0, signed: false,
+    source: "fundamentals", status: "live", render: "rank", digits: 0, signed: false,
     applies: rankableOnly,
     hint: "Where its FCF yield sits inside its own theme. Blank for a theme that is not a peer group — that is not missing data." },
   { param: "margin_rank", label: "Margin rank", group: "relative", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "rank", digits: 0, signed: false,
+    source: "fundamentals", status: "live", render: "rank", digits: 0, signed: false,
     applies: rankableOnly,
     hint: "Same, on trailing gross margin. Separates executing well from riding a good cycle." },
 
   // ---- Revenue -----------------------------------------------------------
   { param: "rev_growth_yoy", label: "Revenue YoY", group: "revenue", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds,
-    hint: "Quarterly, year over year, AS REPORTED — restated figures would destroy the point-in-time property." },
+    hint: "Quarterly, year over year. Latest filed figures, so a restatement replaces the original; each quarter appears from the day after it was first filed." },
   { param: "rev_cagr_3y", label: "Rev 3y CAGR", group: "revenue", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "rev_cagr_5y", label: "Rev 5y CAGR", group: "revenue", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "rev_qoq_last", label: "Rev QoQ last Q", group: "revenue", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "rev_spark_8q", label: "Revenue 8Q", group: "revenue", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "sparkline", digits: 0, signed: false,
+    source: "fundamentals", status: "live", render: "sparkline", digits: 0, signed: false,
     applies: notFunds,
     hint: "Eight quarters, scaled per security — the shape is the point, not the magnitude." },
 
   // ---- Profit ------------------------------------------------------------
   { param: "eps_growth_yoy", label: "EPS YoY", group: "profit", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "eps_cagr_3y", label: "EPS 3y CAGR", group: "profit", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "eps_cagr_5y", label: "EPS 5y CAGR", group: "profit", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds },
   { param: "gross_margin_trend", label: "GM trend", group: "profit", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "pp", applies: notFunds },
   { param: "eps_spark_8q", label: "EPS 8Q", group: "profit", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "sparkline", digits: 0, signed: false,
+    source: "fundamentals", status: "live", render: "sparkline", digits: 0, signed: false,
     applies: notFunds },
 
   // ---- Valuation ---------------------------------------------------------
   { param: "pe_trailing", label: "P/E trailing", group: "valuation", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 2, signed: false,
+    source: "fundamentals", status: "live", render: "number", digits: 2, signed: false,
     suffix: "×", applies: notFunds,
     hint: "GAAP, diluted, TTM. Null when TTM EPS is at or below zero — a negative P/E is not cheap, it is meaningless." },
   { param: "ps_ttm", label: "P/S TTM", group: "valuation", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 2, signed: false,
+    source: "fundamentals", status: "live", render: "number", digits: 2, signed: false,
     suffix: "×", applies: notFunds },
   { param: "ev_sales", label: "EV/Sales", group: "valuation", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 2, signed: false,
-    suffix: "×", applies: notFunds },
+    source: "fundamentals", status: "live", render: "number", digits: 2, signed: false,
+    suffix: "×", applies: notFundsOrBanks },
   { param: "ev_ebitda", label: "EV/EBITDA", group: "valuation", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 2, signed: false,
-    suffix: "×", applies: notFunds },
+    source: "fundamentals", status: "live", render: "number", digits: 2, signed: false,
+    suffix: "×", applies: notFundsOrBanks },
   { param: "fcf_yield", label: "FCF yield", group: "valuation", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
-    suffix: "%", applies: notFunds,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
+    suffix: "%", applies: notFundsOrBanks,
     hint: "(CFO − capex) over market cap. Levered numerator, levered denominator." },
   { param: "pb", label: "P/B", group: "valuation", timeframe: "none", source: "fundamentals",
-    status: "planned", render: "number", digits: 2, signed: false, suffix: "×", applies: notFunds },
+    status: "live", render: "number", digits: 2, signed: false, suffix: "×", applies: notFunds },
 
   // ---- Quality -----------------------------------------------------------
   { param: "roic", label: "ROIC", group: "quality", timeframe: "none", source: "fundamentals",
-    status: "planned", render: "number", digits: 1, signed: true, suffix: "%", applies: notFunds,
+    status: "live", render: "number", digits: 1, signed: true, suffix: "%", applies: notFundsOrBanks,
     hint: "NOPAT over debt + equity − cash. Definition-sensitive; ours is stated in DEFINITIONS §7." },
   { param: "net_debt_ebitda", label: "Net debt/EBITDA", group: "quality", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 2, signed: true,
-    suffix: "×", applies: notFunds,
+    source: "fundamentals", status: "live", render: "number", digits: 2, signed: true,
+    suffix: "×", applies: notFundsOrBanks,
     hint: "Operating leases counted as debt, here and in EV — decision 0040." },
   { param: "fcf_margin", label: "FCF margin", group: "quality", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
-    suffix: "%", applies: notFunds },
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
+    suffix: "%", applies: notFundsOrBanks },
   { param: "share_count_yoy", label: "Share count YoY", group: "quality", timeframe: "none",
-    source: "fundamentals", status: "planned", render: "number", digits: 1, signed: true,
+    source: "fundamentals", status: "live", render: "number", digits: 1, signed: true,
     suffix: "%", applies: notFunds,
-    hint: "Cover-page shares, year over year. Negative is buyback, positive is dilution." },
+    hint: "Cover-page shares, year over year, split-adjusted. Negative is buyback, positive is dilution." },
 
   // ---- Forward look ------------------------------------------------------
   // Every one of these is a SEARCHED column: no source in the data plane carries analyst
@@ -446,18 +460,22 @@ export interface CellLike {
    * Only sparkline cells carry this: the last eight quarters, oldest first, with `null` for a
    * quarter the company did not report.
    *
-   * NOTHING POPULATES IT YET. The financials ingest is Stage F, so today both sparkline columns
-   * are `planned` and their cells never reach the renderer. It is declared here rather than added
-   * later because the alternative is a component with no caller, and `scripts/ci/check_render_kinds.sh`
-   * records which render kinds are reachable so this cannot be quietly forgotten.
+   * Populated since Stage F2 from `fundamental_cells.series` (revenue and diluted EPS, EPS in
+   * today's split basis). `scripts/ci/check_render_kinds.sh` records which render kinds are reachable.
    */
   series?: (number | null)[] | null;
   /**
    * Only rank cells carry this: how many securities were in the peer group the rank was taken
-   * over. Same Stage F caveat as `series` — it comes from the `count(*) over (partition by theme)`
-   * beside the `percent_rank()`, so the rank and its denominator cannot disagree.
+   * over. It comes from the `count(*)` window beside the `rank()` in `fundamental_daily`, so the
+   * rank and its denominator cannot disagree.
    */
   peers?: number | null;
+  /**
+   * Why a value is blank when the reason is known and is not simply "not filed yet" - "operating
+   * income not filed", "TTM EPS at or below zero". Fundamentals only; shown as the cell's hover
+   * text. Never set on a cell that has a value.
+   */
+  reason?: string | null;
 }
 
 export function cellState(col: Column, sec: Security, cell: CellLike | undefined): CellState {

@@ -1149,12 +1149,11 @@ const CSS = `
   .dd-sec .st-warmup { color: var(--ink); background-image: repeating-linear-gradient(
     -45deg, transparent 0 3px, var(--rule-soft) 3px 5px); }
   .dd-sec .st-null, .dd-sec .st-no-norm { color: var(--ink-faint); }
-  /* THERE IS NO .dd-sec .st-na RULE, deliberately, and that absence is checked. A section whose
-     every param is inapplicable collapses to one sentence (see sectionRender), so no strip element
-     can carry .st-na - a rule for it would be dead CSS, which is the 2026-09-18 defect inverted.
-     check_strip_sections.sh fails BOTH ways: a reachable state with no rule, and a rule for a state
-     that cannot occur. When Phase 4 makes the fundamentals live, that check is what will tell us
-     whether this needs to come back. */
+  /* Not applicable, in the strip since Stage F2 - check_strip_sections.sh asked for it, as this
+     comment said it would. A fund's Fundamentals panel still collapses to one sentence; a BANK's
+     is mixed (P/E applies to JPM, EV/EBITDA does not), so its inapplicable rows carry .st-na and
+     the grid's own n-a tag. Faint, like a blank: we are declining the question, not answering it. */
+  .dd-sec .st-na { color: var(--ink-faint); }
   /* No norm: tracked, not judged. Outlined rather than tinted - we have no opinion, and the dotted
      underline says so without borrowing a verdict colour. */
   .dd-row.st-no-norm dd { text-decoration: underline; text-decoration-style: dotted;

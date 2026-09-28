@@ -791,16 +791,21 @@ function Bars(
 function Payload(
   { col, cell, state }: { col: Column; cell: CellLike | undefined; state: CellState },
 ) {
-  // NO `na` BRANCH, and that is checked rather than assumed. A section whose every param is
-  // inapplicable collapses to a single sentence before reaching here (sectionRender), and every
-  // param carrying an `applies` predicate today lives in one of those two sections - so no strip
-  // cell can be in that state. check_strip_sections.sh enumerates the states the strip can produce
-  // and fails if one has no rule; the day a section mixes applicable params with inapplicable ones,
-  // it will ask for this branch and its CSS back, together.
+  // AN `na` BRANCH SINCE STAGE F2, as check_strip_sections.sh said it would ask. A section whose
+  // every param is inapplicable still collapses to a sentence (sectionRender) - a fund's
+  // Fundamentals panel. But a BANK's panel is mixed: revenue growth and P/E apply to JPM, EV/EBITDA,
+  // FCF yield, ROIC and net debt/EBITDA do not (decision 2 of 2026-09-28). Those rows render the
+  // grid's own n·a mark - `.tag.na` is global CSS, so the two views cannot drift apart.
+  if (state === "na") return <span className="tag na" title="Does not apply to this security">n·a</span>;
   if (state === "planned") {
     return <span className="dash" title="Designed and not built — see the note under the heading">—</span>;
   }
-  if (state === "null") return <span className="dash">—</span>;
+  if (state === "null") {
+    // Same hover as the grid: a blank with a known cause says it.
+    return cell?.reason
+      ? <span className="dash" title={cell.reason} aria-label={`No value: ${cell.reason}`}>—</span>
+      : <span className="dash">—</span>;
+  }
   if (col.render === "chip") {
     return (
       <>

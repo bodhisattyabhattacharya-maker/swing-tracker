@@ -2074,3 +2074,68 @@ Per-share differences are flagged `approximate` (share counts differ between the
 
 **Not decided here:** the fundamental parameters themselves (Stage F2), the as-of function a backtest
 needs (the views are the current view), and the analyst vendor.
+
+## 0060 — 2026-09-29 — The 22 fundamentals: computed in SQL from SEC facts, split-adjusted, and blank with a reason rather than guessed
+
+**Context:** Stage F1 (decision 0059) stored 105,482 SEC facts for 43 companies. Stage F2 turns them
+into the 22 fundamentals columns, and folds in the F1.1 fixes the backfill found (Project docs
+`swing-tracker-sec-backfill-coverage-2026-09-28.md`, `swing-tracker-f2-decisions-2026-09-28.md`).
+Definitions and the four 2026-09-28 decisions are in DEFINITIONS §7 "How Stage F2 computes them".
+
+**Built as two matviews and a view.** `fundamental_quarters` (one row per company per fiscal quarter:
+TTM sums, the quarter's own balance sheet, the quarter-level parameters) → `fundamental_daily` (one
+row per company per price day: the newest quarter first filed before it, the newest share count, the
+price-dependent parameters and the two ranks) → `fundamental_cells` (the grid's cell shape plus
+`series`, `peers`, `reason`). Both matviews are refreshed by `swing-refresh-features` after
+`daily_features`. Carry-forward is by count-groups over a timeline, never a date-range join — the
+2026-09-15 outage class, and the shape check covers it.
+
+**Measured on production before building on it (read-only, 2026-09-29), and each changed the design:**
+- **`sec_quarters` took 18.7 s.** The F1 `NOT EXISTS` became a nested-loop anti join comparing 134
+  million pairs (the planner estimated one row per CTE). Rewritten as `DISTINCT ON`: 0.9 s, and it now
+  guarantees one row per quarter end, which the TTM sums rely on.
+- **Tags lapse.** NVDA's `MarketableSecuritiesCurrent` stops after 2025-10; MU's `LongTermDebt` after
+  2025-11; GE's cash tag after 2017. Carrying the last value forward would have put a nine-month-old
+  $49B into NVDA's EV without a word. So cash, short-term investments, debt and equity must come from
+  **the quarter's own balance sheet** (≤ 45 days), and a gap is blank with a reason naming the line.
+  **Except a line filed only annually**: CAT's 10-Qs carry no standard debt tag at all (its 10-K
+  does), so a value dated at a fiscal-year end may carry up to 400 days. The distinction is where
+  the last value sits — a fiscal-year end (annual habit) or a quarter end (a lapse). GE's cash is
+  `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` since 2017, now a priority-2 cash
+  tag (it includes restricted cash; used only when the plain tag is absent).
+- **Old lapses are not tag changes.** CAT's short-term investments last appear in 2014, STX's in 2012,
+  LRCX's in 2015 — they hold none. Under "zero only if never filed" eight names lost every EV value.
+  **Bodhi (2026-09-29): absent two years or more → 0; less → blank with a reason.**
+- **Splits.** Prices are split-adjusted; SEC values are in the basis they were filed in. Twelve of the
+  43 split inside the five-year window, and ServiceNow's TTM EPS came out −1.62 (a pre-split nine-month
+  EPS subtracted from a post-split year). **Bodhi (2026-09-29): take split history from Massive** (the
+  alternatives were detecting splits from SEC share-count jumps — heuristic, fooled by IPOs and mergers,
+  blind to GOOGL — or blanking every value across a split). A per-share value is converted by the
+  splits executed after its **filing** date (a filing issued after a split restates for it); a share
+  count by the splits after its own **as-of** date. `split_multiplier()` uses an exact numeric product.
+
+**Chosen while building, recorded because each is a judgment:**
+- **A quarter is visible from the day after its first filing**, not the filing day: a 10-Q filed after
+  the close is not known to that close.
+- **Values are the latest filed, not point-in-time** — DEFINITIONS §7 "What Stage F2 is not". The
+  as-of function a backtest needs is still not built. The revenue-growth hint said "as reported"; it
+  now says what is true.
+- **Ranks are positions with a denominator** (`n / peers`, 1 = highest), which is what the grid was
+  built to render; DEFINITIONS §3 said "percentile" and now says position.
+- **ROIC's invested capital includes operating leases**, because 0040 made leases debt in both
+  leverage and EV and there is no defensible way to leave them out of the third ratio built on debt.
+  The tax clamp is 0–40%.
+- **`reason`, not a `pe_applicable` flag.** One text field carries every known cause of a blank
+  ("operating income not filed", "TTM EPS at or below zero", "not filed for this quarter: debt").
+- **The grid pages its fundamentals read at 500 rows.** One day is 43 × 22 = 946 rows; Supabase caps a
+  response at 1,000 and a capped response is a silent 200. `grid_cells` (795 rows a day) is not paged
+  yet — it will cross the cap at about 64 securities.
+- **Massive reference failures are their own**: a plan that does not cover splits or the ticker
+  overview marks the run not-ok (`massive:<symbol>`) but costs none of the SEC work.
+
+**Needs, after merge:** a forced SEC re-fetch of all 43 (the nine new concept-map rows; three calls of
+≤ 15), which also fetches XOM's second CIK once, SIC codes and the first Massive share counts and
+splits; then one refresh of the two new matviews.
+
+**Not decided here:** the analyst vendor, the Forward Look columns, `rev_acceleration`, and the
+point-in-time as-of function.

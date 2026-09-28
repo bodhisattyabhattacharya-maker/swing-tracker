@@ -1443,3 +1443,59 @@ analyst vendor for quarters; Microsoft's D&A is filed under a company tag compan
 
 **Not verified yet:** the edge function's own reach to SEC (the probe ran from Postgres) and its CPU
 per document — the first backfill run measures both.
+
+## 2026-09-29 — The 22 fundamentals, live on the grid (Stage F2)
+
+**What:** every fundamentals column is live — Revenue (YoY, 3y/5y CAGR, last QoQ, 8-quarter
+sparkline), Profit (EPS YoY, 3y/5y CAGR, gross-margin trend, EPS sparkline), Valuation (P/E, P/S,
+EV/Sales, EV/EBITDA, FCF yield, P/B), Quality (ROIC, net debt/EBITDA, FCF margin, share-count YoY) and
+the two sector ranks. Computed from SEC filings, split-adjusted, and blank with a hover reason when
+the cause is known. Banks show `n·a` for the EV/EBITDA/FCF family. Forward Look stays planned.
+- `fundamental_quarters` (matview): per company and fiscal quarter — TTM sums over four consecutive
+  quarters, the quarter's own balance sheet, EBITDA (D&A composed from two tags where filed
+  separately), gross profit (`GrossProfit` else revenue − cost of revenue), the quarter parameters.
+- `fundamental_daily` (matview): per company and price day — the newest quarter first filed before
+  that day, the newest share count (Massive all-class, else SEC cover page), market cap, EV, the
+  price multiples, ranks within the theme.
+- `fundamental_cells` (view): the grid's cell shape plus `series`, `peers` and `reason`.
+- F1.1 fixes: quarter bands 75–120 / 245–290 (Costco's 16-week quarter), `sec_quarters` rewritten
+  without the anti-join (18.7 s → 0.9 s on production), `sec_coverage` over every item, ExxonMobil's
+  second CIK, nine concept-map rows (split D&A, combined and lease-inclusive debt, bank revenue, gross
+  profit, cost of revenue).
+- New tables: `splits` and `share_counts` (Massive reference data), `sec_extra_ciks`;
+  `tickers.is_bank` and `sec_filers.sic` from SEC's industry code.
+- Ingest: the `fundamentals` scope also records SIC (and so the bank flag), fetches a second CIK once
+  (again on `full=1`), and per company reads Massive's ticker overview and split history.
+- Web: 22 columns flipped to live; `is_bank` on the security; the fundamentals read is paged at 500
+  rows (946 a day, against Supabase's silent 1,000 cap); reasons as hover text in the grid and the
+  strip; cell history reads `fundamental_cells` (sparklines answer that they are their own history);
+  the Deep Dive Fundamentals panel is live and renders `n·a` rows for a bank.
+
+**How:** decision 0060; DEFINITIONS §3 and §7. Migration `20260929100000_fundamentals.sql`;
+`polygon.ts` (reference helpers), `sec.ts` (`parseSic`, `isBankSic`), `index.ts`;
+`lib/columns.ts`, `lib/grid.ts`, `lib/cell-history.ts`, `lib/deep-dive.ts`, both pages,
+`ParameterGrid.tsx`, `StockStrip.tsx`, one CSS rule (`.dd-sec .st-na`).
+
+**Architecture impact:** `swing-refresh-features` refreshes seven matviews, the two new ones last.
+Fundamentals values are the latest filed, not point-in-time (DEFINITIONS §7 "What Stage F2 is not").
+The price layer's split basis and this layer's must agree: prices re-fetched after a split.
+
+**Verified by:** database gate 159 checks, 39 of them new `fundamentals` checks against three
+hand-built companies — 25 values worked by hand from stated inputs (every price multiple, ROIC, the
+CAGRs, share-count change across a split), and 14 behaviours: an annual-only line carried from the
+fiscal-year end while a lapsed one is not, visibility the day after filing and
+never before, Massive shares winning from their first day, D&A and gross-profit composition, TTM
+blank across a gap, the lapse rule both ways, split conversion of EPS and of share counts, ranks
+excluding a bank, reasons, sparkline order, 22 params per company-day, verdict parity (fourth copy of
+the rule), no band join. Negative-tested with eleven mutations of the migration; each failed its own
+named check — one (share counts unconverted) passed at first because no fixture count predated the
+split, and a pre-split cover count was added until it failed. Edge suite 121 pass (parseSic, bank
+range, split and overview mapping). Web: build, and all eight web checks, two with a bank added to
+their security matrix — which found the strip's missing `n·a` state, as its comment predicted.
+Production read-only dry run of the quarter layer on 43 companies before merge.
+
+**Not verified yet:** Massive's splits and ticker-overview endpoints on the Stocks Starter plan (no
+request made from here); production values after the forced re-fetch; refresh time of the two
+matviews on production.
+
+**By:** Bodhi + Claude
