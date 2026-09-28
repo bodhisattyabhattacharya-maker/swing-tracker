@@ -10,13 +10,11 @@
 # number — silently, correctly typed, with a plausible-looking value in it. Nothing in the
 # toolchain has an opinion about that.
 #
-# The second half is the one this project keeps learning. `sparkline` and `rank` are handled in
-# both renderers and CANNOT BE REACHED TODAY: both renderers test `planned` before they test the
-# render kind, and every column carrying either kind is planned until the financials ingest lands.
-# That is fine and deliberate — but "fine and deliberate" is exactly what the last three
-# unreachable things looked like too, so it is printed as a fact on every run rather than left in
-# a comment for someone to find. When Stage F flips those columns to live, this check's output
-# changes on its own.
+# The second half is the one this project keeps learning. `sparkline` and `rank` were handled in
+# both renderers and UNREACHABLE until Stage F2 (2026-09-29) flipped the fundamentals live: both
+# renderers test `planned` before they test the render kind. That was fine and deliberate — but
+# "fine and deliberate" is exactly what the last three unreachable things looked like too, so
+# reachability is printed as a fact on every run rather than left in a comment for someone to find.
 #
 # WHAT IT CHECKS
 #   1. Every member of the `Render` union is used by at least one column. A kind in the type that

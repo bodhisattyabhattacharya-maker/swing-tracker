@@ -11,7 +11,9 @@ import {
   extractFacts,
   latestPeriodic,
   mapCompanyTickers,
+  isBankSic,
   pad10,
+  parseSic,
   submissionsUrl,
   validUserAgent,
 } from "./sec.ts";
@@ -190,4 +192,23 @@ Deno.test("extractFacts reports accessions and the newest filed date, so a laggi
 
 Deno.test("a document with no facts object is an error, not zero rows", () => {
   assert.throws(() => extractFacts({ cik: 1 }, "FIX", 1, WL), /no 'facts' object/);
+});
+
+// ---------------------------------------------------------------------------- SIC (Stage F2)
+
+Deno.test("parseSic reads SEC's string code, and a missing or odd one is null, never 0", () => {
+  assert.equal(parseSic({ sic: "6021" }), 6021);
+  assert.equal(parseSic({ sic: 3674 }), 3674);
+  assert.equal(parseSic({ sic: "" }), null);
+  assert.equal(parseSic({ sic: "n/a" }), null);
+  assert.equal(parseSic({}), null);
+});
+
+Deno.test("isBankSic is 6000-6199 exactly: banks yes, broker-dealers and insurers no", () => {
+  assert.ok(isBankSic(6021), "national commercial bank (JPM)");
+  assert.ok(isBankSic(6000) && isBankSic(6199), "both ends of the range");
+  assert.ok(!isBankSic(6211), "security brokers");
+  assert.ok(!isBankSic(6311), "life insurance");
+  assert.ok(!isBankSic(5999) && !isBankSic(6200));
+  assert.ok(!isBankSic(null));
 });

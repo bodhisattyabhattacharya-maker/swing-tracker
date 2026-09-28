@@ -56,6 +56,19 @@ export interface Ticker {
   is_fund: boolean;
   /** False for a theme that is not a peer group, which makes a sector rank meaningless rather than absent. */
   rankable: boolean;
+  /** SEC files it as a bank (SIC 6000-6199), set by the fundamentals ingest. EV/EBITDA/FCF are N/A. */
+  is_bank: boolean;
+}
+
+/**
+ * A fundamentals cell, from `fundamental_cells` (Stage F2, decision 0060). The grid's cell shape plus
+ * the two payloads the renderers were built for - `series` (sparklines) and `peers` (ranks) - and a
+ * `reason` when a value is blank for a known cause.
+ */
+export interface FundamentalCell extends Cell {
+  series: (number | null)[] | null;
+  peers: number | null;
+  reason: string | null;
 }
 
 /**
@@ -185,6 +198,11 @@ export interface GridData {
   rs: Cell[];
   /** The five derived technicals, at the grid's own date — they are computed from it. */
   signals: SignalCell[];
+  /**
+   * The 22 fundamentals, at the grid's own date: `fundamental_daily` has a row for every price day,
+   * carrying the newest quarter filed before it. Additive, like RS - a failure costs those columns.
+   */
+  fundamentals: FundamentalCell[];
   /** The date `rs` is from. Null when RS could not be read or has no rows at all. */
   rsAsOf: string | null;
   /** Six months of market series for the history charts. Additive — a failure costs its own panel. */
@@ -216,6 +234,7 @@ export interface GridData {
   marketError: string | null;
   rsError: string | null;
   signalsError: string | null;
+  fundamentalsError: string | null;
   error: string | null;
 }
 
@@ -255,6 +274,26 @@ async function get<T>(path: string, cfg: { url: string; key: string }): Promise<
     throw new Error(`${what}: HTTP ${r.status} ${body}`);
   }
   return (await r.json()) as T;
+}
+
+/**
+ * EVERY ROW OF A READ, IN PAGES. PostgREST caps a response at the project's max-rows (1000 by
+ * default on Supabase) and a capped response is a 200 with fewer rows - a silent truncation, not an
+ * error. One day of `fundamental_cells` is 43 companies x 22 params = 946 rows, 54 short of that cap;
+ * the next five companies added would have lost the tail of the alphabet without a word. So this
+ * pages explicitly at 500, below any plausible cap, ordered so the pages cannot overlap or skip.
+ * `path` must carry its own `order=` on a unique key. Twenty pages is 10,000 rows; beyond that
+ * something is wrong, and it throws rather than guessing.
+ */
+async function getAll<T>(path: string, cfg: { url: string; key: string }): Promise<T[]> {
+  const PAGE = 500;
+  const out: T[] = [];
+  for (let page = 0; page < 20; page++) {
+    const rows = await get<T[]>(`${path}&limit=${PAGE}&offset=${page * PAGE}`, cfg);
+    out.push(...rows);
+    if (rows.length < PAGE) return out;
+  }
+  throw new Error(`${path.split("?")[0]}: more than ${20 * PAGE} rows for one read - refusing to guess where they end`);
 }
 
 /**
@@ -330,6 +369,7 @@ export async function fetchGrid(): Promise<GridData> {
     market: [],
     rs: [],
     signals: [],
+    fundamentals: [],
     rsAsOf: null,
     history: [],
     historyError: null,
@@ -337,6 +377,7 @@ export async function fetchGrid(): Promise<GridData> {
     marketError: null,
     rsError: null,
     signalsError: null,
+    fundamentalsError: null,
     error: null,
   };
 
@@ -361,9 +402,9 @@ export async function fetchGrid(): Promise<GridData> {
     // The three reads the grid cannot render without, and the two it can. Both groups go out
     // together - they are independent reads against the same host - but only the first group can
     // fail the page.
-    const [tickers, cells, norms, market, rsLatest, signals, history, closes] = await Promise.all([
+    const [tickers, cells, norms, market, rsLatest, signals, history, closes, fundamentals] = await Promise.all([
       get<Ticker[]>(
-        "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether,is_fund,rankable&order=theme.asc,symbol.asc",
+        "tickers?active=eq.true&is_index=eq.false&select=symbol,name,theme,bellwether,is_fund,rankable,is_bank&order=theme.asc,symbol.asc",
         cfg,
       ),
       get<Cell[]>(
@@ -416,6 +457,15 @@ export async function fetchGrid(): Promise<GridData> {
           "breadth_tracked,vix_ma20,vix_ma20_bars&order=d.desc&limit=126",
         cfg,
       ),
+      // Fundamentals on the grid's own date, paged - see getAll. A company whose first quarter has
+      // not been filed as of that date has rows with null values, which is the honest answer.
+      getAll<FundamentalCell>(
+        `fundamental_cells?d=eq.${status.data_through}` +
+          "&select=symbol,param,value,verdict,has_norm,suppressed_warmup,series,peers,reason" +
+          "&order=symbol.asc,param.asc",
+        cfg,
+      ).then((data) => ({ data, error: null as string | null }))
+        .catch((e) => ({ data: null as FundamentalCell[] | null, error: e instanceof Error ? e.message : String(e) })),
     ]);
 
     const rsAsOf = rsLatest.data?.[0]?.d ?? null;
@@ -434,6 +484,7 @@ export async function fetchGrid(): Promise<GridData> {
       market: market.data ?? [],
       rs: rs.data ?? [],
       signals: signals.data ?? [],
+      fundamentals: fundamentals.data ?? [],
       // Reversed to ascending, which is what every chart wants. `slice()` first because the array
       // came from JSON.parse and reversing in place would be fine today and a trap the first time
       // anything else reads it.
@@ -446,6 +497,7 @@ export async function fetchGrid(): Promise<GridData> {
       // not be reported as a failure. Only an actual error is one.
       rsError: rs.error ?? rsLatest.error,
       signalsError: signals.error,
+      fundamentalsError: fundamentals.error,
       error: null,
     };
   } catch (e) {

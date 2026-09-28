@@ -182,6 +182,9 @@ const securities = [
   { symbol: "NVDA", is_fund: false, rankable: true },
   { symbol: "ARM",  is_fund: false, rankable: false },
   { symbol: "SPY",  is_fund: true,  rankable: false },
+  // A bank (Stage F2): a company, rankable theme, but EV/EBITDA, FCF and ROIC do not apply. The
+  // first shape whose Fundamentals panel MIXES applicable and inapplicable params.
+  { symbol: "JPM",  is_fund: false, rankable: true,  is_bank: true },
 ];
 const cells = [
   undefined,

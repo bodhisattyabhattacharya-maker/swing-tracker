@@ -57,7 +57,8 @@ const TIMEFRAME_WORDS: Record<keyof typeof TIMEFRAME_LABELS, string> = {
 
 export default async function DeepDive() {
   const {
-    status, tickers, cells, norms, rs, signals, rsAsOf, rsError, signalsError, error,
+    status, tickers, cells, norms, rs, signals, fundamentals, rsAsOf, rsError, signalsError,
+    fundamentalsError, error,
     prevCloses,
   } = await fetchGrid();
 
@@ -78,12 +79,13 @@ export default async function DeepDive() {
     );
   }
 
-  // ONE LOOKUP, THREE SOURCES — identical to the Dashboard's merge, because it is the same three
+  // ONE LOOKUP, FOUR SOURCES — identical to the Dashboard's merge, because it is the same three
   // views keyed on the same two things. Param names are globally unique, so the merge cannot
   // collide.
   const byCell: Record<string, CellLike> = {};
   for (const c of cells) byCell[`${c.symbol}|${c.param}`] = c;
   for (const c of rs) byCell[`${c.symbol}|${c.param}`] = c;
+  for (const c of fundamentals) byCell[`${c.symbol}|${c.param}`] = c;
   for (const s of signals) {
     if (s.symbol && s.param) {
       byCell[`${s.symbol}|${s.param}`] = {
@@ -102,6 +104,7 @@ export default async function DeepDive() {
     bellwether: t.bellwether,
     is_fund: t.is_fund,
     rankable: t.rankable,
+    is_bank: t.is_bank,
   }));
 
   /**
@@ -145,6 +148,7 @@ export default async function DeepDive() {
   const unavailable = [
     rsError ? "Relative strength" : null,
     signalsError ? "MA signals" : null,
+    fundamentalsError ? "Fundamentals" : null,
   ].filter((x): x is string => x !== null);
 
   return (

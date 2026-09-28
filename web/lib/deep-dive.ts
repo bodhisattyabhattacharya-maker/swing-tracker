@@ -201,7 +201,7 @@ export const SECTIONS: SectionSpec[] = [
   {
     key: "fundamentals",
     title: "Fundamentals",
-    sub: "Growth, margins, valuation and balance sheet, computed from filings.",
+    sub: "Growth, margins, valuation and balance sheet, computed from SEC filings.",
     kind: "rows",
     params: [
       "rev_growth_yoy",
@@ -214,7 +214,6 @@ export const SECTIONS: SectionSpec[] = [
       "net_debt_ebitda",
       "share_count_yoy",
     ],
-    why: "Not built. Waiting on the financials ingest — nobody has these numbers here yet, not any name.",
   },
   {
     key: "forward",

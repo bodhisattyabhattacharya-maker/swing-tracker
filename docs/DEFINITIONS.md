@@ -165,8 +165,8 @@ is a measure-zero event that would otherwise fork every comparison, and it reads
 |---|---|
 | **Relative strength vs SPX** | `(close[t]/close[t−n] − 1) − (index[t]/index[t−n] − 1)`, for n ∈ {63, 126, 252} **trading bars** — not calendar months. Reported as percentage points of out/under-performance. SPX comes from FRED `SP500`, a price index (no dividends), which is the right comparison for a price-basis stock series. **Each leg counts bars in its own series** (`lag(close, n)` over its own partition) and the two are joined on an **exact date**, so both windows end on the same session — an as-of join on either leg would compare two different windows. Verified 2026-09-15: across the 1,236 dates held, SPX is missing exactly one, and that one is the FRED publication lag rather than a calendar difference. Columns are named by bars (`rs_63b`, `rs_126b`, `rs_252b`); the legacy norm `rs_vs_spx_6m` was renamed to `rs_vs_spx_126b` on 2026-09-16 rather than matched to, closing the mismatch 0035 left open. **A value equal to a norm bound is INSIDE the band** (`<` and `>`, not `<=`/`>=`) — asserted since 2026-09-16 by a CI norm whose bound is an exact fixture value, because until then no cell anywhere sat on a boundary and the two spellings were indistinguishable to every check. Decisions 0035, 0037, 0039. |
 | ~~Relative strength vs SOX~~ | **Dropped in v1 (decision 0019).** No free data source carries the PHLX Semiconductor Index, and a proxy ETF would have meant reporting one thing while labelling it another. Restore the parameter and the `rs_vs_sox_6m` norm together if index data is ever paid for. |
-| **Sector-relative valuation rank** | Percentile rank of the name's FCF yield within its theme group, computed across the group on the same date. |
-| **Sector-relative margin rank** | Same, on trailing-twelve-month gross margin. |
+| **Sector-relative valuation rank** | Position of the name's FCF yield within its theme group on the same date — **1 = highest yield (cheapest)** — shown with the peer count as `n / peers`. Rankable themes only; funds and banks are never in a peer group. (Written as "percentile" until Stage F2; the grid has always rendered a position with its denominator, and a position is what is computed.) |
+| **Sector-relative margin rank** | Same, on trailing-twelve-month gross margin — 1 = highest margin. |
 
 ### Market
 
@@ -435,10 +435,11 @@ has been compared with the chart.
 
 ## 7. Fundamentals — settled
 
-Settled 2026-09-16, decision 0040. **The source layer is built** (decision 0059: SEC EDGAR into
-`sec_facts`, see "Where the numbers come from" below); **the parameters are not** — they are Stage F2.
-This is the contract that implementation has to meet, written before the code so the code cannot
-quietly decide it.
+Settled 2026-09-16, decision 0040. **Built:** the source layer in Stage F1 (decision 0059, SEC EDGAR
+into `sec_facts`) and the 22 parameters in Stage F2 (decision 0060, `fundamental_quarters` →
+`fundamental_daily` → `fundamental_cells`). This section was the contract written before the code;
+where the code had to decide something the contract left open, "How Stage F2 computes them" below
+says what and why.
 
 **The principle that decides most of them** is §5 above: *we compute from GAAP filings via SEC XBRL,
 and we cannot match a consumer app that buys adjusted vendor data.* Wherever the choice was "the
@@ -451,13 +452,13 @@ with it the backtesting property decision 0002 exists to protect.
 
 | Parameter | Definition | Null when |
 |---|---|---|
-| **Trailing P/E** | `price / Σ(last four quarters' diluted EPS)`. **GAAP, diluted.** | TTM EPS ≤ 0 — see below |
-| **Net debt / EBITDA** | `net debt / TTM EBITDA`, where `EBITDA = OperatingIncomeLoss + DepreciationDepletionAndAmortization` and `net debt = short-term debt + long-term debt + operating lease liabilities − cash and equivalents − short-term investments` | EBITDA ≤ 0 |
-| **ROIC** | `NOPAT / (total debt + total equity − cash)`, where `NOPAT = OperatingIncomeLoss × (1 − effective tax rate)` and the effective rate is `IncomeTaxExpenseBenefit / pre-tax income`, **clamped** | pre-tax income ≤ 0, or invested capital ≤ 0 |
-| **FCF yield** | `(CFO − capex) / market cap`, where `capex = payments to acquire PP&E + capitalised software` | market cap unavailable |
-| **EV / Sales** | `EV / TTM revenue`, where `EV = market cap + total debt (leases included) − cash − short-term investments` | revenue = 0 |
-| **Revenue growth** | **Quarterly** revenue, year-over-year, **as reported**. `rev_acceleration` is the change in that growth rate. | no year-ago quarter filed |
-| **Share count change** | Year-over-year % change in `dei:EntityCommonStockSharesOutstanding` — the **cover-page** count. Negative is buyback, positive is dilution. | no year-ago filing |
+| **Trailing P/E** | `price / Σ(last four quarters' diluted EPS)`. **GAAP, diluted**, EPS in today's split basis. | TTM EPS ≤ 0 — see below |
+| **Net debt / EBITDA** | `net debt / TTM EBITDA`, where `EBITDA = OperatingIncomeLoss + D&A` (D&A = the combined tag, else `Depreciation + AmortizationOfIntangibleAssets`) and `net debt = total debt + operating lease liabilities − cash and equivalents − short-term investments` | EBITDA ≤ 0; operating income not filed; a balance line missing for the quarter |
+| **ROIC** | `NOPAT / (total debt + operating leases + total equity − cash)`, where `NOPAT = TTM OperatingIncomeLoss × (1 − effective tax rate)` and the effective rate is `TTM IncomeTaxExpenseBenefit / TTM pre-tax income`, **clamped to 0–40%** | pre-tax income ≤ 0, or invested capital ≤ 0; operating income not filed |
+| **FCF yield** | `(TTM CFO − TTM capex) / market cap`, where `capex = payments to acquire PP&E + capitalised software` | market cap unavailable |
+| **EV / Sales** | `EV / TTM revenue`, where `EV = market cap + total debt + operating leases − cash − short-term investments` | revenue ≤ 0; a balance line missing for the quarter |
+| **Revenue growth** | **Quarterly** revenue, year-over-year. Latest filed figures — see "What Stage F2 is not" below. `rev_acceleration` is the change in that growth rate (not built). | no year-ago quarter filed |
+| **Share count change** | Year-over-year % change in `dei:EntityCommonStockSharesOutstanding` — the **cover-page** count, split-adjusted. Negative is buyback, positive is dilution. | no cover count 330–420 days earlier; dual-class companies (no single cover count) |
 
 ### Where the numbers come from (decision 0059)
 
@@ -471,11 +472,82 @@ with it the backtesting property decision 0002 exists to protect.
 - **Quarters** (`sec_quarters`): a reported three-month value where one exists; otherwise the
   difference of consecutive year-to-date values with the same start — Q2 = H1 − Q1, Q3 = 9M − H1,
   **Q4 = FY − 9M**. Cash-flow quarters always come this way, because 10-Qs file them year to date. A
-  difference that does not span 75–105 days is not a quarter and is not published. **Per-share
-  differences are approximate** (the share counts behind FY and 9M EPS differ) and are flagged.
+  difference that does not span 75–120 days is not a quarter and is not published (120, not the F1
+  105, since Costco's 16-week fourth quarter — 2026-09-29). **Per-share differences are approximate**
+  (the share counts behind FY and 9M EPS differ) and are flagged; both sides are converted to today's
+  split basis first, so a split between them no longer produces nonsense.
 - **Currency is carried, not converted:** ASML files in EUR. Conversion happens where a ratio needs it.
-- **Known gaps:** TSM (SEC data ends 2024), ASML (annual only), MSFT D&A (company-specific tag). These
-  are nulls with a reason, per `sec_coverage`, until the analyst vendor supplies them.
+- **Known gaps:** TSM (SEC data ends 2024) and ASML (annual only, EUR) — Stage F2 reads USD quarters
+  only, so both are blank until the analyst vendor supplies them. MSFT's D&A is not a company tag
+  after all: it files `Depreciation` and `AmortizationOfIntangibleAssets` separately (label probe
+  2026-09-28), which F2 adds together.
+
+### How Stage F2 computes them (decision 0060)
+
+**The eleven definitions the contract above did not write down** — approved by Bodhi 2026-09-28:
+
+| Parameter | Definition | Null when |
+|---|---|---|
+| **P/S TTM** | `market cap / TTM revenue` | TTM revenue ≤ 0 |
+| **EV / EBITDA** | `EV / TTM EBITDA`, EV and EBITDA as above | EBITDA ≤ 0; operating income not filed |
+| **P/B** | `market cap / total equity` | equity ≤ 0 |
+| **FCF margin** | `(TTM CFO − TTM capex) / TTM revenue` | TTM revenue ≤ 0 |
+| **Revenue QoQ last Q** | latest quarter's revenue / the quarter before, − 1 | quarters not consecutive (75–120 days apart) |
+| **Revenue 3y / 5y CAGR** | `(TTM revenue now / TTM revenue 12 or 20 quarters earlier)^(1/3 or 1/5) − 1` | either end ≤ 0; the lag does not span 3 (5) years ± a few weeks |
+| **EPS YoY** | TTM diluted EPS vs four quarters earlier | either end ≤ 0 — growth off a loss is not meaningful |
+| **EPS 3y / 5y CAGR** | as revenue, on TTM diluted EPS | either end ≤ 0 |
+| **GM trend** | TTM gross margin now − TTM gross margin four quarters earlier, in **percentage points**. Gross profit = `GrossProfit`, else `revenue − CostOfRevenue` | no gross profit and no cost of revenue filed |
+| **Revenue 8Q / EPS 8Q** | the last eight quarterly values, oldest first, holes as blank | the eight quarters span more than ~2 years |
+| **Valuation / margin rank** | §3 above | not a rankable theme; a fund or a bank |
+
+**TTM means four CONSECUTIVE quarters** — the first and fourth quarter ends 240–300 days apart. A
+missing quarter makes TTM blank rather than summing four quarters out of five.
+
+**When a quarter reaches the grid:** from the day AFTER it was first filed (the earliest 10-Q/10-K/
+20-F/40-F carrying a fact for that quarter end). A 10-Q filed after the close is not known to that
+close. Carried forward to every later day until the next quarter is filed.
+
+**Market cap** = split-adjusted close × shares, where shares = Massive's all-class weighted count
+(ticker overview, from the first day it was ingested, 2026-09) else the SEC cover-page count, both in
+today's split basis.
+
+**Balance sheet** — cash, short-term investments, debt and equity come from **the quarter's own
+balance sheet** (dated within 45 days of the quarter end), or, for a line the company files only in
+its 10-K, from its last **fiscal-year end** (up to 400 days — CAT files no standard debt tag in its
+10-Qs). A line whose last value is at a quarter end and then stops is a lapse, not an annual habit,
+and gets no such allowance. Operating leases may be carried up to 400 days in any case, because
+several companies file them annually only. Cash falls back to the restricted-cash-inclusive total
+only when the plain tag is absent (GE since 2017). Debt = `DebtLongtermAndShorttermCombinedAmount`,
+else `LongTermDebt` (or noncurrent + current) plus short-term borrowings (or commercial paper — never
+both).
+
+**Decisions of 2026-09-28 and 2026-09-29 (Bodhi):**
+
+1. **Operating income not filed** (KLAC since 2015, GE since 2014, XOM never): EV/EBITDA, Net
+   debt/EBITDA and ROIC are blank, and the cell says why on hover. No pre-tax fallback.
+2. **Banks** (SEC SIC 6000–6199 — JPM): EV/Sales, EV/EBITDA, Net debt/EBITDA, FCF yield, FCF margin
+   and ROIC are **not applicable** (`n·a`), and a bank is never in a rank's peer group. P/E, P/S,
+   P/B, growth and share count stay; bank revenue is `RevenuesNetOfInterestExpense`.
+3. **Shares for market cap: Massive** where it has a count (it is the only source for the five
+   dual-class names — DDOG, DELL, GOOGL, META, SHOP), else the SEC cover page.
+4. **A balance line that is not there:** never filed as of that quarter → 0. **Absent two years or
+   more while balance sheets kept coming → 0** — the company holds none (CAT's short-term
+   investments last appear 2014, STX 2012, LRCX 2015). **Absent less than two years → blank with a
+   reason** — almost always a tag we have not mapped yet (NVDA's short-term investments, 2025-10).
+   Cash and equity are never 0.
+5. **Splits** — prices are split-adjusted; SEC values are not. Every SEC per-share value is converted
+   to today's basis by the splits (Massive reference data) executed **after its filing date**, every
+   share count by the splits after **its own as-of date**. Without this ServiceNow's TTM EPS read
+   −1.62 on 2026-09-29 (a pre-split nine-month EPS subtracted from a post-split year).
+
+### What Stage F2 is not
+
+**Not point-in-time.** Each quarter becomes visible on the day after it was first filed, but carries
+its **latest** filed (possibly restated) values. Right for today's grid; slightly optimistic for a
+backtest, which needs `sec_facts` filtered by filing date per day — Phase 2. The column hints say so.
+
+**"Today's split basis" matches stored prices only if prices were re-fetched after the most recent
+split.** That is the price layer's contract (`adjusted=true`), not this layer's.
 
 ### The four choices that were genuinely open, and what was chosen
 
@@ -484,9 +556,10 @@ is what "earnings per share" means without qualification. Basic flatters any com
 stock compensation, which is most of this watchlist.
 
 **A negative P/E is null, not a small number.** A negative P/E is not cheap, it is meaningless, and in
-a sorted column it would rank as the cheapest thing on the grid. A `pe_applicable = false` flag ships
-beside it so a blank reads as *loss-making* rather than *missing data* — the same distinction
-decision 0031 is about. **Null ≠ zero ≠ undefined**, again.
+a sorted column it would rank as the cheapest thing on the grid. The cell carries a `reason` ("TTM EPS
+at or below zero", shown on hover) so a blank reads as *loss-making* rather than *missing data* — the
+same distinction decision 0031 is about. (Planned as a `pe_applicable` flag; built as the general
+`reason` field in F2, which also serves the other known causes.) **Null ≠ zero ≠ undefined**, again.
 
 **Operating leases count as debt — in BOTH the leverage ratio and EV.** Post-ASC 842 they are on the
 balance sheet and contractually owed, and rating agencies treat them as debt. Excluding them
@@ -530,6 +603,11 @@ advisor*. **Deferred to a later version** (Bodhi, 2026-09-16), as a searched col
 freshness rule, not as a fundamental.
 
 ### Before any of this is implemented — two things to measure, not assume
+
+**Both measured; kept below as written, for the record.** (1) The SEC probe (2026-09-27) and the
+full backfill with its label probe (2026-09-28) answered the tag question — see "Where the numbers
+come from" and decision 0060. (2) The ROIC tax-rate clamp is **0–40%**: no statutory rate in the
+watchlist's jurisdictions reaches 40%, and 0 stops a tax-benefit year flipping NOPAT's sign.
 
 1. **Whether all 36 filers report these tags consistently**, and in which years. Tag availability
    varies by filer; a fundamental that silently goes null for six of the watchlist is worse than one

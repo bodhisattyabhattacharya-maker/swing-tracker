@@ -20,7 +20,7 @@
 import { COLUMNS, type Source } from "./columns";
 
 /** Which view a param's history comes from. Mirrors `Column.source` for the readable sources. */
-export type HistorySource = "cells" | "rs" | "signals";
+export type HistorySource = "cells" | "rs" | "signals" | "fundamentals";
 
 export interface HistoryPoint {
   d: string;
@@ -48,16 +48,25 @@ export interface HistoryResult {
  * rows anywhere, and letting it through would turn "not built" into an empty chart, which is the
  * distinction the whole cell-state model exists to preserve.
  *
- * `fundamentals` and `forward` sources are excluded because those views do not exist yet. When they
- * land they become readable by adding them here and nowhere else.
+ * `fundamentals` became readable with Stage F2 (`fundamental_cells`). `forward` is still excluded:
+ * that view does not exist yet. SPARKLINE columns are excluded too - see SELF_HISTORY_PARAMS.
  */
 export const HISTORY_PARAMS: ReadonlyMap<string, HistorySource> = new Map(
   COLUMNS
     .filter((c) => c.status === "live")
     .filter((c): c is typeof c & { source: HistorySource } =>
-      c.source === "cells" || c.source === "rs" || c.source === "signals"
+      c.source === "cells" || c.source === "rs" || c.source === "signals" || c.source === "fundamentals"
     )
+    .filter((c) => c.render !== "sparkline")
     .map((c) => [c.param, c.source] as const),
+);
+
+/**
+ * Sparkline params: the cell IS eight quarters of history, and its daily `value` is null by design,
+ * so a history chart of it would be an empty frame. Answered with a sentence, not a blank chart.
+ */
+export const SELF_HISTORY_PARAMS: ReadonlySet<string> = new Set(
+  COLUMNS.filter((c) => c.status === "live" && c.render === "sparkline").map((c) => c.param),
 );
 
 /** Params that exist in the catalogue but have no history to read. Used to answer honestly. */
@@ -112,6 +121,13 @@ export function validateRequest(
       message: "this parameter is designed and not built, so it has no history",
     };
   }
+  if (SELF_HISTORY_PARAMS.has(param)) {
+    return {
+      ok: false,
+      status: 404,
+      message: "this cell is itself a history - the last eight quarters - so it has no separate one",
+    };
+  }
   const source = HISTORY_PARAMS.get(param);
   if (!source) {
     return { ok: false, status: 400, message: "unknown parameter" };
@@ -134,12 +150,14 @@ export const SELECT: Record<HistorySource, string> = {
   cells: "d,value,verdict",
   rs: "d,value,verdict",
   signals: "d,value,label,tone",
+  fundamentals: "d,value,verdict",
 };
 
 export const VIEW: Record<HistorySource, string> = {
   cells: "grid_cells",
   rs: "rs_cells",
   signals: "signal_cells",
+  fundamentals: "fundamental_cells",
 };
 
 /** The endpoint, in one place, so the client and any test agree on it. */

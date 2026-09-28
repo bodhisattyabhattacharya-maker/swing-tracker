@@ -97,3 +97,9 @@ Shared vocabulary. Cheap file; it stops two people building two meanings for one
 | **Accession number** | The ID of one SEC filing. A period filed in two filings has two facts with two accessions — which is how a restatement is visible. |
 | **Item (fundamentals)** | A named quantity — revenue, capex, D&A — that one or more XBRL concepts can stand for. `sec_concept_map` lists them in fallback order, resolved per period and filing. |
 | **Derived quarter** | A quarter computed as the difference of two year-to-date values sharing a start (Q4 = FY − 9M). `sec_quarters.derived`; `approximate` when the item is per-share. |
+| **TTM** | Trailing twelve months: the sum of the last four quarters — here only when they are CONSECUTIVE (first and fourth quarter ends 240–300 days apart). A gap makes TTM blank, not a sum over five quarters. |
+| **Visible from** | The day a quarter reaches the grid: the day after its first periodic filing. `fundamental_quarters.visible_from` is the filing date itself. |
+| **Split basis** | The share count a per-share number is expressed in. Prices are in today's; SEC values in the one they were filed in. `split_multiplier(symbol, date)` converts, from Massive's split history (decision 0060). |
+| **Reason (cell)** | Text on a blank fundamentals cell whose cause is known — "operating income not filed", "TTM EPS at or below zero", "not filed for this quarter: debt". Hover text. Never on a cell that has a value. |
+| **Bank (is_bank)** | A company SEC files under SIC 6000–6199. EV/Sales, EV/EBITDA, Net debt/EBITDA, FCF yield, FCF margin and ROIC are not applicable to it, and it is never in a rank's peer group. |
+| **Lapsed line** | A balance-sheet concept a company filed before and does not file now. Absent two years or more → 0 (holds none); less → blank with a reason (probably a tag change). |

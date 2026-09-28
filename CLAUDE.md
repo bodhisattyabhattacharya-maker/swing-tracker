@@ -105,10 +105,10 @@ FEATURES wins — this one is a summary and summaries rot.*
 | | |
 |---|---|
 | Securities | **53** — 43 companies and 10 ETFs, in **9** themes; plus 3 index series that are never rows |
-| Column catalogue | **51** — **23 live**, 28 planned, in **10 category bands** (0053). 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
+| Column catalogue | **51** — **45 live**, 6 planned (Forward Look), in **10 category bands** (0053). 28 carry an `applies` rule, so they are *not applicable* on some rows rather than empty |
 | Norms | **15**, in `config/norms.yml`, synced to the database and compared there |
 | Bars held | **63,579** daily equity bars over 5 years (2021-10-11 →), **8,063** index rows over 11 years — FRED goes back further than the equity plan |
-| Matviews | **5**: `daily_features`, `weekly_features`, `daily_signals`, `market_history`, `hourly_features` |
+| Matviews | **7**: `daily_features`, `weekly_features`, `daily_signals`, `market_history`, `hourly_features`, `fundamental_quarters`, `fundamental_daily` |
 | Scheduled jobs | **8** pg_cron, UTC |
 | Pages | `/` (Dashboard), `/deep-dive`, `/status` |
 | On-demand routes | **2**: `/api/cell-history`, `/api/stock-history` |
@@ -117,7 +117,7 @@ FEATURES wins — this one is a summary and summaries rot.*
 daily ingest 22:30 → refresh 22:45 → digest 23:00 on weekdays (decisions 0022, 0028, 0058), plus an
 index-only catch-up at 11:00 **every day** because FRED publishes later than the evening run (0033),
 and the SEC fundamentals check in two shards at 11:20 and 11:40 **every day** (0059).
-The refresh rebuilds **all five** matviews; any new
+The refresh rebuilds **all seven** matviews; any new
 matview must be added to that job in the migration that creates it — this project has shipped that
 omission three times. There is no user-led refresh by design, so the schedule is the only path.
 
@@ -131,13 +131,17 @@ at 63/126/252 **bars**), `signal_cells` (MA stack, both crosses with bars since,
 `market_context` and its matview `market_history`; **session-aligned hourly bars** built from
 one-minute aggregates by `session.ts` into `hourly_session_bars`, with hourly RSI in
 `hourly_features` through the same `recursive_indicators` (0058); pipeline-based staleness (0026), measured against the SCHEDULE rather than a stopwatch since 0056 - the flat 30-hour count was true for a quarter of every week because the ingest does not run at weekends - and
-per-symbol coverage (`symbols_priced` / `symbols_behind`, 0045).
+per-symbol coverage (`symbols_priced` / `symbols_behind`, 0045). **Fundamentals** (0059, 0060): SEC
+EDGAR facts in `sec_facts` → `sec_quarters` → `fundamental_quarters` → `fundamental_daily` →
+`fundamental_cells`, the 22 columns live — split-adjusted with Massive's split history, Massive's
+all-class share counts for market cap, a quarter visible from the day after its first filing, and a
+`reason` on a blank whose cause is known. Latest filed values, **not point-in-time**.
 
 **Interface.** The **Dashboard** at `/` — 53 names banded by theme, a two-tier sticky header, four
 presets, text filter, per-column sort, the eight-state cell model (0043), a cell detail sheet with
 five years of history (0048), and the four market-history charts (0046, 0047). The **Deep Dive** at
-`/deep-dive` — one 420px analysis column per security, eight sections at identical heights, six of
-them live, with a price panel that reads its own bars on scroll and draws candles or a line
+`/deep-dive` — one 420px analysis column per security, eight sections at identical heights, seven
+of them live, with a price panel that reads its own bars on scroll and draws candles or a line
 depending on how many fit (0049, 0050). The deployment check at `/status`.
 
 **The Deep Dive** opens on the bellwethers, not all 53 names, and the picked set lives in the URL so a view is shareable and the page stays statically prerendered (0055). Pinned first, then your own order; theme rules are drawn only in the default view.
@@ -180,11 +184,10 @@ strip's colour map; `check_stat_tracks.sh` (0057) requires every Price-statistic
 
 ### Not built
 
-- **Fundamentals** — **22 columns** are fundamentals-sourced: **20 of the 26** in the Value preset,
-  plus the **two sector ranks** (valuation, margin), which sit in the Relative group and not in
-  that preset. **The source layer is built** (decision 0059): SEC EDGAR into `sec_facts`, with
-  `sec_quarters` and `sec_coverage` on top. **The 22 parameters are Stage F2.** Massive's Financials
-  add-on was rejected on its own documentation (not point-in-time, missing reported as 0.0).
+- **Fundamentals, point-in-time.** The 22 columns are live (0060) on the latest filed values; the
+  as-of function a backtest needs (newest filing on or before each date) is not built.
+  `rev_acceleration` has a norm and no column. Tags that lapsed recently (NVDA short-term
+  investments, MU debt, GE cash) show blank with a reason until mapped.
 - **Forward Look** — the other **6** of the Value preset's 26, plus TSM's and ASML's quarterly
   fundamentals, which SEC cannot supply. FMP and EODHD both sell estimates, price targets and earnings
   dates at an individual price (research 2026-09-27); the vendor is chosen after free-tier probes.

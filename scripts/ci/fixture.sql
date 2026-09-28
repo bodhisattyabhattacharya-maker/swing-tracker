@@ -560,3 +560,158 @@ insert into public.sec_facts
   ('SYNTH',1,'us-gaap','EarningsPerShareDiluted','USD/shares','2025-01-01','2025-12-31',false,2.20,'A4','10-K',2025,'FY','2026-02-15'),
   ('SYNTH',1,'us-gaap','CashAndCashEquivalentsAtCarryingValue','USD','2025-06-30','2025-06-30',true,70,'A2','10-Q',2025,'Q2','2025-07-30'),
   ('SYNTH',1,'dei','EntityCommonStockSharesOutstanding','shares','2025-07-20','2025-07-20',true,1000,'A2','10-Q',2025,'Q2','2025-07-30');
+
+-- ---------------------------------------------------------------------------
+-- STAGE F2 FUNDAMENTALS (decision 0060). Invented numbers again, chosen so every expected value in
+-- check_formulas.sql's `fundamentals` section can be worked by hand. The companies are the existing
+-- 2024 companions, because FLAT's constant close of 50 makes every price multiple a clean ratio.
+--
+-- FLAT, calendar quarters k = 0..30 (2017Q1 .. 2024Q3), every value REPORTED as a three-month fact
+-- (derivation from year-to-date is already pinned by the `sec` section):
+--   revenue 1000 + 10k | cost of revenue 400, NO GrossProfit tag   -> gross = revenue - 400
+--   operating income = pre-tax = 0.2 x revenue | tax 0.05 x revenue -> tax rate 25%
+--   D&A filed SPLIT: Depreciation 30 + AmortizationOfIntangibleAssets 10 -> 40 (label probe case)
+--   diluted EPS 1 + 0.02k | cash from operations 300 | capex 100
+--   balance at each quarter end: cash 500, LongTermDebt 1000, operating leases 100, equity 2000;
+--     short-term investments NEVER filed -> 0 (decision 4)
+--   cover-page shares dated quarter end + 20: 100, then 105 from 2024Q1
+--   filed quarter end + 30 (10-Q), + 45 for the fourth quarter (10-K). 2024Q3 is filed 2024-10-30,
+--     AFTER FLAT's last bar (2024-10-26): it must never reach the grid.
+-- Massive share count for FLAT: 110 from 2024-09-03, which must win over the cover page from then.
+--
+-- SHORT (bars 2024-01-01..10, close 20): four quarters 2022Q4..2023Q3. Revenue 500, cost 300, cash
+--   from operations 150, capex 50, EPS -0.10 as filed, cash 100. A 2-for-1 SPLIT executes 2023-08-15,
+--   between the Q2 filing (07-30) and the Q3 filing (10-30): cover shares are 50 before it and 100
+--   after, and the three EPS values filed before it convert to -0.05 -> TTM EPS -0.05 x 3 - 0.10 =
+--   -0.25; every share count converts to 100 -> market cap 20 x 100 = 2000. Short-term investments
+--   filed ONCE at 2022-06-30 and never again -> null at 2023Q3 (457 days: a lapse under two years),
+--   so its EV is null. No lease tag ever -> 0; debt filed only in the FY2022 10-K (see below).
+-- FLAT also files short-term investments of 50 ONCE, at 2019-12-31: null at 2020Q1 (91 days, too old
+--   for that quarter's balance sheet, too recent to call a lapse) and 0 by 2024 (a lapse of 4+ years).
+-- BANK (bars 2024-01-01..10, close 30, is_bank): revenue ONLY under RevenuesNetOfInterestExpense,
+--   no operating income, huge FCF yield. Must never enter a rank, and its EBITDA values carry the
+--   'operating income not filed' reason.
+-- SYNTH 2023: a Costco-shaped year - 36-week nine months (251 days) and a 364-day year, so the
+--   derived fourth quarter is 16 weeks (113 days). Outside the F1 bands; inside F2's.
+-- ---------------------------------------------------------------------------
+insert into public.tickers (symbol, name, theme, active, is_index, is_bank) values
+  ('BANK', 'Bank Fixture', 'fixture', true, false, true);
+insert into public.daily_bars (symbol, d, open, high, low, close, volume, source)
+  select 'BANK', date '2024-01-01' + g, 30, 31, 29, 30, 1000, 'fixture' from generate_series(0,9) g;
+
+insert into public.sec_filers (symbol, cik, last_accn, last_form, last_filed, sic) values
+  ('FLAT', 2, 'F30', '10-Q', '2024-10-30', 3674),
+  ('SHORT', 3, 'S3', '10-Q', '2023-10-30', 7372),
+  ('BANK', 4, 'K3', '10-Q', '2023-10-30', 6021);
+
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed)
+with q as (
+  select k,
+         (date '2017-01-01' + make_interval(months => 3 * k))::date as ps,
+         ((date '2017-01-01' + make_interval(months => 3 * k + 3))::date - 1) as pe,
+         case when k % 4 = 3 then '10-K' else '10-Q' end as form,
+         'F' || k as accn
+  from generate_series(0, 30) k
+),
+qf as (select q.*, pe + case when k % 4 = 3 then 45 else 30 end as filed from q),
+v(concept, unit, instant, f) as (values
+  ('RevenueFromContractWithCustomerExcludingAssessedTax', 'USD', false, 'rev'),
+  ('CostOfRevenue', 'USD', false, 'cost'),
+  ('OperatingIncomeLoss', 'USD', false, 'oi'),
+  ('IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest', 'USD', false, 'oi'),
+  ('IncomeTaxExpenseBenefit', 'USD', false, 'tax'),
+  ('Depreciation', 'USD', false, 'dep'),
+  ('AmortizationOfIntangibleAssets', 'USD', false, 'amort'),
+  ('EarningsPerShareDiluted', 'USD/shares', false, 'eps'),
+  ('NetCashProvidedByUsedInOperatingActivities', 'USD', false, 'cfo'),
+  ('PaymentsToAcquirePropertyPlantAndEquipment', 'USD', false, 'capex'),
+  ('CashAndCashEquivalentsAtCarryingValue', 'USD', true, 'cash'),
+  ('LongTermDebt', 'USD', true, 'debt'),
+  ('OperatingLeaseLiability', 'USD', true, 'lease'),
+  ('StockholdersEquity', 'USD', true, 'equity'))
+select 'FLAT', 2, 'us-gaap', v.concept, v.unit,
+       case when v.instant then qf.pe else qf.ps end, qf.pe, v.instant,
+       case v.f when 'rev' then 1000 + 10 * k when 'cost' then 400 when 'oi' then 0.2 * (1000 + 10 * k)
+                when 'tax' then 0.05 * (1000 + 10 * k) when 'dep' then 30 when 'amort' then 10
+                when 'eps' then 1 + 0.02 * k when 'cfo' then 300 when 'capex' then 100
+                when 'cash' then 500 when 'debt' then 1000 when 'lease' then 100 when 'equity' then 2000 end,
+       qf.accn, qf.form, 2017 + k / 4, 'Q' || (k % 4 + 1), qf.filed
+from qf cross join v
+union all
+select 'FLAT', 2, 'dei', 'EntityCommonStockSharesOutstanding', 'shares', qf.pe + 20, qf.pe + 20, true,
+       case when k >= 28 then 105 else 100 end, qf.accn, qf.form, 2017 + k / 4, 'Q' || (k % 4 + 1), qf.filed
+from qf;
+
+insert into public.share_counts (symbol, as_of, weighted_shares, class_shares, source) values
+  ('FLAT', '2024-09-03', 110, 110, 'fixture');
+
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed)
+with q(ps, pe, accn, form, filed) as (values
+  (date '2022-10-01', date '2022-12-31', 'S0', '10-K', date '2023-02-14'),
+  (date '2023-01-01', date '2023-03-31', 'S1', '10-Q', date '2023-04-30'),
+  (date '2023-04-01', date '2023-06-30', 'S2', '10-Q', date '2023-07-30'),
+  (date '2023-07-01', date '2023-09-30', 'S3', '10-Q', date '2023-10-30')),
+v(concept, unit, instant, val) as (values
+  ('RevenueFromContractWithCustomerExcludingAssessedTax', 'USD', false, 500::numeric),
+  ('CostOfRevenue', 'USD', false, 300),
+  ('EarningsPerShareDiluted', 'USD/shares', false, -0.10),
+  ('NetCashProvidedByUsedInOperatingActivities', 'USD', false, 150),
+  ('PaymentsToAcquirePropertyPlantAndEquipment', 'USD', false, 50),
+  ('CashAndCashEquivalentsAtCarryingValue', 'USD', true, 100))
+select 'SHORT', 3, 'us-gaap', v.concept, v.unit, case when v.instant then q.pe else q.ps end, q.pe, v.instant,
+       v.val, q.accn, q.form, 2023, 'Q', q.filed
+from q cross join v
+union all
+select 'SHORT', 3, 'dei', 'EntityCommonStockSharesOutstanding', 'shares', q.pe + 20, q.pe + 20, true,
+       case when q.pe + 20 > date '2023-08-15' then 100 else 50 end,
+       q.accn, q.form, 2023, 'Q', q.filed
+from q
+union all
+select 'SHORT', 3, 'us-gaap', 'ShortTermInvestments', 'USD', '2022-06-30', '2022-06-30', true, 10,
+       'S-1', '10-Q', 2022, 'Q2', '2022-07-30'
+union all
+-- A year-earlier cover count, before the split: 48 -> 96 in today's basis, so share_count_yoy on
+-- 2024-01-05 is 100 / 96 - 1, not the 108% an unconverted count would give.
+select 'SHORT', 3, 'dei', 'EntityCommonStockSharesOutstanding', 'shares', '2022-10-20', '2022-10-20', true, 48,
+       'S-2', '10-Q', 2022, 'Q3', '2022-10-30'
+union all
+select 'FLAT', 2, 'us-gaap', 'ShortTermInvestments', 'USD', '2019-12-31', '2019-12-31', true, 50,
+       'F11', '10-K', 2019, 'FY', '2020-02-14';
+
+-- Annual-only vs lapsed (2026-09-29): SHORT files LongTermDebt ONCE, in its FY2022 10-K (dated at a
+-- fiscal-year end, which its annual revenue fact marks) - carried to 2023Q3, 273 days on. BANK files
+-- it once at 2023-03-31, a QUARTER end, and never again - a lapse: blank at 2023Q3, 183 days on.
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed) values
+  ('SHORT',3,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2022-01-01','2022-12-31',false,1900,'S0','10-K',2022,'FY','2023-02-14'),
+  ('SHORT',3,'us-gaap','LongTermDebt','USD','2022-12-31','2022-12-31',true,200,'S0','10-K',2022,'FY','2023-02-14'),
+  ('BANK',4,'us-gaap','LongTermDebt','USD','2023-03-31','2023-03-31',true,50,'K1','10-Q',2023,'Q1','2023-04-30');
+
+insert into public.splits (symbol, execution_date, split_from, split_to, source) values
+  ('SHORT', '2023-08-15', 1, 2, 'fixture');
+
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed)
+with q(ps, pe, accn, form, filed) as (values
+  (date '2022-10-01', date '2022-12-31', 'K0', '10-K', date '2023-02-14'),
+  (date '2023-01-01', date '2023-03-31', 'K1', '10-Q', date '2023-04-30'),
+  (date '2023-04-01', date '2023-06-30', 'K2', '10-Q', date '2023-07-30'),
+  (date '2023-07-01', date '2023-09-30', 'K3', '10-Q', date '2023-10-30')),
+v(concept, unit, val) as (values
+  ('RevenuesNetOfInterestExpense', 'USD', 400::numeric),
+  ('EarningsPerShareDiluted', 'USD/shares', 1),
+  ('NetCashProvidedByUsedInOperatingActivities', 'USD', 200),
+  ('PaymentsToAcquirePropertyPlantAndEquipment', 'USD', 10))
+select 'BANK', 4, 'us-gaap', v.concept, v.unit, q.ps, q.pe, false, v.val, q.accn, q.form, 2023, 'Q', q.filed
+from q cross join v
+union all
+select 'BANK', 4, 'dei', 'EntityCommonStockSharesOutstanding', 'shares', q.pe + 20, q.pe + 20, true, 10,
+       q.accn, q.form, 2023, 'Q', q.filed
+from q;
+
+insert into public.sec_facts
+  (symbol, cik, taxonomy, concept, unit, period_start, period_end, is_instant, val, accn, form, fy, fp, filed) values
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2023-01-01','2023-09-09',false,270,'C3','10-Q',2023,'Q3','2023-10-10'),
+  ('SYNTH',1,'us-gaap','RevenueFromContractWithCustomerExcludingAssessedTax','USD','2023-01-01','2023-12-31',false,400,'C4','10-K',2023,'FY','2024-02-14');

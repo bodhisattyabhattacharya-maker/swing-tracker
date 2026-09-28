@@ -324,3 +324,108 @@ export const polygon: BarProvider = {
     return toHourlyRows(symbol, minutes, Date.now());
   },
 };
+
+// ---------------------------------------------------------------------------
+// REFERENCE DATA for the fundamentals layer (Stage F2, decision 0060): stock splits and the ticker
+// overview's share counts. Same host, same key, same courtesy pacing as the bars.
+//
+// UNVERIFIED ON THIS PLAN when written (2026-09-29): both are reference endpoints, which the vendor
+// lists for every stocks tier, but no request has been made from here. The first fundamentals run
+// answers it: a 403 lands in `massive_errors` for every company and the SEC half still completes.
+// ---------------------------------------------------------------------------
+
+export const MASSIVE_REFERENCE_SOURCE = "polygon-reference";
+
+export function splitsUrl(symbol: string): string {
+  return `${HOST}/v3/reference/splits?ticker=${encodeURIComponent(symbol)}&limit=1000&order=asc&sort=execution_date`;
+}
+
+export function tickerOverviewUrl(symbol: string): string {
+  return `${HOST}/v3/reference/tickers/${encodeURIComponent(symbol)}`;
+}
+
+/** Matches `splits` column for column (ingested_at is the database's). */
+export interface SplitRow {
+  symbol: string;
+  execution_date: string;
+  split_from: number;
+  split_to: number;
+  source: string;
+}
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Pure: the splits response -> rows. A row for another ticker, a bad date, a non-positive side or a
+ * 1-for-1 is dropped and counted, never guessed at: a wrong split ratio would silently multiply
+ * every historical EPS by it. Two DIFFERENT ratios on one date throw - there is no right one to pick.
+ */
+export function mapSplits(json: unknown, symbol: string): { rows: SplitRow[]; dropped: number } {
+  const results = (json as { results?: unknown })?.results;
+  if (!Array.isArray(results)) throw new Error(`${symbol}: splits response has no results array`);
+  const byDate = new Map<string, SplitRow>();
+  let dropped = 0;
+  for (const r of results as Record<string, unknown>[]) {
+    const d = r?.execution_date, from = r?.split_from, to = r?.split_to;
+    if (
+      r?.ticker !== symbol || typeof d !== "string" || !YMD.test(d) ||
+      typeof from !== "number" || typeof to !== "number" || !(from > 0) || !(to > 0) || from === to
+    ) {
+      dropped++;
+      continue;
+    }
+    const prior = byDate.get(d);
+    if (prior && (prior.split_from !== from || prior.split_to !== to)) {
+      throw new Error(`${symbol}: two different splits on ${d} (${prior.split_from}:${prior.split_to} and ${from}:${to})`);
+    }
+    byDate.set(d, { symbol, execution_date: d, split_from: from, split_to: to, source: MASSIVE_REFERENCE_SOURCE });
+  }
+  return { rows: [...byDate.values()], dropped };
+}
+
+/** Matches `share_counts` column for column. */
+export interface ShareCountRow {
+  symbol: string;
+  as_of: string;
+  weighted_shares: number;
+  class_shares: number | null;
+  source: string;
+}
+
+/**
+ * Pure: the ticker overview -> one share-count row as of `asOf`, or null when the overview carries
+ * no weighted count (the caller then leaves the SEC cover page in charge). A missing `results`
+ * object throws: that is a different endpoint's answer, not a company without a count.
+ */
+export function mapOverview(json: unknown, symbol: string, asOf: string): ShareCountRow | null {
+  const r = (json as { results?: Record<string, unknown> })?.results;
+  if (!r || typeof r !== "object") throw new Error(`${symbol}: ticker overview has no results object`);
+  if (r.ticker !== symbol) throw new Error(`${symbol}: ticker overview answered for ${String(r.ticker)}`);
+  const w = r.weighted_shares_outstanding;
+  if (typeof w !== "number" || !(w > 0)) return null;
+  const c = r.share_class_shares_outstanding;
+  return {
+    symbol,
+    as_of: asOf,
+    weighted_shares: w,
+    class_shares: typeof c === "number" && c > 0 ? c : null,
+    source: MASSIVE_REFERENCE_SOURCE,
+  };
+}
+
+/** GET a reference document. Same status handling as the bars; never follows a foreign next_url. */
+export async function referenceJson(url: string, label: string): Promise<unknown> {
+  const key = Deno.env.get("POLYGON_API_KEY");
+  if (!key) throw new Error("POLYGON_API_KEY is not set on the function");
+  const r = await fetchWithRetry(url, {
+    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+  }, { label: `${MASSIVE_REFERENCE_SOURCE}/${label}` });
+  if (r.status === 429) throw new RateLimitError(MASSIVE_REFERENCE_SOURCE, label);
+  if (r.status === 401 || r.status === 403) {
+    throw new Error(`${label}: HTTP ${r.status} - key rejected or plan does not cover reference data`);
+  }
+  if (!r.ok) throw new Error(`${label}: HTTP ${r.status} from reference data`);
+  return await r.json();
+}
+
+export { MIN_INTERVAL_MS as POLYGON_MIN_INTERVAL_MS };
